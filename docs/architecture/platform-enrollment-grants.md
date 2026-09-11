@@ -34,6 +34,8 @@
 
 目前僅交付隔離的 .NET 封套產生器與 WebCrypto 接收類別，未接上上述提案、持久化、領取 UI 或任何 listener。RSA 公鑰限 canonical DER SubjectPublicKeyInfo，最多 512 bytes；完整 import 後重新 export 必須逐 byte 相同，key size 固定 3072、exponent 固定 65537。Fingerprint 使用 SPKI 的 SHA-256。
 
+提案可先使用 `EnrollmentGrantRecipientKey.Validate` 驗證接收公鑰並取得 canonical DER 與 fingerprint，這個步驟不產生 token 或封套。驗證器先複製輸入，再套用相同公鑰限制；封閉的 validated 型別只回傳 byte array 複本。`Seal` 使用此型別執行加密，既有 DER overload 也先經過同一驗證器。此型別僅證明公鑰格式，不能證明核准、fingerprint 未重用或操作者權限；後續平台交易仍須分別保證這些條件。
+
 使用標準 [RSA.Encrypt](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.rsa.encrypt?view=net-10.0) 與 OAEP-SHA256，OAEP label 為空。上下文綁定放在固定 116 bytes 的加密明文：
 
 | Offset | 內容 |

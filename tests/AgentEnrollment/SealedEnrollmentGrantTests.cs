@@ -52,7 +52,13 @@ public sealed class SealedEnrollmentGrantTests
             [nameof(SealedEnrollmentGrant.GetCiphertext), nameof(SealedEnrollmentGrant.GetRecipientSubjectPublicKeyInfoSha256),
                 nameof(SealedEnrollmentGrant.GetTokenSha256), nameof(SealedEnrollmentGrant.Seal)],
             typeof(SealedEnrollmentGrant).GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static |
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly).Select(method => method.Name).Order());
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly).Select(method => method.Name).Distinct().Order());
+        var sealMethods = typeof(SealedEnrollmentGrant).GetMethods().Where(method => method.Name == nameof(SealedEnrollmentGrant.Seal)).ToArray();
+        Assert.Equal(2, sealMethods.Length);
+        Assert.Contains(sealMethods, method => method.GetParameters().Select(parameter => parameter.ParameterType)
+            .SequenceEqual([typeof(ReadOnlySpan<byte>), typeof(Guid), typeof(Guid)]));
+        Assert.Contains(sealMethods, method => method.GetParameters().Select(parameter => parameter.ParameterType)
+            .SequenceEqual([typeof(EnrollmentGrantRecipientKey), typeof(Guid), typeof(Guid)]));
         Assert.Equal(typeof(object), typeof(SealedEnrollmentGrant).GetMethod(nameof(ToString), Type.EmptyTypes)!.DeclaringType);
     }
 
@@ -92,10 +98,13 @@ public sealed class SealedEnrollmentGrantTests
     {
         using var recipient = RSA.Create(3072);
         var spki = recipient.ExportSubjectPublicKeyInfo();
+        var validated = EnrollmentGrantRecipientKey.Validate(spki);
         foreach (var action in new Action[]
         {
             () => SealedEnrollmentGrant.Seal(spki, Guid.Empty, OperationId),
             () => SealedEnrollmentGrant.Seal(spki, EnvironmentId, Guid.Empty),
+            () => SealedEnrollmentGrant.Seal(validated, Guid.Empty, OperationId),
+            () => SealedEnrollmentGrant.Seal(validated, EnvironmentId, Guid.Empty),
             () => SealedEnrollmentGrant.SealDeterministic(spki, EnvironmentId, OperationId, new byte[32]),
             () => SealedEnrollmentGrant.SealDeterministic(spki, EnvironmentId, OperationId, new byte[31])
         })
@@ -127,8 +136,49 @@ public sealed class SealedEnrollmentGrantTests
 
         foreach (var candidate in candidates)
         {
+            var validationError = Assert.Throws<SealedEnrollmentGrantException>(() => EnrollmentGrantRecipientKey.Validate(candidate));
+            Assert.Equal("InvalidSealedGrant", validationError.Message);
+            Assert.Null(validationError.InnerException);
             var error = Assert.Throws<SealedEnrollmentGrantException>(() =>
                 SealedEnrollmentGrant.Seal(candidate, EnvironmentId, OperationId));
+            Assert.Equal("InvalidSealedGrant", error.Message);
+            Assert.Null(error.InnerException);
+        }
+    }
+
+    [Fact]
+    public void ValidatedRecipientPreservesCanonicalSnapshotAcrossCallerMutationsAndSealing()
+    {
+        using var recipient = RSA.Create(3072);
+        var canonical = recipient.ExportSubjectPublicKeyInfo();
+        var input = (byte[])canonical.Clone();
+        var key = EnrollmentGrantRecipientKey.Validate(input);
+        Array.Clear(input);
+        var exported = key.GetSubjectPublicKeyInfo();
+        var fingerprint = key.GetFingerprintSha256();
+        Array.Clear(exported); Array.Clear(fingerprint);
+
+        Assert.Equal(canonical, key.GetSubjectPublicKeyInfo());
+        Assert.Equal(SHA256.HashData(canonical), key.GetFingerprintSha256());
+        var sealedGrant = SealedEnrollmentGrant.Seal(key, EnvironmentId, OperationId);
+        var payload = recipient.Decrypt(sealedGrant.GetCiphertext(), RSAEncryptionPadding.OaepSHA256);
+        Assert.Equal(SHA256.HashData(payload[84..]), sealedGrant.GetTokenSha256());
+        Assert.Equal(key.GetFingerprintSha256(), sealedGrant.GetRecipientSubjectPublicKeyInfoSha256());
+        Assert.Empty(typeof(EnrollmentGrantRecipientKey).GetConstructors());
+        Assert.Empty(typeof(EnrollmentGrantRecipientKey).GetProperties());
+        Assert.True(typeof(EnrollmentGrantRecipientKey).IsSealed);
+    }
+
+    [Fact]
+    public void EmptyRecipientAndNullValidatedKeyReturnOnlyFixedDiagnostic()
+    {
+        foreach (var action in new Action[]
+        {
+            () => EnrollmentGrantRecipientKey.Validate([]),
+            () => SealedEnrollmentGrant.Seal((EnrollmentGrantRecipientKey)null!, EnvironmentId, OperationId)
+        })
+        {
+            var error = Assert.Throws<SealedEnrollmentGrantException>(action);
             Assert.Equal("InvalidSealedGrant", error.Message);
             Assert.Null(error.InnerException);
         }
