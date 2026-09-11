@@ -7,6 +7,8 @@
 
   <ItemGroup>
     <PackageReference Include="System.Management" Version="10.0.12" />
+    <InternalsVisibleTo Include="Agent.Tests" />
+    <InternalsVisibleTo Include="AgentIngestion.Tests" />
   </ItemGroup>
 
 </Project>

@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace ItManagement.Agent.Spool;
 
-public sealed class OfflineSpool : IAsyncDisposable
+public sealed partial class OfflineSpool : IAsyncDisposable
 {
     private const string IdentityFileName = "identity.json";
     private const string LockFileName = "spool.lock";
@@ -34,7 +34,8 @@ public sealed class OfflineSpool : IAsyncDisposable
 
     public DeviceSpoolIdentity Identity => _identity;
 
-    public static async Task<OfflineSpool> OpenAsync(
+    // Legacy schema-1 development fixtures only; unavailable to service/transport composition.
+    internal static async Task<OfflineSpool> OpenAsync(
         string directory,
         long registrationEpoch,
         OfflineSpoolOptions? options = null,
@@ -67,6 +68,10 @@ public sealed class OfflineSpool : IAsyncDisposable
                     cancellationToken).ConfigureAwait(false);
                 identity = JsonSerializer.Deserialize<DeviceSpoolIdentity>(bytes, JsonOptions)
                     ?? throw new InvalidDataException("Spool identity is invalid.");
+                if (identity.SchemaVersion != 1 || identity.EnrollmentRequestId != Guid.Empty)
+                {
+                    throw new InvalidDataException("Enrollment identity requires the enrolled spool entry point.");
+                }
                 if (identity.RegistrationEpoch != registrationEpoch)
                 {
                     throw new InvalidOperationException("Registration epoch does not match the persisted spool identity.");

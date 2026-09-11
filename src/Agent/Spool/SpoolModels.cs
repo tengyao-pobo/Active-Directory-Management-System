@@ -31,7 +31,11 @@ public sealed record OfflineSpoolOptions(int MaxFiles, long MaxBytes, int MaxPay
     }
 }
 
-public sealed record DeviceSpoolIdentity(Guid DeviceGuid, long RegistrationEpoch, long NextSequence);
+public sealed record DeviceSpoolIdentity(Guid DeviceGuid, long RegistrationEpoch, long NextSequence)
+{
+    public int SchemaVersion { get; init; } = 1;
+    public Guid EnrollmentRequestId { get; init; }
+}
 
 public sealed record SpoolEnvelope(
     int ProtocolVersion,
