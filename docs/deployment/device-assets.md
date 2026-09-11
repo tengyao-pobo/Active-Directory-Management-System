@@ -1,6 +1,6 @@
 # Phase 5 — 電腦資產備註與生命週期
 
-電腦目錄明細新增 IT 備註及 Unknown / Active / Spare / Repair / Retired 生命週期。資料存在平台 PostgreSQL 的 DeviceAssets，以 EnvironmentId + AD computer objectGUID 為鍵；不以主機名稱匹配，也不會修改 AD 或觸發遠端、盤點、自動化動作。這是 AD 電腦關聯的資產中繼資料基礎，尚不是 Agent 裝置身分、序號合併或完整資產台帳。
+電腦目錄明細提供 IT 備註及 Unknown / Active / Spare / Repair / ReplacementPlanned / Retired / Disposed / Lost 生命週期，涵蓋使用中、備用、維修、待汰換、已汰換、報廢及遺失。資料存在平台 PostgreSQL 的 DeviceAssets，以 EnvironmentId + AD computer objectGUID 為鍵；不以主機名稱匹配，也不會修改 AD 或觸發遠端、盤點、自動化動作。這是 AD 電腦關聯的資產中繼資料基礎，尚不是 Agent 裝置身分、序號合併或完整資產台帳。
 
 ## API 與授權
 
@@ -13,6 +13,10 @@
 備註最多 4,000 字元，僅允許換行/Tab 等指定控制字元；生命週期為固定列舉。資產與 Device.AssetUpdated 稽核在同一交易提交，稽核只含目標、生命週期前後值及版本，不含備註正文。沒有備註歷史還原、刪除或自動清理入口。
 
 ## 部署與恢復
+
+`20260911170500_CompleteDeviceLifecycle` 擴充既有 check constraint，保留所有既有值，允許待汰換／報廢／遺失。後端編輯與 Dashboard 共用同一清單，前端表單及統計亦共用固定清單。舊 API 值 Active 保持相容，英文顯示 In use。這三個新值不觸發 AD 停用或刪除。新 migration 不提供會重新標記資料的 Down；回退程式時保留資料，需收窄 constraint 時另行盤點並明確處理新增狀態。
+
+擴充驗證：三個新增狀態各通過實際 PostgreSQL/API 保存、讀回、Dashboard 計數及稽核測試，連同既有資產與 Dashboard 共 17 項測試通過。
 
 先備份平台 DB，套用 `20260911140730_DeviceAssets` migration，再以既有 `build/provision-runtime.sql` 更新受限 API role grants。新表啟用並強制 RLS，依目前 environment 與 membership 限制。Connector grant script 不授予資產表存取。
 

@@ -7,7 +7,6 @@ namespace ItManagement.Api;
 public static class DeviceAssetApi
 {
     public sealed record UpdateAsset(string Lifecycle, string Notes);
-    private static readonly string[] States = ["Unknown", "Active", "Spare", "Repair", "Retired"];
     private static object? Dto(DeviceAsset? item) => item is null ? null : new { item.Lifecycle, item.Notes, item.Version, item.UpdatedAt };
 
     public static void MapDeviceAssets(this WebApplication app)
@@ -31,7 +30,7 @@ public static class DeviceAssetApi
             var access = await Access(db, environmentId, id, actor, ct);
             if (access.Status != 200) return Results.StatusCode(access.Status);
             if (!access.Edit) return Results.Forbid();
-            if (!States.Contains(input.Lifecycle, StringComparer.Ordinal) || input.Notes is null || input.Notes.Length > 4000 || input.Notes.Any(c => char.IsControl(c) && c != '\n' && c != '\r' && c != '\t'))
+            if (!DeviceLifecycle.States.Contains(input.Lifecycle, StringComparer.Ordinal) || input.Notes is null || input.Notes.Length > 4000 || input.Notes.Any(c => char.IsControl(c) && c != '\n' && c != '\r' && c != '\t'))
                 return Results.BadRequest();
             var item = await db.DeviceAssets.SingleOrDefaultAsync(x => x.EnvironmentId == environmentId && x.Id == id, ct);
             if (!http.Request.Headers.ContainsKey("If-Match")) return Results.StatusCode(428);

@@ -41,7 +41,7 @@ public static class DashboardApi
             from asset in matched.DefaultIfEmpty()
             select new { computer.Id, computer.Name, lifecycle = asset == null ? "Unknown" : asset.Lifecycle };
         var grouped = await assets.GroupBy(x => x.lifecycle).Select(g => new { state = g.Key, count = g.Count() }).ToListAsync(ct);
-        var lifecycle = new[] { "Unknown", "Active", "Spare", "Repair", "Retired" }.ToDictionary(state => state, state => grouped.SingleOrDefault(x => x.state == state)?.count ?? 0);
+        var lifecycle = DeviceLifecycle.States.ToDictionary(state => state, state => grouped.SingleOrDefault(x => x.state == state)?.count ?? 0);
         var repairs = await assets.Where(x => x.lifecycle == "Repair" && (after == null || x.Id.CompareTo(after.Value) > 0)).OrderBy(x => x.Id)
             .Select(x => new { x.Id, x.Name }).Take(51).ToListAsync(ct);
         var more = repairs.Count > 50; if (more) repairs.RemoveAt(50);
