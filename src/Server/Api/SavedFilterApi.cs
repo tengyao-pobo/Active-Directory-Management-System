@@ -20,11 +20,23 @@ public static class SavedFilterApi
     {
         var group = app.MapGroup("/api/v1/environments/{environmentId:guid}/saved-filters");
         group.MapGet("", List);
-        group.MapPost("", Create);
+        group.MapPost("", Create).AddEndpointFilter<WriteConflictFilter>();
         group.MapGet("/{id:guid}", Get);
-        group.MapPut("/{id:guid}", Update);
-        group.MapDelete("/{id:guid}", Delete);
+        group.MapPut("/{id:guid}", Update).AddEndpointFilter<WriteConflictFilter>();
+        group.MapDelete("/{id:guid}", Delete).AddEndpointFilter<WriteConflictFilter>();
         group.MapGet("/{id:guid}/results", ResultsFor);
+    }
+
+    public sealed class WriteConflictFilter : IEndpointFilter
+    {
+        public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+        {
+            try { return await next(context); }
+            catch (Exception error) when (SerializationConflict(error))
+            {
+                return Results.Problem(statusCode: 409, title: "SavedFilterWriteConflict");
+            }
+        }
     }
 
     private static async Task<IResult> List(Guid environmentId, HttpContext http, ConsoleDbContext db, CancellationToken ct)
@@ -140,6 +152,12 @@ public static class SavedFilterApi
         db.SavedFilters.FromSqlInterpolated($"SELECT * FROM public.\"SavedFilters\" WHERE \"EnvironmentId\"={environmentId} AND \"PrincipalId\"={actor} AND \"Id\"={id} FOR UPDATE").SingleOrDefaultAsync(ct);
     private static object Dto(SavedFilter row) => new { row.Id, row.SchemaVersion, row.Name, row.Kind, row.Search, row.TagId, row.Version, row.CreatedAt, row.UpdatedAt };
     private static string ETag(long version) => $"\"{version}\"";
+    private static bool SerializationConflict(Exception error)
+    {
+        for (Exception? current = error; current is not null; current = current.InnerException)
+            if (current is Npgsql.PostgresException { SqlState: "40001" }) return true;
+        return false;
+    }
     private static DateTimeOffset DatabaseTime(TimeProvider time)
     {
         var ticks = time.GetUtcNow().UtcTicks;
