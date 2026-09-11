@@ -112,6 +112,12 @@
 .tag-plan { border-top:1px solid var(--border, #ccd5df); padding:1rem 0; }
 .tag-plan dd, .tag-hash { overflow-wrap:anywhere; }
 .device-tags textarea { display:block; width:100%; min-height:5rem; }
+.enrollment-plans input { width:100%; padding:.65rem; color:var(--text); background:var(--surface); border:1px solid var(--line); border-radius:4px; font:inherit; }
+.enrollment-plans form { margin:1rem 0; }
+.enrollment-plans dl { display:grid; grid-template-columns:minmax(120px,180px) minmax(0,1fr); gap:.65rem 1rem; padding:1rem; border:1px solid var(--line-soft); border-radius:5px; background:var(--surface); font-size:.8rem; }
+.enrollment-plans dt { color:var(--muted); }
+.enrollment-plans dd { margin:0; overflow-wrap:anywhere; }
+@media (max-width:620px) { .enrollment-plans dl { grid-template-columns:minmax(0,1fr); gap:.35rem; }.enrollment-plans dd { margin-bottom:.6rem; } }
 .saved-filters > .panel { padding:1.2rem; }
 .filter-management { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:1.5rem; margin-top:1rem; }
 .filter-management label { display:grid; gap:.35rem; margin:.8rem 0; }

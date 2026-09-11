@@ -582,6 +582,12 @@
           "xunit.extensibility.core": "[2.9.3]"
         }
       },
+      "agentenrollment": {
+        "type": "Project",
+        "dependencies": {
+          "Npgsql": "[10.0.3, )"
+        }
+      },
       "agentenrollmenttargets": {
         "type": "Project",
         "dependencies": {
@@ -597,6 +603,7 @@
       "api": {
         "type": "Project",
         "dependencies": {
+          "AgentEnrollment": "[1.0.0, )",
           "AgentEnrollmentTargets": "[1.0.0, )",
           "AgentProjection": "[1.0.0, )",
           "Fido2": "[4.0.1, )",

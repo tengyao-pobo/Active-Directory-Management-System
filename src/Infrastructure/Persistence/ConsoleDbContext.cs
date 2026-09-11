@@ -7,6 +7,7 @@ namespace ItManagement.Persistence;
 
 public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options) : DbContext(options)
 {
+    public DbSet<EnrollmentGrantRecipientReservation> EnrollmentGrantRecipientReservations => Set<EnrollmentGrantRecipientReservation>();
     public DbSet<SavedFilter> SavedFilters => Set<SavedFilter>();
     public DbSet<DeviceTag> DeviceTags => Set<DeviceTag>();
     public DbSet<DeviceTagAssignment> DeviceTagAssignments => Set<DeviceTagAssignment>();
@@ -133,6 +134,13 @@ public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options)
         ConfigureTenant<ChangeApproval>(b, "Approvals");
         b.Entity<ChangeApproval>().HasOne<ChangePlan>().WithMany().HasForeignKey(x => new { x.EnvironmentId, x.PlanId }).OnDelete(DeleteBehavior.Restrict);
         b.Entity<ChangeApproval>().HasIndex(x => new { x.EnvironmentId, x.PlanId }).IsUnique();
+        b.Entity<EnrollmentGrantRecipientReservation>().ToTable("EnrollmentGrantRecipientReservations").HasKey(x => x.Fingerprint);
+        b.Entity<EnrollmentGrantRecipientReservation>().Property(x => x.Fingerprint).HasColumnType("bytea").ValueGeneratedNever();
+        b.Entity<EnrollmentGrantRecipientReservation>().Property(x => x.RequestDigest).HasColumnType("bytea");
+        b.Entity<EnrollmentGrantRecipientReservation>().HasIndex(x => new { x.EnvironmentId, x.PlanId }).IsUnique();
+        b.Entity<EnrollmentGrantRecipientReservation>().HasIndex(x => new { x.EnvironmentId, x.RequesterId, x.RequestId }).IsUnique();
+        b.Entity<EnrollmentGrantRecipientReservation>().HasOne<ChangePlan>().WithMany()
+            .HasForeignKey(x => new { x.EnvironmentId, Id = x.PlanId }).OnDelete(DeleteBehavior.Restrict);
 
         b.Entity<LocalCredential>().ToTable("LocalCredentials").HasKey(x => x.PrincipalId);
         b.Entity<LocalCredential>().Property(x => x.Version).IsConcurrencyToken();

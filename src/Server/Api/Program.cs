@@ -65,6 +65,8 @@ await using (var startupScope = app.Services.CreateAsyncScope())
         FROM pg_roles r WHERE r.rolname=current_user
         """).SingleAsync();
     if (unsafeRole) throw new InvalidOperationException("API database identity must be a restricted non-owner role without RLS bypass.");
+    if (!await EnrollmentGrantPlanApi.LockHelperIsValidAsync(startupDb, CancellationToken.None))
+        throw new InvalidOperationException("Enrollment grant plan lock helper privilege audit failed.");
 }
 
 app.UseExceptionHandler(handler => handler.Run(async context =>
@@ -122,6 +124,7 @@ app.MapDeviceAudit();
 app.MapDeviceBitLocker();
 app.MapDeviceInventory();
 app.MapDeviceEnrollment();
+app.MapEnrollmentGrantPlans();
 app.MapDirectoryProposals();
 app.Run();
 

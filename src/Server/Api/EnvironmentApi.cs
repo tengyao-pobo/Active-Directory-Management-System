@@ -119,7 +119,7 @@ public static class EnvironmentApi
             await using var tx = await db.BeginEnvironment(environmentId, AuthEndpoints.Actor(http), ct);
             if (!await access.Allows(environmentId, AuthEndpoints.Actor(http), PermissionCatalog.ChangeApprove, ct)) return Results.NotFound();
             var plan = await db.Plans.Include(x => x.Items).SingleOrDefaultAsync(x => x.EnvironmentId == environmentId && x.Id == id, ct);
-            return plan is null ? Results.NotFound() : Results.Ok(PlanDto(plan));
+            return plan is null || EnrollmentGrantPlanApi.IsDedicatedAction(plan.Action) ? Results.NotFound() : Results.Ok(PlanDto(plan));
         });
         group.MapPost("/change-plans/{id:guid}/approval", async (Guid environmentId, Guid id, ApprovalRequest input, HttpContext http, ConsoleDbContext db,
             EnvironmentAccess access, ChangePlanService plans, TimeProvider time, ConsoleOptions config, CancellationToken ct) =>
@@ -129,7 +129,7 @@ public static class EnvironmentApi
             if (!await access.Allows(environmentId, AuthEndpoints.Actor(http), PermissionCatalog.ChangeApprove, ct)) return Results.NotFound();
             if (!AuthEndpoints.FreshStepUp(http, time, config)) return Results.Problem(statusCode: 403, title: "StepUpRequired");
             var plan = await db.Plans.Include(x => x.Items).SingleOrDefaultAsync(x => x.EnvironmentId == environmentId && x.Id == id, ct);
-            if (plan is null) return Results.NotFound();
+            if (plan is null || EnrollmentGrantPlanApi.IsDedicatedAction(plan.Action)) return Results.NotFound();
             if (!await DistinctOperators(db, plan.RequesterId, AuthEndpoints.Actor(http), ct))
                 return Results.Problem(statusCode: 409, title: "IndependentOperatorRequired");
             ChangeApproval approval;
@@ -150,7 +150,7 @@ public static class EnvironmentApi
         await using var tx = await db.BeginEnvironment(environmentId, actor, ct);
         if (!AuthEndpoints.FreshStepUp(http, time, config)) return Results.Problem(statusCode: 403, title: "StepUpRequired");
         var plan = await db.Plans.Include(x => x.Items).SingleOrDefaultAsync(x => x.EnvironmentId == environmentId && x.Id == id, ct);
-        if (plan is null || plan.RequesterId != actor) return Results.NotFound();
+        if (plan is null || EnrollmentGrantPlanApi.IsDedicatedAction(plan.Action) || plan.RequesterId != actor) return Results.NotFound();
         var approval = await db.Approvals.SingleOrDefaultAsync(x => x.EnvironmentId == environmentId && x.PlanId == id, ct);
         if (approval is null) return Results.Problem(statusCode: 409, title: "ApprovalRequired");
         if (!await DistinctOperators(db, actor, approval.ApproverId, ct))
@@ -244,7 +244,11 @@ public static class EnvironmentApi
         "group-mapping.add" when c.RoleId is not null && c.ScopeId is not null && c.GroupSid is { Length: < 256 } sid && Regex.IsMatch(sid, "^S-1-[0-9]+(-[0-9]+)+$", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50)) => null,
         _ => "InvalidManagementChange"
     };
-    internal static object PlanDto(ChangePlan p) => new { p.Id, p.EnvironmentId, p.RequesterId, p.Action, change = JsonSerializer.Deserialize<ManagementChange>(p.ImmutablePlanJson), p.PlanHash, p.PolicyVersion, p.ExpiresAt, state = p.State.ToString(), p.Reason };
+    internal static object PlanDto(ChangePlan p)
+    {
+        if (EnrollmentGrantPlanApi.IsDedicatedAction(p.Action)) throw new InvalidOperationException("Dedicated plan actions require a dedicated DTO.");
+        return new { p.Id, p.EnvironmentId, p.RequesterId, p.Action, change = JsonSerializer.Deserialize<ManagementChange>(p.ImmutablePlanJson), p.PlanHash, p.PolicyVersion, p.ExpiresAt, state = p.State.ToString(), p.Reason };
+    }
     private static void Audit(ConsoleDbContext db, HttpContext http, TimeProvider time, Guid env, string action, string target, string result) =>
         db.Audit.Add(new AuditRecord { EnvironmentId = env, Id = Guid.NewGuid(), ActorId = AuthEndpoints.Actor(http), Action = action, TargetId = target,
             Result = result, OccurredAt = time.GetUtcNow(), SourceIp = http.Connection.RemoteIpAddress?.ToString(), CorrelationId = http.TraceIdentifier });

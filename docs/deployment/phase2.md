@@ -34,7 +34,7 @@ dotnet ef database update --project src/Infrastructure/Persistence/Persistence.c
 ```
 
 3. 透過企業 Secret Store 建立 runtime LOGIN。必須 NOSUPERUSER、NOBYPASSRLS、NOCREATEDB、NOCREATEROLE、非 table owner，且不是 offline/definer role 的成員。
-4. DBA 執行 `psql ... -v runtime_role=<runtime-role> -f build/provision-runtime.sql`。此檔無密碼；僅套用已核准的資料庫權限，勿對不明資料庫直接執行。
+4. 目前版本另需獨立 NOLOGIN lock owner；依[平台註冊計畫部署](platform-enrollment-plans.md)建立並驗證角色後，DBA 執行 `psql ... -v runtime_role=<runtime-role> -v enrollment_plan_lock_owner_role=<lock-owner-role> -f build/provision-runtime.sql`。此檔無密碼；僅套用已核准的資料庫權限，勿對不明資料庫直接執行。
 5. API 只使用 runtime connection；啟動會檢查角色不得擁有 schema tables 或繞過 RLS。對 DB 連線強制 TLS VerifyFull 的正式 connection 範例在 `.env.example`。
 
 RLS 同時核對 selected Environment 與 active principal membership。為避免 Memberships policy 遞迴，使用只回 boolean 的 `public.has_environment_membership(uuid,uuid)`，fixed search_path、schema-qualified tables、row_security=off、PUBLIC execute revoked。function owner 必須為受控 offline BYPASSRLS owner，runtime 只有 EXECUTE；runtime 不得 CREATE public schema 物件或改 function。若 owner 設錯則 fail closed。
@@ -70,7 +70,7 @@ bootstrap-owner 以隱藏 console input（或 stdin）取得密碼，不經 comm
 ./build/verify.ps1
 ```
 
-也可依序 `dotnet restore --locked-mode`、`dotnet build -c Release --no-restore`、`dotnet test -c Release --no-build`。整合測試若缺 DB connection 會失敗，不能靜默 skip 冒充驗證完成。tests 用真 PostgreSQL，不用 EF InMemory 替代交易/RLS。
+也可依序 `dotnet restore --locked-mode`、`dotnet build -c Release --no-restore`、`dotnet test -m:1 -c Release --no-build`。資料庫測試專案會修改共用角色／schema catalog，因此依專案循序執行；單一案例內的並行請求與交易競爭測試仍保留。整合測試若缺 DB connection 會失敗，不能靜默 skip 冒充驗證完成。tests 用真 PostgreSQL，不用 EF InMemory 替代交易/RLS。
 
 測試資料都是新 UUID 與合成帳號。因 Audit/SecurityEvents append-only，測試故意保留這些記錄；只有重建整個明確隔離的 test DB 才清除，禁止對正式資料庫執行測試或 cleanup。
 

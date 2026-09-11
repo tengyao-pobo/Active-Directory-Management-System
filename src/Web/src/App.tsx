@@ -317,7 +317,7 @@ function App() {
             <button className="text-button" onClick={doLogout}>{t('action.signOut')}</button>
           </div>
         </header>
-        <main id="main-content" tabIndex={-1}>
+        <main key={principal.id} id="main-content" tabIndex={-1}>
           {authError && <div className="inline-alert" role="alert">{t(authError)}</div>}
           {!isDirectory && <PageHeader view={view} environment={environment} t={t} />}
           {envState === 'loading' && <StatePanel kind="loading" title={t('state.loadingEnvironments')} t={t} />}
