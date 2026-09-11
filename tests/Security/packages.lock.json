@@ -583,9 +583,16 @@
           "xunit.extensibility.core": "[2.9.3]"
         }
       },
+      "agentprojection": {
+        "type": "Project",
+        "dependencies": {
+          "Npgsql": "[10.0.3, )"
+        }
+      },
       "api": {
         "type": "Project",
         "dependencies": {
+          "AgentProjection": "[1.0.0, )",
           "Fido2": "[4.0.1, )",
           "Microsoft.AspNetCore.Authentication.Negotiate": "[10.0.12, )",
           "Persistence": "[1.0.0, )"

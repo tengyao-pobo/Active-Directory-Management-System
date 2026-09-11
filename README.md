@@ -4,7 +4,7 @@
 
 An internal web-based Active Directory management platform with role-based access control, computer monitoring, remote administration, and IT management tools.
 
-目前階段：**Phase 5 目錄查詢、跨類型搜尋與明細 UI 已實作；真實網域與寫入驗收仍待完成。**
+目前持續開發目錄管理、設備明細與 Agent 觀測整合；各項完成度見[全部需求實作追蹤](docs/architecture/implementation-status.md)。真實網域、正式 Agent 註冊與受控 AD 寫入驗收仍待完成。
 
 已實作 .NET 10 Solution、PostgreSQL migrations/RLS、opaque session、Windows SSO adapter、緊急帳號密碼 + Passkey、細粒度 RBAC/Scope、雙人核准的本機設定變更、Audit/Outbox 與離線 provisioning 工具。
 
@@ -45,6 +45,7 @@ React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核�
 - [設備健康、機齡與汰換政策](docs/deployment/device-policies.md)
 - [唯讀硬體盤點](docs/deployment/hardware-inventory.md)
 - [BitLocker 狀態觀測與限制](docs/deployment/bitlocker-observations.md)
+- [平台 Agent 投影查閱與部署](docs/deployment/agent-projection.md)
 - [Agent 盤點持久化與資料庫界線](docs/deployment/agent-ingestion.md)
 - [Agent 註冊前身分與中斷恢復](docs/deployment/agent-enrollment-identity.md)
 - [Agent 註冊授權與發證調和](docs/deployment/agent-enrollment.md)

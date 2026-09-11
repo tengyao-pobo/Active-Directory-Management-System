@@ -3,8 +3,9 @@ import DeviceAssetPanel from './DeviceAssetPanel';
 import DeviceUserPanel from './DeviceUserPanel';
 import { useI18n } from './i18n';
 import { ApiError, request } from './api';
+import DeviceBitLockerPanel from './DeviceBitLockerPanel';
 
-const tabs = ['ad', 'asset', 'user', 'audit', 'inventory'] as const;
+const tabs = ['ad', 'asset', 'user', 'audit', 'inventory', 'security'] as const;
 export default function DeviceTabs({ environmentId, id, ad }: { environmentId: string; id: string; ad: ReactNode }) {
   const { t } = useI18n(); const prefix = useId();
   const [selected, setSelected] = useState<typeof tabs[number]>('ad');
@@ -23,6 +24,7 @@ export default function DeviceTabs({ environmentId, id, ad }: { environmentId: s
       {selected === 'user' && <DeviceUserPanel environmentId={environmentId} id={id} kind="Computer" />}
       {selected === 'audit' && <DeviceAudit environmentId={environmentId} id={id} />}
       {selected === 'inventory' && <div className="asset-panel"><h3>{t('device.inventoryTitle')}</h3><p>{t('device.inventoryBody')}</p></div>}
+      {selected === 'security' && <DeviceBitLockerPanel environmentId={environmentId} id={id} />}
     </div>
   </div>;
 }
