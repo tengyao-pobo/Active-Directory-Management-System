@@ -205,3 +205,11 @@ test('dashboard late response cannot replace a different environment', async ({ 
   await expect(panel).toContainText('dev-repair-first');
   await expect(panel).not.toContainText('obsolete');
 });
+
+test('repair link opens the matching environment device details', async ({ page }) => {
+  await openAuthenticatedConsole(page, { signedIn: true, protectedUnauthorized: false, savedLocales: [] });
+  await page.route('**/directory/objects/first', route => route.fulfill(json({ item: { id: 'first', kind: 'Computer', name: 'Repair device', distinguishedName: 'CN=repair,DC=test', usnChanged: 1, protectionKnown: false, isProtected: false }, asOf: '2026-09-11T14:00:00Z' })));
+  await page.getByRole('link', { name: 'prod-repair-first', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Repair device', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'AD', exact: true })).toHaveAttribute('aria-selected', 'true');
+});

@@ -198,6 +198,7 @@ test('computer asset saves with CSRF and version, then exposes conflict without 
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ item: version ? { lifecycle: 'Active', notes, version, updatedAt: '2026-09-11T14:00:00Z' } : null, canEdit: true }) });
   });
   await page.getByRole('button', { name: /east Computer Alpha/ }).click();
+  await page.getByRole('tab', { name: 'Asset', exact: true }).click();
   await page.getByLabel('IT notes', { exact: true }).fill('maintenance <script>literal</script>');
   await page.getByLabel('Lifecycle', { exact: true }).selectOption('Active');
   await page.getByRole('button', { name: 'Save asset' }).click();
@@ -221,6 +222,7 @@ test('manual user assignment saves explicit target and reverse view shows comput
   });
   await page.route('**/users/**/devices', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: assigned ? [{ id: 'east-Computer-Alpha', name: 'east Computer Alpha', updatedAt: '2026-09-11T14:00:00Z' }] : [], nextCursor: null }) }));
   await page.getByRole('button', { name: /east Computer Alpha/ }).click();
+  await page.getByRole('tab', { name: 'User', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Person–computer association', exact: true });
   await panel.getByLabel('Find a user', { exact: true }).fill('Alpha');
   await panel.getByRole('button', { name: 'Search', exact: true }).click();
@@ -230,7 +232,39 @@ test('manual user assignment saves explicit target and reverse view shows comput
   await page.goto('/#/users'); await page.getByRole('button', { name: /east User Alpha/ }).click();
   await expect(page.getByRole('region', { name: 'Person–computer association', exact: true })).toContainText('east Computer Alpha');
   await page.goto('/#/computers'); await page.getByRole('button', { name: /east Computer Alpha/ }).click();
+  await page.getByRole('tab', { name: 'User', exact: true }).click();
   await page.getByRole('button', { name: 'Clear current assignment' }).click();
   await expect(panel).toContainText('Unassigned');
   expect(version).toBe(2);
+});
+
+test('device deep link lazy loads tabs and supports keyboard navigation', async ({ page }, info) => {
+  const requests: string[] = []; page.on('request', r => { if (r.url().includes('/devices/')) requests.push(r.url()); });
+  await open(page, { searches: [] }, 'device?environment=east&id=east-Computer-Alpha');
+  await expect(page.getByRole('heading', { name: 'east Computer Alpha', exact: true })).toBeVisible();
+  expect(requests).toEqual([]);
+  await page.route('**/devices/**/audit', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'event', action: 'Device.AssetUpdated', result: 'Success', occurredAt: '2026-09-11T14:00:00Z' }], nextCursor: null }) }));
+  await page.getByRole('tab', { name: 'Audit', exact: true }).click();
+  await expect(page.getByRole('tabpanel')).toContainText('Device.AssetUpdated');
+  expect(requests.length).toBeGreaterThan(0);
+  expect(requests.every(path => path.endsWith('/audit'))).toBe(true); // StrictMode may start and cancel a duplicate read.
+  await page.getByRole('tab', { name: 'Audit', exact: true }).press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Inventory' })).toBeFocused();
+  await expect(page.getByRole('tabpanel')).toContainText('Inventory source unavailable');
+  await page.getByRole('tab', { name: 'Inventory' }).press('Home');
+  await expect(page.getByRole('tab', { name: 'AD', exact: true })).toBeFocused();
+  await page.screenshot({ path: `test-results/screenshots/${info.project.name}-device-details.png`, fullPage: true });
+});
+
+test('mismatched deep link does not fetch a device and late audit response is discarded', async ({ page }) => {
+  const requests: string[] = []; page.on('request', r => { if (/\/directory\/objects\/|\/devices\//.test(r.url())) requests.push(r.url()); });
+  await open(page, { searches: [] }, 'device?environment=west&id=east-Computer-Alpha');
+  await expect(page.getByRole('alert')).toContainText('Select the environment'); expect(requests).toEqual([]);
+  await page.goto('/#/device?environment=east&id=east-Computer-Alpha');
+  await expect(page.getByRole('tab', { name: 'AD', exact: true })).toBeVisible();
+  let release: (() => void) | undefined;
+  await page.route('**/devices/**/audit', async route => { await new Promise<void>(resolve => { release = resolve; }); await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'old', action: 'old-audit-canary', result: 'Success', occurredAt: '2026-09-11T14:00:00Z' }], nextCursor: null }) }).catch(() => {}); });
+  await page.getByRole('tab', { name: 'Audit', exact: true }).click(); await expect.poll(() => Boolean(release)).toBe(true);
+  await page.goto('/#/device?environment=west&id=other'); release?.();
+  await expect(page.getByRole('alert')).toContainText('Select the environment'); await expect(page.getByText('old-audit-canary')).toHaveCount(0);
 });

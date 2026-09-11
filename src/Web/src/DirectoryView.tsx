@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, getDirectoryObject, getDirectoryObjects, getDirectoryStatus } from './api';
 import { useI18n } from './i18n';
 import './directory.css';
-import DeviceAssetPanel from './DeviceAssetPanel';
+import DeviceTabs from './DeviceTabs';
 import DeviceUserPanel from './DeviceUserPanel';
 
 export type DirectoryKind = 'User' | 'Group' | 'Computer' | 'OrganizationalUnit';
@@ -298,9 +298,9 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
                   const [title, body] = stateCopy('error', detailError);
                   return <DirectoryState compact error title={title} body={body ?? t('directory.detailsError')} />;
                 })()}
-                {!detailLoading && detail && <DetailFields item={detail} asOf={formattedDate(detailAsOf)} t={t} />}
-                {!detailLoading && detail?.kind === 'Computer' && <DeviceAssetPanel key={`${environmentId}:${detail.id}`} environmentId={environmentId} id={detail.id} />}
-                {!detailLoading && detail && (detail.kind === 'Computer' || detail.kind === 'User') && <DeviceUserPanel key={`links:${environmentId}:${detail.id}`} environmentId={environmentId} id={detail.id} kind={detail.kind} />}
+                {!detailLoading && detail?.kind === 'Computer' && <><a className="device-open-link" href={`#/device?environment=${encodeURIComponent(environmentId)}&id=${encodeURIComponent(detail.id)}`}>{t('device.open')}</a><DeviceTabs key={`${environmentId}:${detail.id}`} environmentId={environmentId} id={detail.id} ad={<DetailFields item={detail} asOf={formattedDate(detailAsOf)} t={t} />} /></>}
+                {!detailLoading && detail && detail.kind !== 'Computer' && <DetailFields item={detail} asOf={formattedDate(detailAsOf)} t={t} />}
+                {!detailLoading && detail?.kind === 'User' && <DeviceUserPanel key={`links:${environmentId}:${detail.id}`} environmentId={environmentId} id={detail.id} kind="User" />}
               </aside>
             )}
           </div>
@@ -315,7 +315,7 @@ function Protection({ item, t }: { item: DirectoryObject; t: ReturnType<typeof u
   return <span className={`directory-protection ${!item.protectionKnown ? 'unknown' : item.isProtected ? 'protected' : ''}`}>{t(key)}</span>;
 }
 
-function DetailFields({ item, asOf, t }: { item: DirectoryObject; asOf: string | null; t: ReturnType<typeof useI18n>['t'] }) {
+export function DetailFields({ item, asOf, t }: { item: DirectoryObject; asOf: string | null; t: ReturnType<typeof useI18n>['t'] }) {
   const fields: [string, string | number | null | undefined][] = [
     ['directory.fieldKind', t(`directory.title.${item.kind}`)], ['directory.fieldName', item.name],
     ['directory.fieldDn', item.distinguishedName], ['directory.fieldAccount', item.samAccountName],
