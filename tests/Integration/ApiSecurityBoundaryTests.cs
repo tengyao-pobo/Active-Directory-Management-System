@@ -257,6 +257,23 @@ public sealed class ApiSecurityBoundaryTests(PostgresApiFixture fixture)
         expectedVersion = version,
         reason
     };
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Null_plan_fields_are_validation_errors_without_mutation(bool missingChange)
+    {
+        var data = await fixture.SeedAsync();
+        using var client = fixture.Client(data.RequesterToken);
+        var body = missingChange
+            ? new { change = (object?)null, reason = (string?)"valid reason", expectedVersion = 1 }
+            : new { change = (object?)new { kind = "role.create", name = "test", permissions = new[] { PermissionCatalog.UserView } }, reason = (string?)null, expectedVersion = 1 };
+        using var request = await client.MutationAsync(HttpMethod.Post, PlanPath(data), body);
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, await fixture.PlanCountAsync(data.Environment.Id));
+    }
+
     private static string PlanPath(TestData data) => $"/api/v1/environments/{data.Environment.Id}/change-plans";
     private static string ApprovalPath(TestData data, Guid planId) => $"{PlanPath(data)}/{planId}/approval";
     private static string ExecutionPath(TestData data, Guid planId) => $"{PlanPath(data)}/{planId}/execution";

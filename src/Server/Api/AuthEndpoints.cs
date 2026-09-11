@@ -66,7 +66,7 @@ public static class AuthEndpoints
             ConsoleOptions config, IPasswordHasher<Principal> hasher, IFido2 fido, TimeProvider time, CancellationToken ct) =>
         {
             if (!EmergencyAllowed(http, config)) return Results.Problem(statusCode: 403, title: "EmergencyLoginUnavailable");
-            if (input.Username.Length is < 1 or > 128 || input.Password.Length is < 1 or > 1024) return Results.BadRequest();
+            if (input.Username is not { Length: > 0 and <= 128 } || input.Password is not { Length: > 0 and <= 1024 }) return Results.BadRequest();
             var now = time.GetUtcNow();
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             var principal = await db.Principals.SingleOrDefaultAsync(x => x.Issuer == "local" && x.Subject == input.Username && x.Enabled, ct);
@@ -117,7 +117,8 @@ public static class AuthEndpoints
         group.MapPost("/passkeys/options", async (EnrollmentRequest input, HttpContext http, ConsoleDbContext db,
             ConsoleOptions config, IFido2 fido, TimeProvider time, CancellationToken ct) =>
         {
-            if (!EmergencyAllowed(http, config) || input.Token.Length != 64) return Results.Forbid();
+            if (!EmergencyAllowed(http, config)) return Results.Forbid();
+            if (input.Token is not { Length: 64 }) return Results.BadRequest();
             var hash = SessionTokens.Hash(input.Token); var now = time.GetUtcNow();
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             var grant = await db.EnrollmentGrants.SingleOrDefaultAsync(x => x.IdHash == hash, ct);

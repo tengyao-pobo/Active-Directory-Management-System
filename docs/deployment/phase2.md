@@ -11,7 +11,7 @@
 - Role/Permission/Scope、Owner-only protection、未知保護狀態拒絕寫入、同一 assignment scope、OperatorId 雙人核准。
 - DB-local Environment/RBAC 變更有 immutable plan、15 分鐘 expiry、時間精度穩定 hash、交易式單次執行、Audit 與 Outbox。
 
-驗證證據：24 個 Unit、13 個 PostgreSQL/HTTP Integration、5 個真實簽章的 WebAuthn HTTP tests，合計 42 個。後續測試增加時以 CI 與最終結果為準。Integration 由獨立 Tester 撰寫，找到 PostgreSQL 微秒精度造成 persisted plan hash 改變的 bug，已修正並新增 regression。
+驗證證據：24 個 Unit、15 個 PostgreSQL/HTTP Integration、5 個真實簽章的 WebAuthn HTTP tests，合計 44 個。後續測試增加時以 CI 與最終結果為準。Integration 由獨立 Tester 撰寫，找到 PostgreSQL 微秒精度造成 persisted plan hash 改變的 bug，已修正並新增 regression；Root 另補 null-input regression。
 
 Security tests 使用臨時 P-256 私鑰與 CBOR/COSE 產生軟體 authenticator 的真實簽章，驗證 API 註冊→密碼→assertion→session；也拒絕錯誤 origin/challenge、缺 UV、錯誤簽章及重播。**這不等於已驗證實體 FIDO2 金鑰、瀏覽器 UI 或 Windows Kerberos。**
 

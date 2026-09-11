@@ -91,8 +91,10 @@ public static class EnvironmentApi
         group.MapPost("/change-plans", async (Guid environmentId, PlanRequest input, HttpContext http, ConsoleDbContext db,
             EnvironmentAccess access, ChangePlanService plans, TimeProvider time, ConsoleOptions config, CancellationToken ct) =>
         {
+            if (input.Change is null || input.Reason is not { Length: >= 5 and <= 512 })
+                return Results.Problem(statusCode: 400, title: "InvalidPlanRequest");
             var error = Validate(input.Change);
-            if (error is not null || input.Reason.Length is < 5 or > 512) return Results.Problem(statusCode: 400, title: error ?? "ReasonRequired");
+            if (error is not null) return Results.Problem(statusCode: 400, title: error);
             await using var tx = await db.BeginEnvironment(environmentId, AuthEndpoints.Actor(http), ct);
             if (!await access.Allows(environmentId, AuthEndpoints.Actor(http), Permission(input.Change), ct)) return Results.NotFound();
             if (!AuthEndpoints.FreshStepUp(http, time, config)) return Results.Problem(statusCode: 403, title: "StepUpRequired");
@@ -116,6 +118,7 @@ public static class EnvironmentApi
         group.MapPost("/change-plans/{id:guid}/approval", async (Guid environmentId, Guid id, ApprovalRequest input, HttpContext http, ConsoleDbContext db,
             EnvironmentAccess access, ChangePlanService plans, TimeProvider time, ConsoleOptions config, CancellationToken ct) =>
         {
+            if (input.PlanHash is not { Length: 64 }) return Results.BadRequest();
             await using var tx = await db.BeginEnvironment(environmentId, AuthEndpoints.Actor(http), ct);
             if (!await access.Allows(environmentId, AuthEndpoints.Actor(http), PermissionCatalog.ChangeApprove, ct)) return Results.NotFound();
             if (!AuthEndpoints.FreshStepUp(http, time, config)) return Results.Problem(statusCode: 403, title: "StepUpRequired");
