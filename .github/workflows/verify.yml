@@ -18,7 +18,7 @@ jobs:
       - run: dotnet restore tests/AgentHost/AgentHost.Tests.csproj --locked-mode
       - run: dotnet test tests/AgentHost/AgentHost.Tests.csproj -c Release --no-restore --logger trx
       - run: dotnet restore tests/AgentEnrollment/AgentEnrollment.Tests.csproj --locked-mode
-      - run: dotnet test tests/AgentEnrollment/AgentEnrollment.Tests.csproj -c Release --no-restore --filter "FullyQualifiedName~CsrValidationTests|FullyQualifiedName~CertificateValidationTests" --logger trx
+      - run: dotnet test tests/AgentEnrollment/AgentEnrollment.Tests.csproj -c Release --no-restore --filter "FullyQualifiedName~CsrValidationTests|FullyQualifiedName~CertificateValidationTests|FullyQualifiedName~SealedEnrollmentGrantTests" --logger trx
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -32,8 +32,12 @@ jobs:
           node-version: '24.19.0'
       - run: npm install --global pnpm@11.19.0
       - run: pnpm install --frozen-lockfile
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
       - run: pnpm lint
       - run: pnpm test
+      - run: pnpm test:enrollment-interop
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e

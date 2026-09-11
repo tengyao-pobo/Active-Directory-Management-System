@@ -10,6 +10,8 @@
 
 此增量只處理 initial enrollment；已有 active registration 的設備不能走此入口。Renewal、撤銷與替換註冊需另行實作。grant 建立目前只供離線 table owner；平台 UI 發行授權仍需專用權限、scope 及稽核端點。
 
+平台統一發行的[授權與加密交付契約](../architecture/platform-enrollment-grants.md)及隔離封套 primitive 已加入；尚未啟用平台發行，不能使用 primitive 繞過計畫、核准或直接建立私有 grant。
+
 ## 發證任務與結果不明
 
 Issue 登入只能取得固定 issuance ID 的 lease。重領逾期工作仍使用同一個 issuance ID；未來 CA adapter 必須以該 ID 執行 IssueOrRecover，取回同一份 CA 結果。不能將網路逾時解釋為「一定沒有發證」。無法證明原 CA 結果時進入 OutcomeUnknown，停止自動發證；只有確認未發證的明確失敗才可標記 PermanentFailed。
