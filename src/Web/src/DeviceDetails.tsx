@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { getDirectoryObject, type DirectoryObject } from './api';
 import { DetailFields } from './DirectoryView';
 import DeviceTabs from './DeviceTabs';
+import FavoriteButton from './FavoriteButton';
 import { useI18n } from './i18n';
 
 export default function DeviceDetails({ environmentId, targetEnvironment, id }: { environmentId: string; targetEnvironment: string; id: string }) {
@@ -16,7 +17,7 @@ export default function DeviceDetails({ environmentId, targetEnvironment, id }: 
   }, [environmentId, id, valid]);
   return <section className="panel device-full-page"><a href="#/computers">{t('device.back')}</a>
     {!valid || error ? <p role="alert">{t(!valid ? 'device.environmentMismatch' : 'device.unavailable')}</p> : !detail ? <p role="status">{t('directory.loadingDetails')}</p> : <>
-      <h1>{detail.item.name}</h1><DeviceTabs key={`${environmentId}:${id}`} environmentId={environmentId} id={id} ad={<DetailFields item={detail.item} asOf={new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(detail.asOf))} t={t} />} />
+      <h1>{detail.item.name}</h1><FavoriteButton environmentId={environmentId} id={id} /><DeviceTabs key={`${environmentId}:${id}`} environmentId={environmentId} id={id} ad={<DetailFields item={detail.item} asOf={new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(detail.asOf))} t={t} />} />
     </>}
   </section>;
 }

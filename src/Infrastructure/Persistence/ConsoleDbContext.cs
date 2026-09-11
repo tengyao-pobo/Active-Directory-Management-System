@@ -7,6 +7,7 @@ namespace ItManagement.Persistence;
 
 public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options) : DbContext(options)
 {
+    public DbSet<DirectoryFavorite> Favorites => Set<DirectoryFavorite>();
     public DbSet<DeviceAsset> DeviceAssets => Set<DeviceAsset>();
     public DbSet<DeviceUserLink> DeviceUserLinks => Set<DeviceUserLink>();
     public DbSet<ManagedEnvironment> Environments => Set<ManagedEnvironment>();
@@ -41,6 +42,11 @@ public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options)
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        b.Entity<DirectoryFavorite>().ToTable("Favorites").HasKey(x => new { x.EnvironmentId, x.PrincipalId, x.ObjectId });
+        b.Entity<DirectoryFavorite>().Property(x => x.Kind).HasMaxLength(32);
+        b.Entity<DirectoryFavorite>().Property(x => x.CreatedAt).HasDefaultValueSql("clock_timestamp()");
+        b.Entity<DirectoryFavorite>().HasOne<EnvironmentMembership>().WithMany()
+            .HasForeignKey(x => new { x.EnvironmentId, x.PrincipalId }).OnDelete(DeleteBehavior.Restrict);
         ConfigureTenant<DeviceAsset>(b, "DeviceAssets");
         ConfigureTenant<DeviceUserLink>(b, "DeviceUserLinks");
         b.Entity<DeviceUserLink>().Property(x => x.Version).IsConcurrencyToken();

@@ -5,6 +5,7 @@ import './directory.css';
 import DeviceTabs from './DeviceTabs';
 import DeviceUserPanel from './DeviceUserPanel';
 import DirectoryProposal from './DirectoryProposal';
+import FavoriteButton from './FavoriteButton';
 
 export type DirectoryKind = 'User' | 'Group' | 'Computer' | 'OrganizationalUnit';
 
@@ -295,6 +296,7 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
               <aside className="directory-detail" aria-labelledby={`directory-detail-title-${kind}`} aria-live="polite">
                 <div className="directory-detail-header"><h2 id={`directory-detail-title-${kind}`}>{t('directory.detailsTitle')}</h2><button type="button" className="directory-close" onClick={clearDetail} aria-label={t('directory.closeDetails')}>×</button></div>
                 {detailLoading && <DirectoryState loading compact title={t('directory.loadingDetails')} />}
+                {!detailLoading && detail && <FavoriteButton environmentId={environmentId} id={detail.id} />}
                 {!detailLoading && Boolean(detailError) && (() => {
                   const [title, body] = stateCopy('error', detailError);
                   return <DirectoryState compact error title={title} body={body ?? t('directory.detailsError')} />;

@@ -37,6 +37,7 @@ React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核�
 - [單一 AD 目標重讀與判定服務接點](docs/deployment/ad-target-read.md)
 
 - [全部需求實作追蹤](docs/architecture/implementation-status.md)
+- [平台個人收藏](docs/deployment/favorites.md)
 
 - [版本化 AD 保護政策與保守分類](docs/deployment/ad-protection-policy.md)
 - [Agent 盤點與離線佇列基礎](docs/deployment/agent-foundation.md)

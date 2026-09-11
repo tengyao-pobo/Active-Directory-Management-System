@@ -101,6 +101,7 @@ app.MapGet("/health/live", () => Results.Ok(new { status = "alive" })).AllowAnon
 app.MapAuth();
 app.MapEnvironmentApi();
 app.MapDirectoryApi();
+app.MapFavorites();
 app.MapDeviceAssets();
 app.MapDeviceUserLinks();
 app.MapDashboard();

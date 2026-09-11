@@ -84,6 +84,8 @@
 .device-tabs [role=tab]:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 .device-full-page { padding: 1rem; }
 .device-open-link { display: block; margin: 1rem; }
+.favorite-control { margin: .8rem 1rem; }
+.favorite-control p { color: var(--muted); font-size: .75rem; line-height: 1.5; }
 .device-tab-hint { padding: 0 .8rem; font-size: .75rem; color: var(--muted); }
 .device-full-page a, .device-open-link, .dashboard-panel a { color: var(--teal); }
 
