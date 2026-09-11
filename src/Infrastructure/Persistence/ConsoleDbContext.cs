@@ -7,6 +7,7 @@ namespace ItManagement.Persistence;
 
 public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options) : DbContext(options)
 {
+    public DbSet<DeviceAsset> DeviceAssets => Set<DeviceAsset>();
     public DbSet<ManagedEnvironment> Environments => Set<ManagedEnvironment>();
     public DbSet<Principal> Principals => Set<Principal>();
     public DbSet<EnvironmentMembership> Memberships => Set<EnvironmentMembership>();
@@ -39,6 +40,10 @@ public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options)
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        ConfigureTenant<DeviceAsset>(b, "DeviceAssets");
+        b.Entity<DeviceAsset>().Property(x => x.Lifecycle).HasMaxLength(32);
+        b.Entity<DeviceAsset>().Property(x => x.Notes).HasMaxLength(4000);
+        b.Entity<DeviceAsset>().Property(x => x.Version).IsConcurrencyToken();
         ConfigureTenant<DirectoryObjectRecord>(b, "DirectoryObjects");
         b.Entity<DirectoryObjectRecord>().HasIndex(x => new { x.EnvironmentId, x.Generation, x.Kind, x.Id });
         b.Entity<DirectoryObjectRecord>().Property(x => x.Kind).HasMaxLength(32);

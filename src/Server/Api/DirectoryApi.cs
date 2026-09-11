@@ -81,7 +81,7 @@ public static class DirectoryApi
     private static Task<bool> Member(ConsoleDbContext db, Guid env, Guid actor, CancellationToken ct) =>
         db.Memberships.AnyAsync(x => x.EnvironmentId == env && x.PrincipalId == actor && x.Active, ct);
 
-    private static async Task<IQueryable<DirectoryObjectRecord>> Scoped(ConsoleDbContext db, Guid env, Guid actor, string permission, Guid generation, CancellationToken ct)
+    internal static async Task<IQueryable<DirectoryObjectRecord>> Scoped(ConsoleDbContext db, Guid env, Guid actor, string permission, Guid generation, CancellationToken ct)
     {
         var grants = await (from assignment in db.Assignments
             join role in db.Roles on new { assignment.EnvironmentId, Id = assignment.RoleId } equals new { role.EnvironmentId, role.Id }

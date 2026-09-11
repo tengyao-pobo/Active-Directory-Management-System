@@ -71,3 +71,9 @@
 .directory-wrapper > button { margin-bottom: 1rem; }
 .global-directory-results > .directory-wrapper { border-top: 1px solid var(--line); padding-top: 1.5rem; margin-top: 1.5rem; }
 .global-directory-search > p, .global-directory-results > p { color: var(--muted); font-size: .8rem; }
+
+.asset-panel { padding: 1rem; border-top: 1px solid var(--line); }
+.asset-panel p { font-size: .75rem; color: var(--muted); }
+.asset-panel label { display: grid; gap: .4rem; margin-bottom: 1rem; font-size: .8rem; }
+.asset-panel textarea, .asset-panel select { width: 100%; color: var(--text); background: var(--surface); border: 1px solid var(--line); padding: .5rem; }
+.asset-panel button { margin: .3rem .3rem .3rem 0; }

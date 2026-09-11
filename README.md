@@ -18,6 +18,7 @@ React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核�
 - [Phase 3 前端建置與驗證](docs/deployment/phase3.md)
 - [Phase 4 Connector 與驗收界線](docs/deployment/phase4.md)
 - [Phase 5 目錄介面與驗證](docs/deployment/phase5.md)
+- [Phase 5 電腦備註與生命週期](docs/deployment/device-assets.md)
 - [目前 API 契約](docs/api/phase2.md)
 
 三個產品界線：Web Server 負責平台與受控 Connector；Endpoint Agent 僅盤點；Windows Helper 僅在管理員工作站啟動允許的本機工具。
