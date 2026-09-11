@@ -1,2 +1,24 @@
-# Active-Directory-Management-System
+# IT Management Console
+
+企業內網 IT 管理平台，採 ASP.NET Core / .NET 10、React / TypeScript、PostgreSQL，預設深色與繁體中文。
+
 An internal web-based Active Directory management platform with role-based access control, computer monitoring, remote administration, and IT management tools.
+
+目前階段：**架構已確認，Phase 2 後端基礎已實作並測試；仍未達正式上線條件。**
+
+已實作 .NET 10 Solution、PostgreSQL migrations/RLS、opaque session、Windows SSO adapter、緊急帳號密碼 + Passkey、細粒度 RBAC/Scope、雙人核准的本機設定變更、Audit/Outbox 與離線 provisioning 工具。
+
+尚未實作 React UI、AD connector、Inventory Agent、Helper 或雲端整合。Windows SSO 尚需企業 IIS/Kerberos 驗收；Owner 轉移/移除、AD 群組即時角色解析與復原碼流程尚待完成，相關變更入口未開放。
+
+- [架構設計：13 項交付內容](docs/architecture/architecture.md)
+- [資料模型與資料保護](docs/architecture/database.md)
+- [分階段實作、驗收與上線條件](docs/architecture/roadmap.md)
+- [安全架構審查與決策](docs/security/design-review.md)
+- [Phase 2 執行與驗證紀錄](docs/deployment/phase2.md)
+- [目前 API 契約](docs/api/phase2.md)
+
+三個產品界線：Web Server 負責平台與受控 Connector；Endpoint Agent 僅盤點；Windows Helper 僅在管理員工作站啟動允許的本機工具。
+
+原始碼與測試資料使用合成資訊。沒有對任何真實 AD、Entra 或 Exchange 執行操作。正式環境名稱、帳號與機密均須由部署設定提供。`.local/`、`.tools/`、credentials 與測試輸出不納入 Git。
+
+開發需求：.NET SDK 10.0.401、PostgreSQL 18，以及分開的 migration/seed 與受限 runtime 資料庫帳號。快速驗證方式與實際測試範圍見 Phase 2 文件；不要用資料庫 superuser 啟動 API。
