@@ -42,6 +42,14 @@ public interface IDirectoryReader
     Task<DirectorySnapshot> ReadSnapshotAsync(CancellationToken cancellationToken);
 }
 
+public sealed record DirectorySourceIdentity(string DnsHostName, string ServiceDn, Guid DsaObjectId, Guid InvocationId);
+public sealed record DirectoryTargetSnapshot(Guid VerifiedDomainId, string ConfigurationHash,
+    DirectorySourceIdentity Source, DateTimeOffset ReadStartedAt, DateTimeOffset ReadCompletedAt, DirectoryEntrySnapshot Entry);
+public interface IDirectoryTargetReader
+{
+    Task<DirectoryTargetSnapshot> ReadUserAsync(Guid objectId, CancellationToken cancellationToken);
+}
+
 public enum DirectoryReadErrorCode
 {
     InvalidConfiguration,

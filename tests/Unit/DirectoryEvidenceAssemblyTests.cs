@@ -6,7 +6,7 @@ public sealed class DirectoryEvidenceAssemblyTests
 {
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-09-11T15:00:00Z");
     private static readonly DirectoryEvidenceBinding Binding = new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
-        Guid.NewGuid(), PermissionCatalog.UserDisable, 7, new string('A', 64));
+        Guid.NewGuid(), PermissionCatalog.UserDisable, 7, new string('A', 64), new("dc01.example.test", "CN=NTDS Settings,CN=DC01,CN=Configuration,DC=example,DC=test", Guid.NewGuid(), Guid.NewGuid()));
     private static readonly DirectoryChangeEvidence Object = new(Binding.EnvironmentId, Binding.DomainId, Binding.ObjectId,
         "User", "CN=Test,DC=example,DC=test", 42, Binding.ConfigurationHash, Binding.PolicyVersion,
         false, false, false, Now.AddSeconds(-1), true, "IT");
@@ -38,7 +38,11 @@ public sealed class DirectoryEvidenceAssemblyTests
         yield return [Binding with { Permission = PermissionCatalog.UserEdit }];
         yield return [Binding with { PolicyVersion = 8 }];
         yield return [Binding with { ConfigurationHash = new string('B', 64) }];
-        yield return [Binding with { SchemaVersion = 2 }];
+        yield return [Binding with { SchemaVersion = 1 }];
+        yield return [Binding with { Server = Binding.Server with { DnsHostName = "dc02.example.test" } }];
+        yield return [Binding with { Server = Binding.Server with { ServiceDn = "CN=Other" } }];
+        yield return [Binding with { Server = Binding.Server with { DsaObjectId = Guid.NewGuid() } }];
+        yield return [Binding with { Server = Binding.Server with { InvocationId = Guid.NewGuid() } }];
     }
     [Theory] [MemberData(nameof(BindingDrifts))]
     public void Every_binding_field_is_required_on_each_receipt(DirectoryEvidenceBinding changed)

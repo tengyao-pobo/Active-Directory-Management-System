@@ -2,8 +2,9 @@ namespace ItManagement.Core;
 
 // Internal service contracts, never HTTP request models. A matching record is not proof of provenance.
 // A future host must obtain each input from independently trusted services, not deserialize client claims.
+public sealed record DirectoryEvidenceServer(string DnsHostName, string ServiceDn, Guid DsaObjectId, Guid InvocationId);
 public sealed record DirectoryEvidenceBinding(Guid EnvironmentId, Guid DomainId, Guid ObjectId,
-    Guid ActorId, string Permission, long PolicyVersion, string ConfigurationHash, int SchemaVersion = 1);
+    Guid ActorId, string Permission, long PolicyVersion, string ConfigurationHash, DirectoryEvidenceServer Server, int SchemaVersion = 2);
 public enum DirectoryObservationSource { Unknown, CachedProjection, DirectDirectoryRead }
 public enum DirectoryProtectionDecision { Unknown, Protected, Unprotected }
 public sealed record DirectoryObjectObservation(DirectoryEvidenceBinding Binding, DirectoryChangeEvidence Object,
@@ -41,9 +42,12 @@ public static class DirectoryEvidenceAssembler
         DirectoryEvidenceAssemblyResult Reject(DirectoryEvidenceFailure failure) => new(null, failure);
         var permission = kind switch { DirectoryChangeKind.DisableUser => PermissionCatalog.UserDisable,
             DirectoryChangeKind.SetUserDepartment => PermissionCatalog.UserEdit, _ => null };
-        if (expected.SchemaVersion != 1 || expected.EnvironmentId == Guid.Empty || expected.DomainId == Guid.Empty || expected.ObjectId == Guid.Empty ||
+        if (expected.SchemaVersion != 2 || expected.EnvironmentId == Guid.Empty || expected.DomainId == Guid.Empty || expected.ObjectId == Guid.Empty ||
             expected.ActorId == Guid.Empty || permission is null || expected.Permission != permission || expected.PolicyVersion < 1 ||
-            expected.ConfigurationHash is not { Length: 64 } hash || !hash.All(Uri.IsHexDigit))
+            expected.ConfigurationHash is not { Length: 64 } hash || !hash.All(Uri.IsHexDigit) || expected.Server is null ||
+            expected.Server.DsaObjectId == Guid.Empty || expected.Server.InvocationId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(expected.Server.ServiceDn) || expected.Server.ServiceDn.Length > 4096 ||
+            expected.Server.DnsHostName is not { Length: > 0 and <= 253 } host || !host.Contains('.') || Uri.CheckHostName(host) != UriHostNameType.Dns)
             return Reject(DirectoryEvidenceFailure.InvalidBinding);
         if (observation.Binding != expected || scope.Binding != expected || protection.Binding != expected)
             return Reject(DirectoryEvidenceFailure.BindingMismatch);

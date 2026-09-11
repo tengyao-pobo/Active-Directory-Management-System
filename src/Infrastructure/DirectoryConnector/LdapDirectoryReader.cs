@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 
 namespace ItManagement.DirectoryConnector;
 
-public sealed class LdapDirectoryReader : IDirectoryReader
+public sealed class LdapDirectoryReader : IDirectoryReader, IDirectoryTargetReader
 {
     private readonly DirectoryConnectorOptions options;
     private readonly IDirectoryTransportFactory transportFactory;
@@ -87,6 +87,45 @@ public sealed class LdapDirectoryReader : IDirectoryReader
         {
             throw new DirectoryReadException(DirectoryReadErrorCode.InvalidResponse);
         }
+    }
+
+    public async Task<DirectoryTargetSnapshot> ReadUserAsync(Guid objectId, CancellationToken cancellationToken)
+    {
+        options.Validate();
+        if (objectId == Guid.Empty) throw new DirectoryReadException(DirectoryReadErrorCode.InvalidConfiguration);
+        cancellationToken.ThrowIfCancellationRequested();
+        var started = DateTimeOffset.UtcNow;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(options.TargetReadTimeout);
+        var ct = deadline.Token;
+        try
+        {
+            await using var transport = transportFactory.Create(options);
+            if (transport is not IDirectoryTargetTransport target) throw new DirectoryReadException(DirectoryReadErrorCode.InvalidResponse);
+            ValidateNamingContext(await target.ReadRootDseAsync(ct));
+            var domain = await target.ReadBaseObjectIdAsync(options.BaseDn, ct);
+            if (domain != options.ExpectedDomainId) throw new DirectoryReadException(DirectoryReadErrorCode.DomainIdentityMismatch);
+            var source = await target.ReadSourceIdentityAsync(ct);
+            _ = DistinguishedName.Parse(source.ServiceDn);
+            if (source.DsaObjectId == Guid.Empty || source.InvocationId == Guid.Empty || source.DnsHostName is not { Length: > 0 and <= 253 } ||
+                !source.DnsHostName.Contains('.') || Uri.CheckHostName(source.DnsHostName) != UriHostNameType.Dns)
+                throw new DirectoryReadException(DirectoryReadErrorCode.InvalidResponse);
+            var rows = await target.ReadUserAsync(options.BaseDn, objectId, ct);
+            if (rows.Count != 1) throw new DirectoryReadException(DirectoryReadErrorCode.InvalidResponse);
+            var entry = MapEntry(rows[0]);
+            if (entry.ObjectId != objectId || entry.Kind != DirectoryObjectKind.User ||
+                !DistinguishedName.IsDescendantOf(entry.DistinguishedName, options.BaseDn, false))
+                throw new DirectoryReadException(DirectoryReadErrorCode.InvalidResponse);
+            if (source != await target.ReadSourceIdentityAsync(ct) || domain != await target.ReadBaseObjectIdAsync(options.BaseDn, ct))
+                throw new DirectoryReadException(DirectoryReadErrorCode.DomainIdentityMismatch);
+            ct.ThrowIfCancellationRequested();
+            return new(domain, options.ComputeConfigurationHash(), source, started, DateTimeOffset.UtcNow, entry);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested) { throw new DirectoryReadException(DirectoryReadErrorCode.Timeout); }
+        catch (DirectoryReadException) { throw; }
+        catch (DirectoryTransportException error) { throw new DirectoryReadException(error.Code); }
+        catch (Exception) { throw new DirectoryReadException(DirectoryReadErrorCode.InvalidResponse); }
     }
 
     private async Task<List<DirectoryEntrySnapshot>> ReadAllPagesAsync(

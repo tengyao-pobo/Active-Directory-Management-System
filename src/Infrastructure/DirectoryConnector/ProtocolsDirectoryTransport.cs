@@ -8,7 +8,7 @@ internal sealed class ProtocolsDirectoryTransportFactory : IDirectoryTransportFa
     public IDirectoryTransport Create(DirectoryConnectorOptions options) => new ProtocolsDirectoryTransport(options);
 }
 
-internal sealed class ProtocolsDirectoryTransport : IDirectoryTransport
+internal sealed class ProtocolsDirectoryTransport : IDirectoryTargetTransport
 {
     private const int LdapsPort = 636;
     private static readonly string[] AllowedAttributes =
@@ -110,6 +110,45 @@ internal sealed class ProtocolsDirectoryTransport : IDirectoryTransport
         return ValueTask.CompletedTask;
     }
 
+    public async Task<DirectorySourceIdentity> ReadSourceIdentityAsync(CancellationToken ct)
+    {
+        var root = await SendSearchAsync(new SearchRequest(null, "(objectClass=*)", SearchScope.Base,
+            "dnsHostName", "dsServiceName", "configurationNamingContext"), ct);
+        if (root.Entries.Count != 1) throw new DirectoryTransportException(DirectoryReadErrorCode.InvalidResponse);
+        string SingleString(SearchResultEntry entry, string name)
+        {
+            var values = GetValues(entry, name);
+            if (values.Count != 1 || values[0] is not string value || string.IsNullOrWhiteSpace(value) || value.Length > 4096)
+                throw new DirectoryTransportException(DirectoryReadErrorCode.InvalidResponse);
+            return value;
+        }
+        var host = SingleString(root.Entries[0], "dnsHostName");
+        var dn = SingleString(root.Entries[0], "dsServiceName");
+        var context = SingleString(root.Entries[0], "configurationNamingContext");
+        if (!DistinguishedName.IsDescendantOf(dn, context, false)) throw new DirectoryTransportException(DirectoryReadErrorCode.InvalidResponse);
+        var dsa = await SendSearchAsync(new SearchRequest(dn, "(objectClass=nTDSDSA)", SearchScope.Base, "objectGUID", "invocationId"), ct);
+        if (dsa.Entries.Count != 1) throw new DirectoryTransportException(DirectoryReadErrorCode.InvalidResponse);
+        Guid SingleGuid(string name)
+        {
+            var values = GetValues(dsa.Entries[0], name);
+            if (values.Count != 1 || values[0] is not byte[] bytes || bytes.Length != 16)
+                throw new DirectoryTransportException(DirectoryReadErrorCode.InvalidResponse);
+            return new Guid(bytes);
+        }
+        return new(host.ToLowerInvariant(), dn, SingleGuid("objectGUID"), SingleGuid("invocationId"));
+    }
+
+    internal static SearchRequest UserRequest(string baseDn, Guid objectId) => new(baseDn,
+        $"(&(objectCategory=person)(objectClass=user)(!(objectClass=computer))(objectGUID={LdapFilter.EscapeBinary(objectId)}))",
+        SearchScope.Subtree, AllowedAttributes) { SizeLimit = 2 };
+
+    public async Task<IReadOnlyList<DirectoryRawEntry>> ReadUserAsync(string baseDn, Guid objectId, CancellationToken ct)
+    {
+        var response = await SendSearchAsync(UserRequest(baseDn, objectId), ct);
+        return response.Entries.Cast<SearchResultEntry>().Select(entry => new DirectoryRawEntry(entry.DistinguishedName,
+            AllowedAttributes.ToDictionary(name => name, name => (IReadOnlyList<object>)GetValues(entry, name), StringComparer.OrdinalIgnoreCase))).ToArray();
+    }
+
     private async Task<SearchResponse> SendSearchAsync(SearchRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -117,7 +156,7 @@ internal sealed class ProtocolsDirectoryTransport : IDirectoryTransport
         {
             var response = await Task.Run(
                 () => (SearchResponse)connection.SendRequest(request, timeout),
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             // A referral is an incomplete search, even when the paged result cookie terminates.
             if (response.ResultCode != ResultCode.Success || response.References.Count != 0)

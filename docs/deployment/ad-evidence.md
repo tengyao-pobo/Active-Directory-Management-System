@@ -5,7 +5,7 @@
 ## Connector 證據
 
 - VerifiedDomainId：保留既有 Base DN objectGUID 與設定 ExpectedDomainId 比對後的結果。
-- ConfigurationHash：版本 1 的有效讀取設定 SHA-256 摘要，包含 host、Base DN、domain GUID、分頁與時間上限，以及固定 LDAPS/636、Negotiate、不追蹤 referrals、平台憑證驗證語意。這是設定一致性指紋，不是簽章、身分證明或授權。
+- ConfigurationHash：版本 2 的有效讀取設定 SHA-256 摘要，包含 host、Base DN、domain GUID、分頁與時間上限，單一目標讀取契約與期限，以及固定 LDAPS/636、Negotiate、不追蹤 referrals、平台憑證驗證語意。這是設定一致性指紋，不是簽章、身分證明或授權。
 - ReadStartedAt / CapturedAt：保留整次分頁讀取區間。不能把完成時間當成所有物件的實際觀察時間；組裝器以起始時間計算兩分鐘新鮮度。
 - Enabled：讀取 userAccountControl 的 ACCOUNTDISABLE bit，缺值為 null，非法格式或多值拒絕整次讀取。Group / OU 不推論帳號狀態。依據 [Microsoft 文件](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/useraccountcontrol-manipulate-account-properties)。
 
@@ -25,8 +25,8 @@ DirectoryEvidenceAssembler 接收伺服器端預期綁定、直接目錄讀取�
 
 無 migration 或權限授予；按既有流程重新發佈 Connector/Core 即可，回復前一版本可撤回。新的 UAC 非法回應將使同步失敗並保留不可用狀態，而不是提供可能錯誤的啟用資訊。
 
-下一階段：實作受控的單一目標重讀與保護分類服務接點，將此契約接到伺服器端可信來源並做隔離驗收；再建立独立持久化計畫與雙人核准。真實 AD 寫入仍需另外的受控驗收與明確授權。
+單一目標重讀與保護分類服務接點已完成，詳見 [ad-target-read.md](ad-target-read.md)。目前接點尚未註冊為正式服務，保護分類預設仍為 Unknown。下一階段是可版本化保護政策及唯讀分類器，再建立獨立持久化計畫與雙人核准。真實 AD 寫入仍需受控驗收與明確授權。
 
-安全複核後的成功結果為 DirectoryEvidenceReceipt：保留 Binding、完整讀取觀察、範圍及保護判定、與正規化的 Evidence。建構子僅供 Core 組件內使用。未來計畫橋接必須使用完整收據，不能只取出 Evidence 丟失操作者與權限等綁定。收據仍不是可跨信任邊界驗證的 token。正式執行前也必須取得實際 DC 的身分並綁定來源，因為 uSNChanged 是 DC 本機版本；目前設定 host 的摘要不宣稱解決 alias 或來源 DC 切換。
+安全複核後的成功結果為 DirectoryEvidenceReceipt：保留 Binding、完整讀取觀察、範圍及保護判定、與正規化的 Evidence。建構子僅供 Core 組件內使用。未來計畫橋接必須使用完整收據，不能只取出 Evidence 丟失操作者與權限等綁定。收據仍不是可跨信任邊界驗證的 token。綁定 schema v2 已要求完整 DC DNS / Service DN / DSA GUID / Invocation ID，單一目標讀取會比對前後來源。因為 uSNChanged 是 DC 本機版本，不能省略這項綁定；這也不代表未來寫入具有原子性。
 
-最終本機後端驗證：162 項通過（Core 44、Connector 44、Security 5、Integration 69），建置無警告或錯誤。
+最新目標重讀階段本機後端驗證：184 項通過（Core 48、Connector 58、Security 5、Integration 73），建置無警告或錯誤。
