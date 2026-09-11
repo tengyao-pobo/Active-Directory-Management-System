@@ -32,6 +32,7 @@
 - Agent 基礎：觀測型別、收集器與離線 spool；服務、註冊與伺服器傳輸仍待完成。
 - Agent runtime：固定盤點／心跳排程、精確收據與重送、Windows Service 宿主；預設未配置，正式 enrollment / mTLS 與伺服器持久化尚未啟用。
 - 設備政策：Health 權重／證據覆蓋率／Critical override、機齡來源與下限、七因素汰換引擎；原始盤點 adapter、policy 持久化、API 與畫面綁定仍待完成。
+- 硬體收集：固定唯讀 WMI 來源與逐來源錯誤／截斷資訊；SMART、安全姿態與 Windows 實際驗收仍待完成。
 
 ## 目前開發順序
 

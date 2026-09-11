@@ -42,3 +42,4 @@ React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核�
 - [Agent 盤點與離線佇列基礎](docs/deployment/agent-foundation.md)
 - [Agent 排程、傳送與 Service 宿主](docs/deployment/agent-runtime.md)
 - [設備健康、機齡與汰換政策](docs/deployment/device-policies.md)
+- [唯讀硬體盤點](docs/deployment/hardware-inventory.md)
