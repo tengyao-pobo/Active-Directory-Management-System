@@ -60,8 +60,8 @@ app.UseExceptionHandler(handler => handler.Run(async context =>
 {
     // Do not expose exception messages, SQL parameters, request bodies or credentials.
     var error = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
-    var status = error is DbUpdateConcurrencyException ? 409 : error is Npgsql.PostgresException { SqlState: "40001" } ? 409 : 503;
-    await Results.Problem(statusCode: status, title: status == 409 ? "ConcurrentChange" : "ServiceUnavailable",
+    var status = error is BadHttpRequestException { StatusCode: 400 } ? 400 : error is DbUpdateConcurrencyException ? 409 : error is Npgsql.PostgresException { SqlState: "40001" } ? 409 : 503;
+    await Results.Problem(statusCode: status, title: status == 400 ? "InvalidRequest" : status == 409 ? "ConcurrentChange" : "ServiceUnavailable",
         extensions: new Dictionary<string, object?> { ["traceId"] = context.TraceIdentifier }).ExecuteAsync(context);
 }));
 app.Use(async (context, next) =>
@@ -102,6 +102,7 @@ app.MapAuth();
 app.MapEnvironmentApi();
 app.MapDirectoryApi();
 app.MapDeviceAssets();
+app.MapDeviceUserLinks();
 app.Run();
 
 public partial class Program;

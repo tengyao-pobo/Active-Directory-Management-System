@@ -3,6 +3,7 @@ import { ApiError, getDirectoryObject, getDirectoryObjects, getDirectoryStatus }
 import { useI18n } from './i18n';
 import './directory.css';
 import DeviceAssetPanel from './DeviceAssetPanel';
+import DeviceUserPanel from './DeviceUserPanel';
 
 export type DirectoryKind = 'User' | 'Group' | 'Computer' | 'OrganizationalUnit';
 
@@ -299,6 +300,7 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
                 })()}
                 {!detailLoading && detail && <DetailFields item={detail} asOf={formattedDate(detailAsOf)} t={t} />}
                 {!detailLoading && detail?.kind === 'Computer' && <DeviceAssetPanel key={`${environmentId}:${detail.id}`} environmentId={environmentId} id={detail.id} />}
+                {!detailLoading && detail && (detail.kind === 'Computer' || detail.kind === 'User') && <DeviceUserPanel key={`links:${environmentId}:${detail.id}`} environmentId={environmentId} id={detail.id} kind={detail.kind} />}
               </aside>
             )}
           </div>
