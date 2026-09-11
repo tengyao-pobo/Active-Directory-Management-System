@@ -19,15 +19,18 @@ import {
 } from './api';
 import { useI18n } from './i18n';
 import './styles.css';
+import DirectoryView from './DirectoryView';
+import { getDirectoryStatus, type DirectoryKind, type DirectoryStatus } from './api';
 
-type View = 'overview' | 'environment' | 'access' | 'audit' | 'settings';
+type View = 'overview' | 'environment' | 'access' | 'audit' | 'settings' | 'users' | 'groups' | 'computers' | 'ou';
 type AsyncState = 'idle' | 'loading' | 'ready' | 'empty' | 'error';
 
 type AccessData = { permissions: string[] };
 type RbacData = Rbac;
 type AuditData = AuditPage;
 
-const views: View[] = ['overview', 'environment', 'access', 'audit', 'settings'];
+const views: View[] = ['overview', 'environment', 'access', 'audit', 'settings', 'users', 'groups', 'computers', 'ou'];
+const directoryKinds: Partial<Record<View, DirectoryKind>> = { users: 'User', groups: 'Group', computers: 'Computer', ou: 'OrganizationalUnit' };
 
 function routeFromHash(): View {
   const route = window.location.hash.replace(/^#\/?/, '').split('?')[0];
@@ -274,10 +277,7 @@ function App() {
             {navMatches('environment') && <NavButton active={view === 'environment'} icon="◇" label={t('nav.environment')} onClick={() => navigate('environment')} />}
           </NavGroup>
           <NavGroup title={t('nav.group.directory')}>
-            {navMatches('computers') && <DisabledNav icon="▣" label={t('nav.computers')} tooltip={t('nav.connectorUnavailable')} />}
-            {navMatches('users') && <DisabledNav icon="♙" label={t('nav.users')} tooltip={t('nav.connectorUnavailable')} />}
-            {navMatches('groups') && <DisabledNav icon="♟" label={t('nav.groups')} tooltip={t('nav.connectorUnavailable')} />}
-            {navMatches('ou') && <DisabledNav icon="⌘" label={t('nav.ou')} tooltip={t('nav.connectorUnavailable')} />}
+            {(['computers', 'users', 'groups', 'ou'] as const).filter(navMatches).map(item => <NavButton key={item} active={view === item} icon="◇" label={t(`nav.${item}`)} onClick={() => navigate(item)} />)}
           </NavGroup>
           <NavGroup title={t('nav.group.system')}>
             {navMatches('access') && <NavButton active={view === 'access'} icon="⌑" label={t('nav.access')} onClick={() => navigate('access')} />}
@@ -309,13 +309,14 @@ function App() {
         </header>
         <main id="main-content" tabIndex={-1}>
           {authError && <div className="inline-alert" role="alert">{t(authError)}</div>}
-          <PageHeader view={view} environment={environment} t={t} />
+          {!directoryKinds[view] && <PageHeader view={view} environment={environment} t={t} />}
           {envState === 'loading' && <StatePanel kind="loading" title={t('state.loadingEnvironments')} t={t} />}
           {envState === 'error' && <StatePanel kind="error" title={t(dataError || 'error.generic')} t={t} />}
           {envState === 'empty' && <StatePanel kind="empty" title={t('environment.noneTitle')} body={t('environment.noneBody')} t={t} />}
-          {envState === 'ready' && dataState === 'loading' && <StatePanel kind="loading" title={t('state.loadingData')} t={t} />}
-          {envState === 'ready' && dataState === 'error' && <StatePanel kind="error" title={t(dataError || 'error.generic')} t={t} />}
-          {envState === 'ready' && dataState === 'ready' && environment && loadedEnvironmentId === environment.id && (
+          {envState === 'ready' && environment && directoryKinds[view] && <DirectoryView key={`${environment.id}:${view}`} environmentId={environment.id} kind={directoryKinds[view]!} />}
+          {!directoryKinds[view] && envState === 'ready' && dataState === 'loading' && <StatePanel kind="loading" title={t('state.loadingData')} t={t} />}
+          {!directoryKinds[view] && envState === 'ready' && dataState === 'error' && <StatePanel kind="error" title={t(dataError || 'error.generic')} t={t} />}
+          {!directoryKinds[view] && envState === 'ready' && dataState === 'ready' && environment && loadedEnvironmentId === environment.id && (
             <PageContent view={view} environment={environment} access={access} rbac={rbac} audit={audit} locale={locale} setLocale={setLocale} t={t}
               onAuditNext={() => { if (audit?.nextCursor) { setDataState('loading'); setAuditHistory((items) => [...items, auditCursor]); setAuditCursor(audit.nextCursor); } }}
               onAuditPrevious={() => { setDataState('loading'); const previous = auditHistory[auditHistory.length - 1]; setAuditHistory((items) => items.slice(0, -1)); setAuditCursor(previous); }}
@@ -422,7 +423,7 @@ function Overview({ environment, access, rbac, audit, t }: { environment: Manage
   return <div className="content-grid">
     <section className="metric-grid" aria-label={t('overview.operationalStatus')}>{cards.map(([label, value, hint]) => <article className="metric-card" key={label}><span>{label}</span><strong>{value}</strong><small>{hint}</small></article>)}</section>
     <section className="panel integration-panel"><PanelTitle title={t('overview.readiness')} subtitle={t('overview.readinessSubtitle')} />
-      <div className="readiness-list"><ReadinessRow label={t('overview.consoleApi')} status={t('status.available')} ready /><ReadinessRow label={t('overview.directoryConnector')} status={t('state.unconfigured')} /><ReadinessRow label={t('overview.auditPipeline')} status={audit ? t('status.available') : t('status.unavailable')} ready={Boolean(audit)} /></div>
+      <div className="readiness-list"><ReadinessRow label={t('overview.consoleApi')} status={t('status.available')} ready /><ConnectorReadiness key={environment.id} environmentId={environment.id} /><ReadinessRow label={t('overview.auditPipeline')} status={audit ? t('status.available') : t('status.unavailable')} ready={Boolean(audit)} /></div>
     </section>
     <section className="panel summary-panel"><PanelTitle title={t('overview.environmentSummary')} subtitle={t('overview.environmentSummarySubtitle')} />
       <DefinitionGrid rows={[[t('field.name'), environment.name], [t('field.dns'), environment.canonicalDns || '—'], [t('field.version'), String(environment.version || '—')], [t('field.defaultLocale'), environment.defaultLocale || '—']]} />
@@ -468,9 +469,20 @@ function StatePanel({ kind, title, body, t }: { kind: 'loading' | 'empty' | 'err
 function PanelTitle({ title, subtitle, badge }: { title: string; subtitle: string; badge?: string }) { return <div className="panel-title"><div><h2>{title}</h2><p>{subtitle}</p></div>{badge && <span className="badge">{badge}</span>}</div>; }
 function DefinitionGrid({ rows }: { rows: [string, string][] }) { return <dl className="definition-grid">{rows.map(([term, value]) => <div key={term}><dt>{term}</dt><dd>{value}</dd></div>)}</dl>; }
 function ReadinessRow({ label, status, ready = false }: { label: string; status: string; ready?: boolean }) { return <div><span className={`status-dot ${ready ? '' : 'muted'}`} /><strong>{label}</strong><span className={ready ? 'positive' : 'muted-text'}>{status}</span></div>; }
+function ConnectorReadiness({ environmentId }: { environmentId: string }) {
+  const { t } = useI18n();
+  const [status, setStatus] = useState<DirectoryStatus | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    void getDirectoryStatus(environmentId, controller.signal).then(value => { if (!controller.signal.aborted) setStatus(value); }).catch(() => {});
+    return () => controller.abort();
+  }, [environmentId]);
+  const ready = status?.status === 'Ready' && !status.stale;
+  const label = ready ? 'status.available' : status?.status === 'Unconfigured' ? 'state.unconfigured' : status?.status === 'Failed' ? 'directory.statusFailed' : 'status.unavailable';
+  return <ReadinessRow label={t('overview.directoryConnector')} status={t(label)} ready={ready} />;
+}
 function NavGroup({ title, children }: { title: string; children: React.ReactNode }) { return <div className="nav-group"><div className="nav-group-title">{title}</div>{children}</div>; }
 function NavButton({ active, icon, label, onClick }: { active: boolean; icon: string; label: string; onClick: () => void }) { return <button className={`nav-item ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined} onClick={onClick}><span aria-hidden="true">{icon}</span>{label}</button>; }
-function DisabledNav({ icon, label, tooltip }: { icon: string; label: string; tooltip: string }) { return <div className="disabled-nav" title={tooltip}><button className="nav-item" disabled aria-describedby={`disabled-${label}`}><span aria-hidden="true">{icon}</span>{label}<b aria-hidden="true">×</b></button><span className="sr-only" id={`disabled-${label}`}>{tooltip}</span></div>; }
 function formatDate(value: string, locale: string) { const parsed = new Date(value); return Number.isNaN(parsed.valueOf()) ? '—' : new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'medium' }).format(parsed); }
 
 export default App;

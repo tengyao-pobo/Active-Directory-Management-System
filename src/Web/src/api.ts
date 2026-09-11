@@ -19,6 +19,14 @@ export interface AuditPage {
   nextCursor: string | null;
 }
 export interface Preference { locale: Locale }
+export type DirectoryKind = 'User' | 'Group' | 'Computer' | 'OrganizationalUnit';
+export interface DirectoryObject {
+  id: string; kind: DirectoryKind; name: string; distinguishedName: string; samAccountName?: string | null;
+  department?: string | null; objectSid?: string | null; usnChanged: number; isProtected: boolean;
+  protectionKnown: boolean; parentOuId?: string | null;
+}
+export interface DirectoryPage { items: DirectoryObject[]; nextCursor: string | null; asOf: string; generation: string }
+export interface DirectoryStatus { status: string; stale: boolean; completedAt?: string | null; attemptedAt?: string | null; errorCode?: string | null; mutationAvailable: boolean }
 export async function request<T>(path: string, init: RequestInit = {}, anonymous = false): Promise<T> {
   if (!path.startsWith('/api/v1/') || path.includes('\\') || path.includes('#')) throw new ApiError(0, 'InvalidApiPath');
   let response: Response;
@@ -49,6 +57,13 @@ export const api = {
 export const getSession = (signal?: AbortSignal, initialCheck = false) => request<Principal>('/api/v1/session/me', { signal }, initialCheck);
 export const getEnvironments = async (signal?: AbortSignal) => (await api.get<{ items: ManagedEnvironment[] }>('/api/v1/environments', signal)).items;
 const envPath = (env: string) => `/api/v1/environments/${encodeURIComponent(env)}`;
+export const getDirectoryStatus = (env: string, signal?: AbortSignal) => api.get<DirectoryStatus>(`${envPath(env)}/directory/status`, signal);
+export const getDirectoryObjects = (env: string, kind: DirectoryKind, search = '', cursor?: string, signal?: AbortSignal) => {
+  const query = new URLSearchParams({ kind, search, limit: '50' });
+  if (cursor) query.set('cursor', cursor);
+  return api.get<DirectoryPage>(`${envPath(env)}/directory/objects?${query}`, signal);
+};
+export const getDirectoryObject = (env: string, id: string, signal?: AbortSignal) => api.get<{ item: DirectoryObject; asOf: string }>(`${envPath(env)}/directory/objects/${encodeURIComponent(id)}`, signal);
 export const getAccess = (env: string, signal?: AbortSignal) => api.get<{ permissions: string[] }>(`${envPath(env)}/access`, signal);
 export const getRbac = (env: string, signal?: AbortSignal) => api.get<Rbac>(`${envPath(env)}/rbac`, signal);
 export const getAudit = (env: string, cursor?: string, signal?: AbortSignal) => api.get<AuditPage>(`${envPath(env)}/audit?limit=30${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, signal);

@@ -4,7 +4,7 @@
 
 ## Phase 1–12
 
-目前已交付 Phase 4 的讀取/同步基礎與 typed preview 契約，見 [Phase 4 驗證紀錄](../deployment/phase4.md)。真實網域與受控 AD 寫入尚未驗收，因此下表 Phase 4 的完整進階條件仍未滿足；不得將 unavailable adapter 視為已完成 AD mutation。
+目前已交付 Phase 4 的讀取/同步基礎與 typed preview 契約，以及 [Phase 5 目錄查詢與明細 UI](../deployment/phase5.md)。真實網域與受控 AD 寫入尚未驗收，因此下表 Phase 4 的完整進階條件仍未滿足；不得將 unavailable adapter 視為已完成 AD mutation。Phase 5 的完整 11 頁籤、關聯、IT notes/lifecycle 與變更預覽仍待後續實作。
 
 | Phase | 實作交付 | 關鍵驗收 / 進下一階段條件 |
 |---|---|---|
