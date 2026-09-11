@@ -14,6 +14,9 @@ public sealed class AgentProjectionConfigurationTests
         Assert.Equal(ProjectionDiagnostic.ConnectionUnavailable, result.DiagnosticCode);
         Assert.Equal(env, result.EnvironmentId); Assert.Equal(id, result.DirectoryObjectId);
         Assert.Empty(result.Volumes);
+        var inventory = await reader.ReadInventoryAsync(env, id, CancellationToken.None);
+        Assert.Equal(ProjectionReadState.Unavailable, inventory.State); Assert.Equal(env, inventory.EnvironmentId); Assert.Equal(id, inventory.DirectoryObjectId);
+        Assert.Empty(inventory.InstalledSoftware.Applications); Assert.Empty(inventory.Hardware.Sections);
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => reader.InitializeAsync(new(), CancellationToken.None));
         Assert.Equal("ProjectionAlreadyInitialized", error.Message);
     }

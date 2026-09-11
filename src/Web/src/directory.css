@@ -100,3 +100,10 @@
 .directory-proposal { padding: 1rem; }
 .proposal-review .definition-grid { grid-template-columns: 1fr; }
 .directory-proposal input { background: var(--surface); color: inherit; border: 1px solid var(--line); }
+.inventory-section, .inventory-interface { margin: .7rem 0; border: 1px solid var(--line-soft); border-radius: 4px; padding: .7rem; }
+.inventory-section > summary, .inventory-interface > summary { cursor: pointer; color: var(--text); font-weight: 600; }
+.inventory-section > summary small { display: inline-block; margin-left: .7rem; color: var(--muted); font-size: .7rem; font-weight: 400; }
+.inventory-observed { color: var(--muted); font-size: .7rem; }
+.software-inventory > label { display: grid; gap: .4rem; }
+.software-inventory input { width: 100%; box-sizing: border-box; }
+@media (min-width: 621px) { .software-inventory .directory-table-panel th:nth-child(3), .software-inventory .directory-table-panel td:nth-child(3) { display: table-cell; } }

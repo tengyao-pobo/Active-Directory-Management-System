@@ -19,6 +19,7 @@ builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ConfiguredAgentProjectionReader>();
 builder.Services.AddSingleton<IAgentBitLockerProjectionReader>(services => services.GetRequiredService<ConfiguredAgentProjectionReader>());
+builder.Services.AddSingleton<IAgentInventoryProjectionReader>(services => services.GetRequiredService<ConfiguredAgentProjectionReader>());
 builder.Services.AddDbContext<ConsoleDbContext>(o => o.UseNpgsql(connection));
 builder.Services.AddScoped<IPasswordHasher<Principal>, PasswordHasher<Principal>>();
 builder.Services.Configure<PasswordHasherOptions>(o => o.IterationCount = 210000);
@@ -112,6 +113,7 @@ app.MapDeviceUserLinks();
 app.MapDashboard();
 app.MapDeviceAudit();
 app.MapDeviceBitLocker();
+app.MapDeviceInventory();
 app.MapDirectoryProposals();
 app.Run();
 

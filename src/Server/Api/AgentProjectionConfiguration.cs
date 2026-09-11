@@ -15,9 +15,10 @@ public sealed class AgentProjectionOptions
     public Dictionary<string, AgentProjectionEnvironmentOptions> Environments { get; set; } = new();
 }
 
-public sealed class ConfiguredAgentProjectionReader : IAgentBitLockerProjectionReader, IAsyncDisposable
+public sealed class ConfiguredAgentProjectionReader : IAgentBitLockerProjectionReader, IAgentInventoryProjectionReader, IAsyncDisposable
 {
     private readonly Dictionary<Guid, IAgentBitLockerProjectionReader> _readers = new();
+    private readonly Dictionary<Guid, IAgentInventoryProjectionReader> _inventoryReaders = new();
     private readonly List<NpgsqlDataSource> _sources = [];
     private bool _initialized;
 
@@ -42,7 +43,10 @@ public sealed class ConfiguredAgentProjectionReader : IAgentBitLockerProjectionR
                 _sources.Add(source);
                 var reader = await PostgresAgentBitLockerProjectionReader.CreateAuditedAsync(source, environmentId,
                     entry.TableOwnerRole, entry.FunctionOwnerRole, ct);
+                var inventoryReader = await PostgresAgentInventoryProjectionReader.CreateAuditedAsync(source, environmentId,
+                    entry.TableOwnerRole, entry.FunctionOwnerRole, ct);
                 _readers.Add(environmentId, reader);
+                _inventoryReaders.Add(environmentId, inventoryReader);
             }
             _initialized = true;
         }
@@ -59,10 +63,16 @@ public sealed class ConfiguredAgentProjectionReader : IAgentBitLockerProjectionR
             ? reader.ReadAsync(environmentId, directoryObjectId, ct)
             : Task.FromResult(BitLockerProjection.Unavailable(environmentId, directoryObjectId, ProjectionDiagnostic.ConnectionUnavailable));
 
+    public Task<AgentInventoryProjection> ReadInventoryAsync(Guid environmentId, Guid directoryObjectId, CancellationToken ct) =>
+        _initialized && _inventoryReaders.TryGetValue(environmentId, out var reader)
+            ? reader.ReadInventoryAsync(environmentId, directoryObjectId, ct)
+            : Task.FromResult(AgentInventoryProjection.Unavailable(environmentId, directoryObjectId, ProjectionDiagnostic.ConnectionUnavailable));
+
     public async ValueTask DisposeAsync()
     {
         _initialized = false;
         _readers.Clear();
+        _inventoryReaders.Clear();
         foreach (var source in _sources) await source.DisposeAsync();
         _sources.Clear();
     }
