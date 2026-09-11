@@ -31,7 +31,7 @@ public sealed class OfflineSpoolTests
 
             var second = await reopened.EnqueueAsync(Guid.NewGuid(), DateTimeOffset.UnixEpoch, new { value = 8 });
             Assert.Equal(2, second.Sequence);
-            await reopened.MarkDeliveredAsync(first.Sequence, first.PayloadHash);
+            await reopened.MarkDeliveredAsync(first, Acknowledge(first));
             AssertEnvelopeEqual(second, Assert.Single(await reopened.ReadPendingAsync()));
         }
     }
@@ -253,4 +253,16 @@ public sealed class OfflineSpoolTests
         Assert.Equal(expected.EnvelopeHash, actual.EnvelopeHash);
         Assert.Equal(expected.Payload.GetRawText(), actual.Payload.GetRawText());
     }
+
+    private static EnvelopeAcknowledgement Acknowledge(SpoolEnvelope envelope) =>
+        new(
+            1,
+            envelope.ProtocolVersion,
+            envelope.DeviceGuid,
+            envelope.RegistrationEpoch,
+            envelope.Sequence,
+            envelope.RequestId,
+            envelope.ObservedAt,
+            envelope.PayloadHash,
+            envelope.EnvelopeHash);
 }

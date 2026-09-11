@@ -40,3 +40,4 @@ React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核�
 
 - [版本化 AD 保護政策與保守分類](docs/deployment/ad-protection-policy.md)
 - [Agent 盤點與離線佇列基礎](docs/deployment/agent-foundation.md)
+- [Agent 排程、傳送與 Service 宿主](docs/deployment/agent-runtime.md)
