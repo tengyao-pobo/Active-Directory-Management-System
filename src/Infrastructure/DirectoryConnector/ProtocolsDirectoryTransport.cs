@@ -21,6 +21,7 @@ internal sealed class ProtocolsDirectoryTransport : IDirectoryTransport
         "department",
         "objectSid",
         "uSNChanged",
+        "userAccountControl",
     ];
 
     private const string SnapshotFilter =

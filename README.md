@@ -31,3 +31,5 @@ React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核�
 開發需求：.NET SDK 10.0.401、PostgreSQL 18，以及分開的 migration/seed 與受限 runtime 資料庫帳號。快速驗證方式與實際測試範圍見 Phase 2 文件；不要用資料庫 superuser 啟動 API。
 
 - [AD 部門提案預覽與限制](docs/deployment/ad-proposals.md)
+
+- [AD 證據模型與隔離驗證](docs/deployment/ad-evidence.md)
