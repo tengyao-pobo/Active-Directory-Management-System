@@ -40,7 +40,8 @@
 - Agent 註冊身分：schema 2 pending／enrolled 狀態、穩定 request ID、獨占 lease、精確完成與中斷恢復；伺服器 grant／CSR／CA／憑證領取及 listener 仍待完成。
 - Agent 註冊資料庫與格式驗證：一次性 grant 原子消耗、固定發證編號、租約調和、不可重用 epoch、不可變發證結果，以及 CSR／釘選憑證鏈的嚴格 profile。正式 CA 操作綁定、撤銷驗證、平台授權發行 UI、憑證領取與 mTLS listener 仍待完成，服務維持未啟用。
 - 平台註冊加密交付：固定 RSA-OAEP-SHA256 封套、一次性接收 key、用戶端精確環境／操作核對與 token buffer 清除，並有 .NET→WebCrypto 互通測試。此為未註冊 primitive；提案／核准、領取 UI、撤銷與 worker 組合尚待接上。
-- 平台初始註冊授權儲存層：獨立環境登入、固定到期時間、精確 mapping 與 operation 收據、重試調和及新舊服務隔離升級。此為 dormant library，尚未註冊到 API／DI／worker；平台目標解析、核准計畫、密文持久化／領取與撤銷仍待完成。
+- 平台初始註冊授權儲存層：獨立環境登入、固定到期時間、精確 mapping 與 operation 收據、重試調和及新舊服務隔離升級。此為 dormant library，尚未註冊到 API／DI／worker；核准計畫、密文持久化／領取與撤銷仍待完成。
+- 平台設備註冊準備查詢：Inventory 頁籤內唯讀查詢、Owner-only 物件範圍交集、server-owned mapping 解析與通用服務角色隔離。畫面只顯示準備狀態，不揭露內部 Device ID；正式提案／核准、mapping 管理、加密交付、grant 撤銷及註冊 worker 仍待完成。
 
 - 個人收藏：四種目錄物件的加入／取消、私有持久化、範圍化分頁及雙語介面；只顯示目前有權查看且仍在有效目錄快照中的物件。
 

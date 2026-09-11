@@ -32,7 +32,7 @@ PostgreSQL 的[列鎖定查詢](https://www.postgresql.org/docs/current/sql-sele
 
 ## 平台整合待辦
 
-提案前需要另一個唯讀 `EnrollmentTargetRead` 能力，先驗證有效會員、目前 Computer 與同一物件的 `Computer.View`／`AgentEnrollmentGrant.Manage` 交集，再解析 server-owned mapping tuple。Browser 不提供 server Device ID。沒有 mapping 或設備非 Active 時回明確資格狀態，不建立 outbox，也不自動新增 mapping；未配置 pool 時顯示不可用。
+已提供唯讀 [EnrollmentTargetRead 與平台設備註冊準備狀態](enrollment-target-read.md)，先驗證有效會員、目前 Computer 與同一物件的 `Computer.View`／`AgentEnrollmentGrant.Manage` 交集，再解析 server-owned mapping tuple。Browser 不提供 server Device ID。沒有 mapping 或設備非 Active 時回明確資格狀態，不建立 outbox，也不自動新增 mapping；未配置 pool 時顯示不可用。安裝此能力需再完成 capability isolation v2 升級；完成後不得重跑會還原舊稽核的 v1 升級或 Projection 降級腳本。
 
 正式組合仍需完善的角色／函式／RLS 稽核、public operation 與密文持久化、worker 中斷調和、領取所有權及 ACK、available grant 撤銷、listener 與部署驗收。部署前需精確預覽、獨立覆核及環境操作授權；本次開發與合成測試不操作企業 AD、CA 或實際設備。
 

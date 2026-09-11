@@ -5,6 +5,7 @@
   </Folder>
   <Folder Name="/src/Infrastructure/">
     <Project Path="src/Infrastructure/AgentEnrollment/AgentEnrollment.csproj" />
+    <Project Path="src/Infrastructure/AgentEnrollmentTargets/AgentEnrollmentTargets.csproj" />
     <Project Path="src/Infrastructure/AgentIngestion/AgentIngestion.csproj" />
     <Project Path="src/Infrastructure/AgentPlatformGrants/AgentPlatformGrants.csproj" />
     <Project Path="src/Infrastructure/AgentProjection/AgentProjection.csproj" />
@@ -27,6 +28,9 @@
     <Project Path="tests/Integration/Integration.csproj" />
     <Project Path="tests/Security/Security.csproj" />
     <Project Path="tests/Unit/Unit.csproj" />
+  </Folder>
+  <Folder Name="/tests/AgentEnrollmentTargets/">
+    <Project Path="tests/AgentEnrollmentTargets/AgentEnrollmentTargets.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/DirectoryConnector/">
     <Project Path="tests/DirectoryConnector/DirectoryConnector.Tests.csproj" />

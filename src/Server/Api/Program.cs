@@ -4,6 +4,7 @@ using ItManagement.Api;
 using ItManagement.Core;
 using ItManagement.Persistence;
 using ItManagement.AgentProjection;
+using ItManagement.AgentEnrollmentTargets;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Negotiate;
@@ -20,6 +21,8 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ConfiguredAgentProjectionReader>();
 builder.Services.AddSingleton<IAgentBitLockerProjectionReader>(services => services.GetRequiredService<ConfiguredAgentProjectionReader>());
 builder.Services.AddSingleton<IAgentInventoryProjectionReader>(services => services.GetRequiredService<ConfiguredAgentProjectionReader>());
+builder.Services.AddSingleton<ConfiguredEnrollmentTargetReader>();
+builder.Services.AddSingleton<IEnrollmentTargetReader>(services => services.GetRequiredService<ConfiguredEnrollmentTargetReader>());
 builder.Services.AddDbContext<ConsoleDbContext>(o => o.UseNpgsql(connection));
 builder.Services.AddScoped<IPasswordHasher<Principal>, PasswordHasher<Principal>>();
 builder.Services.Configure<PasswordHasherOptions>(o => o.IterationCount = 210000);
@@ -48,6 +51,8 @@ builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 128 * 1024);
 var app = builder.Build();
 await app.Services.GetRequiredService<ConfiguredAgentProjectionReader>().InitializeAsync(
     builder.Configuration.GetSection("AgentProjection").Get<AgentProjectionOptions>() ?? new(), CancellationToken.None);
+await app.Services.GetRequiredService<ConfiguredEnrollmentTargetReader>().InitializeAsync(
+    builder.Configuration.GetSection("EnrollmentTargetRead").Get<EnrollmentTargetOptions>() ?? new(), CancellationToken.None);
 
 // Runtime identity must not be able to bypass tenant RLS or own the schema.
 await using (var startupScope = app.Services.CreateAsyncScope())
@@ -116,6 +121,7 @@ app.MapDashboard();
 app.MapDeviceAudit();
 app.MapDeviceBitLocker();
 app.MapDeviceInventory();
+app.MapDeviceEnrollment();
 app.MapDirectoryProposals();
 app.Run();
 

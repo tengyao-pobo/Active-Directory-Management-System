@@ -6,6 +6,7 @@ import { ApiError, request } from './api';
 import DeviceBitLockerPanel from './DeviceBitLockerPanel';
 import DeviceInventoryPanel from './DeviceInventoryPanel';
 import DeviceTagPanel from './DeviceTagPanel';
+import DeviceEnrollmentPanel from './DeviceEnrollmentPanel';
 
 const tabs = ['ad', 'asset', 'user', 'audit', 'inventory', 'security'] as const;
 export default function DeviceTabs({ environmentId, id, ad }: { environmentId: string; id: string; ad: ReactNode }) {
@@ -25,7 +26,7 @@ export default function DeviceTabs({ environmentId, id, ad }: { environmentId: s
       {selected === 'asset' && <><DeviceAssetPanel environmentId={environmentId} id={id} /><DeviceTagPanel environmentId={environmentId} id={id} /></>}
       {selected === 'user' && <DeviceUserPanel environmentId={environmentId} id={id} kind="Computer" />}
       {selected === 'audit' && <DeviceAudit environmentId={environmentId} id={id} />}
-      {selected === 'inventory' && <DeviceInventoryPanel environmentId={environmentId} id={id} />}
+      {selected === 'inventory' && <><DeviceEnrollmentPanel environmentId={environmentId} id={id} /><DeviceInventoryPanel environmentId={environmentId} id={id} /></>}
       {selected === 'security' && <DeviceBitLockerPanel environmentId={environmentId} id={id} />}
     </div>
   </div>;

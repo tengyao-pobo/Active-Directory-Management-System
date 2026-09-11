@@ -4,7 +4,7 @@ BEGIN;
 SELECT 1/pg_catalog.count(*) AS owners_are_distinct FROM (SELECT 1 WHERE :'agent_table_owner_role'<>:'agent_platform_grant_definer_role') checked;
 SELECT 1/pg_catalog.count(*) AS isolation_profile_is_exact FROM (SELECT 1 WHERE COALESCE((SELECT
  profile.proowner=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=:'agent_table_owner_role') AND
- profile.proowner=namespace.nspowner AND NOT profile.prosecdef AND profile.prokind='f' AND NOT profile.proretset AND
+ profile.proowner=namespace.nspowner AND profile.prolang=(SELECT oid FROM pg_catalog.pg_language WHERE lanname='sql') AND NOT profile.prosecdef AND profile.prokind='f' AND NOT profile.proretset AND
  profile.prorettype='smallint'::pg_catalog.regtype AND profile.pronargs=0 AND profile.proargnames IS NULL AND
  profile.proconfig=ARRAY['search_path=pg_catalog, agent_private, pg_temp']::text[] AND
  pg_catalog.btrim(profile.prosrc)=pg_catalog.btrim('SELECT 1::smallint') AND

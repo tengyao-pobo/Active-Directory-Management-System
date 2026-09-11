@@ -510,5 +510,13 @@
   "filters.currentAccess": "每次查詢依目前權限與最新目錄快照執行。",
   "filters.changed": "儲存篩選已在其他地方變更。請重新整理儲存篩選清單，再執行新的條件。",
   "nav.filters": "儲存篩選條件",
-  "filters.cancel": "取消"
+  "filters.cancel": "取消",
+  "enrollment.title": "Agent 註冊準備狀態",
+  "enrollment.eligible": "設備對應已就緒，可供準備註冊申請。",
+  "enrollment.mappingRequired": "需要有效的設備對應，才能準備註冊申請。",
+  "enrollment.readinessOnly": "這次查詢不會核發註冊權杖或註冊設備。註冊申請仍須重新檢查及核准。",
+  "enrollment.unavailable": "目前無法查詢註冊準備狀態，請稍後重試。",
+  "enrollment.queriedAt": "查詢時間：{time}",
+  "enrollment.refresh": "重新檢查註冊準備狀態",
+  "enrollment.checking": "正在檢查註冊準備狀態…"
 }

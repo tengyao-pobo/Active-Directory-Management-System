@@ -1,5 +1,7 @@
 \set ON_ERROR_STOP on
 BEGIN;
+SELECT 1/pg_catalog.count(*) AS capability_isolation_v2_absent FROM (SELECT 1 WHERE
+ pg_catalog.to_regprocedure('agent_private.agent_capability_isolation_profile()') IS NULL) checked;
 WITH login AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_projection_role'::name),
  function_owner AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_projection_definer_role'::name),
  table_owner AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_table_owner_role'::name),

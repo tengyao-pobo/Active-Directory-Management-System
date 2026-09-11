@@ -1,5 +1,23 @@
 \set ON_ERROR_STOP on
 BEGIN;
+-- Optional legacy mode remains available while the v2 marker and registry are both absent.
+-- Once v2 exists, role identity is reserved transactionally before any ALTER or GRANT.
+DO $capability_registry_reservation$
+DECLARE v_marker regprocedure:=pg_catalog.to_regprocedure('agent_private.agent_capability_isolation_profile()');v_registry regclass:=pg_catalog.to_regclass('agent_private.agent_capability_roles');v_valid boolean;
+BEGIN
+ IF (v_marker IS NULL)<>(v_registry IS NULL) THEN RAISE EXCEPTION USING ERRCODE='22012';END IF;
+ IF v_marker IS NULL THEN RETURN;END IF;
+ SELECT marker.proowner=namespace.nspowner AND marker.prolang=(SELECT oid FROM pg_catalog.pg_language WHERE lanname='sql') AND NOT marker.prosecdef AND marker.prokind='f' AND NOT marker.proretset AND marker.prorettype='smallint'::pg_catalog.regtype AND marker.pronargs=0 AND marker.proargnames IS NULL AND marker.proconfig=ARRAY['search_path=pg_catalog, agent_private, pg_temp']::text[] AND pg_catalog.btrim(marker.prosrc)=pg_catalog.btrim('SELECT 2::smallint') INTO v_valid FROM pg_catalog.pg_proc marker JOIN pg_catalog.pg_namespace namespace ON namespace.oid=marker.pronamespace WHERE marker.oid=v_marker;
+ IF NOT COALESCE(v_valid,false) THEN RAISE EXCEPTION USING ERRCODE='22012';END IF;
+ EXECUTE 'SELECT NOT EXISTS(SELECT 1 FROM agent_private.agent_capability_roles WHERE role_name=$1 AND (capability<>$2 OR role_kind<>$3))' INTO v_valid USING :'agent_platform_grant_role'::name,'PlatformGrant','Runtime';
+ IF NOT v_valid THEN RAISE EXCEPTION USING ERRCODE='22012';END IF;
+ EXECUTE 'SELECT count(*)=1 FROM agent_private.agent_capability_roles WHERE role_name=$1 AND capability=$2 AND role_kind=''Definer''' INTO v_valid USING :'agent_platform_grant_definer_role'::name,'PlatformGrant';
+ IF NOT v_valid THEN RAISE EXCEPTION USING ERRCODE='22012';END IF;
+ EXECUTE 'INSERT INTO agent_private.agent_capability_roles(role_name,capability,role_kind) VALUES($1,$2,$3) ON CONFLICT(role_name) DO NOTHING' USING :'agent_platform_grant_role'::name,'PlatformGrant','Runtime';
+ EXECUTE 'SELECT count(*)=1 FROM agent_private.agent_capability_roles WHERE role_name=$1 AND capability=$2 AND role_kind=$3' INTO v_valid USING :'agent_platform_grant_role'::name,'PlatformGrant','Runtime';
+ IF NOT v_valid THEN RAISE EXCEPTION USING ERRCODE='22012';END IF;
+END
+$capability_registry_reservation$;
 
 SELECT 1/pg_catalog.count(*) AS roles_are_distinct FROM (SELECT 1 WHERE
  :'agent_table_owner_role'<>:'agent_platform_grant_definer_role' AND :'agent_table_owner_role'<>:'agent_platform_grant_role' AND :'agent_platform_grant_definer_role'<>:'agent_platform_grant_role') checked;
