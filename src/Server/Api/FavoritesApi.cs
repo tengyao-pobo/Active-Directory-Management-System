@@ -10,7 +10,7 @@ namespace ItManagement.Api;
 public static class FavoritesApi
 {
     private const int MaximumFavorites = 500;
-    private sealed record Cursor(Guid Environment, Guid Principal, Guid Generation, Guid After);
+    private sealed record Cursor(Guid Environment, Guid Principal, Guid Generation, long Version, Guid After);
     private static readonly (string Kind, string Permission)[] Kinds =
     [
         ("Computer", PermissionCatalog.ComputerView), ("User", PermissionCatalog.UserView),
@@ -29,7 +29,8 @@ public static class FavoritesApi
             if (!await Member(db, environmentId, actor, ct)) return Results.NotFound();
             var state = await FreshState(db, environmentId, ct);
             if (state is null) return Unavailable();
-            var protector = protection.CreateProtector("FavoritesCursor.v1");
+            var version = await db.Environments.Where(e => e.Id == environmentId).Select(e => e.Version).SingleAsync(ct);
+            var protector = protection.CreateProtector("FavoritesCursor.v2");
             Cursor? position = null;
             if (cursor is not null)
             {
@@ -40,6 +41,7 @@ public static class FavoritesApi
                     return Results.BadRequest();
                 if (position.Generation != state.Generation)
                     return Results.Problem(statusCode: 409, title: "DirectorySnapshotChanged");
+                if (position.Version != version) return Results.Problem(statusCode: 409, title: "AuthorizationSnapshotChanged");
             }
             var visible = await Visible(db, environmentId, actor, state.Generation, ct);
             var query = from row in visible
@@ -51,7 +53,7 @@ public static class FavoritesApi
             var rows = await query.OrderBy(x => x.Id).Take(take + 1).ToListAsync(ct);
             var more = rows.Count > take;
             if (more) rows.RemoveAt(take);
-            var next = more ? protector.Protect(JsonSerializer.Serialize(new Cursor(environmentId, actor, state.Generation, rows[^1].Id))) : null;
+            var next = more ? protector.Protect(JsonSerializer.Serialize(new Cursor(environmentId, actor, state.Generation, version, rows[^1].Id))) : null;
             return Results.Ok(new { items = rows.Select(x => new { x.Id, x.Kind, x.Name, x.DistinguishedName, x.SamAccountName, x.Department }),
                 nextCursor = next, generation = state.Generation, asOf = state.CompletedAt });
         });

@@ -25,6 +25,7 @@ public static class PermissionCatalog
     public const string ComputerManage = "Computer.Manage";
     public const string ComputerOpenShare = "Computer.OpenShare";
     public const string AssetEdit = "Asset.Edit";
+    public const string DeviceTagManage = "DeviceTag.Manage";
     public const string InventoryRequest = "Inventory.Request";
     public const string BitLockerStatusView = "BitLocker.ViewStatus";
     public const string BitLockerRecoveryKeyRead = "BitLocker.ViewRecoveryKey";
@@ -52,7 +53,7 @@ public static class PermissionCatalog
         UserManage, UserUnlock, UserResetPassword,
         GroupView, GroupEditMembership, GroupManage,
         ComputerView, ComputerRemote, ComputerInventory, ComputerManage, ComputerOpenShare,
-        AssetEdit, InventoryRequest,
+        AssetEdit, InventoryRequest, DeviceTagManage,
         BitLockerStatusView, BitLockerRecoveryKeyRead,
         GpoView, GpoManage, ExchangeView, ExchangeManage, EntraView, EntraManage,
         ReportView, ReportExport, AuditView, SystemView, SystemManage, RbacManage,
@@ -68,6 +69,7 @@ public static class PermissionCatalog
         OwnerRemove,
         SecurityManage,
         SystemManage,
+        DeviceTagManage,
     }.ToFrozenSet(StringComparer.Ordinal);
 
     private static readonly FrozenSet<string> ReadOnlyCodes = new HashSet<string>(StringComparer.Ordinal)

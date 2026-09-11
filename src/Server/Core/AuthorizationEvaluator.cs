@@ -101,7 +101,7 @@ public sealed class AuthorizationEvaluator
             ScopeKind.Department => HasValue(scope) &&
                                     string.Equals(scope.Value, resource.DepartmentId, StringComparison.Ordinal),
             ScopeKind.Group => HasValue(scope) && resource.GroupIds.Contains(scope.Value!),
-            ScopeKind.DeviceTag => HasValue(scope) && resource.TagIds.Contains(scope.Value!),
+            ScopeKind.DeviceTag => !scope.IncludeDescendants && DeviceTagCatalog.IsCanonicalId(scope.Value) && resource.TagIds.Contains(scope.Value!),
             ScopeKind.OrganizationalUnit => MatchesOrganizationalUnit(scope, resource),
             _ => false,
         };

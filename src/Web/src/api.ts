@@ -58,9 +58,10 @@ export const getSession = (signal?: AbortSignal, initialCheck = false) => reques
 export const getEnvironments = async (signal?: AbortSignal) => (await api.get<{ items: ManagedEnvironment[] }>('/api/v1/environments', signal)).items;
 const envPath = (env: string) => `/api/v1/environments/${encodeURIComponent(env)}`;
 export const getDirectoryStatus = (env: string, signal?: AbortSignal) => api.get<DirectoryStatus>(`${envPath(env)}/directory/status`, signal);
-export const getDirectoryObjects = (env: string, kind: DirectoryKind, search = '', cursor?: string, signal?: AbortSignal) => {
+export const getDirectoryObjects = (env: string, kind: DirectoryKind, search = '', cursor?: string, signal?: AbortSignal, tagId?: string) => {
   const query = new URLSearchParams({ kind, search, limit: '50' });
   if (cursor) query.set('cursor', cursor);
+  if (tagId) query.set('tagId', tagId);
   return api.get<DirectoryPage>(`${envPath(env)}/directory/objects?${query}`, signal);
 };
 export const getDirectoryObject = (env: string, id: string, signal?: AbortSignal) => api.get<{ item: DirectoryObject; asOf: string }>(`${envPath(env)}/directory/objects/${encodeURIComponent(id)}`, signal);

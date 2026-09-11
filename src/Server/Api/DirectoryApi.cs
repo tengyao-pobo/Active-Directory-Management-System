@@ -9,7 +9,7 @@ namespace ItManagement.Api;
 
 public static class DirectoryApi
 {
-    private sealed record Cursor(Guid Environment, Guid Actor, Guid Generation, string Kind, string Search, Guid After);
+    private sealed record Cursor(Guid Environment, Guid Actor, Guid Generation, long Version, string Kind, string Search, Guid? TagId, Guid After);
     private static string? Permission(string kind) => kind switch
     {
         "User" => PermissionCatalog.UserView, "Group" => PermissionCatalog.GroupView,
@@ -27,7 +27,7 @@ public static class DirectoryApi
             return Results.Ok(new { status = state?.Status ?? "Unconfigured", state?.CompletedAt, state?.AttemptedAt, state?.ErrorCode,
                 stale = state?.Status != "Ready" || state.CompletedAt is null || state.CompletedAt < DateTimeOffset.UtcNow.AddMinutes(-15), mutationAvailable = false });
         });
-        group.MapGet("/objects", async (Guid environmentId, string kind, string? search, string? cursor, int? limit,
+        group.MapGet("/objects", async (Guid environmentId, string kind, string? search, string? cursor, int? limit, Guid? tagId,
             HttpContext http, ConsoleDbContext db, IDataProtectionProvider protection, CancellationToken ct) =>
         {
             var permission = Permission(kind);
@@ -39,25 +39,29 @@ public static class DirectoryApi
             var state = await db.DirectorySync.SingleOrDefaultAsync(x => x.EnvironmentId == environmentId, ct);
             if (state?.CompletedAt is null || state.Status != "Ready" || state.CompletedAt < DateTimeOffset.UtcNow.AddMinutes(-15))
                 return Results.Problem(statusCode: 503, title: "DirectoryUnavailable");
-            var protector = protection.CreateProtector("DirectoryCursor.v1");
+            if (tagId is not null && (kind != "Computer" || tagId == Guid.Empty)) return Results.BadRequest();
+            var version = await db.Environments.Where(e => e.Id == environmentId).Select(e => e.Version).SingleAsync(ct);
+            var protector = protection.CreateProtector("DirectoryCursor.v2");
             Cursor? position = null;
             if (cursor is not null)
             {
                 try { position = JsonSerializer.Deserialize<Cursor>(protector.Unprotect(cursor)); }
                 catch (Exception error) when (error is CryptographicException or JsonException or FormatException) { return Results.BadRequest(); }
-                if (position is null || position.Environment != environmentId || position.Actor != actor || position.Kind != kind || position.Search != search)
+                if (position is null || position.Environment != environmentId || position.Actor != actor || position.Kind != kind || position.Search != search || position.TagId != tagId)
                     return Results.BadRequest();
                 if (position.Generation != state.Generation) return Results.Problem(statusCode: 409, title: "DirectorySnapshotChanged");
+                if (position.Version != version) return Results.Problem(statusCode: 409, title: "AuthorizationSnapshotChanged");
             }
             var query = await Scoped(db, environmentId, actor, permission, state.Generation, ct);
             query = query.Where(x => x.Kind == kind);
+            if (tagId is not null) query = query.Where(x => db.DeviceTagAssignments.Any(a => a.EnvironmentId == environmentId && a.ObjectId == x.Id && a.TagId == tagId));
             if (search.Length > 0) query = query.Where(x => x.Name.Contains(search) || (x.SamAccountName != null && x.SamAccountName.Contains(search)));
             if (position is not null) query = query.Where(x => x.Id.CompareTo(position.After) > 0);
             var take = limit ?? 50;
             var rows = await query.OrderBy(x => x.Id).Take(take + 1).ToListAsync(ct);
             var more = rows.Count > take;
             if (more) rows.RemoveAt(take);
-            var next = more ? protector.Protect(JsonSerializer.Serialize(new Cursor(environmentId, actor, state.Generation, kind, search, rows[^1].Id))) : null;
+            var next = more ? protector.Protect(JsonSerializer.Serialize(new Cursor(environmentId, actor, state.Generation, version, kind, search, tagId, rows[^1].Id))) : null;
             return Results.Ok(new { items = rows.Select(Dto), nextCursor = next, asOf = state.CompletedAt, generation = state.Generation });
         });
         group.MapGet("/objects/{objectId:guid}", async (Guid environmentId, Guid objectId, HttpContext http, ConsoleDbContext db, CancellationToken ct) =>
@@ -93,8 +97,10 @@ public static class DirectoryApi
         var departments = grants.Where(s => s.Kind == ScopeKind.Department && !string.IsNullOrEmpty(s.Value)).Select(s => s.Value!).ToArray();
         var exact = grants.Where(s => s.Kind == ScopeKind.OrganizationalUnit && !s.IncludeDescendants && Guid.TryParse(s.Value, out _)).Select(s => Guid.Parse(s.Value!)).ToArray();
         var subtree = grants.Where(s => s.Kind == ScopeKind.OrganizationalUnit && s.IncludeDescendants && Guid.TryParse(s.Value, out _)).Select(s => Guid.Parse(s.Value!)).ToArray();
+        var tags = grants.Where(s => s.Kind == ScopeKind.DeviceTag && !s.IncludeDescendants && DeviceTagCatalog.IsCanonicalId(s.Value)).Select(s => Guid.Parse(s.Value!)).ToArray();
         return db.DirectoryObjects.AsNoTracking().Where(x => x.EnvironmentId == env && x.Generation == generation &&
-            (all || (x.Department != null && departments.Contains(x.Department)) || (x.ParentOuId != null && exact.Contains(x.ParentOuId.Value)) || x.OuAncestry.Any(id => subtree.Contains(id))));
+            (all || (x.Department != null && departments.Contains(x.Department)) || (x.ParentOuId != null && exact.Contains(x.ParentOuId.Value)) || x.OuAncestry.Any(id => subtree.Contains(id)) ||
+                (x.Kind == "Computer" && db.DeviceTagAssignments.Any(a => a.EnvironmentId == env && a.ObjectId == x.Id && tags.Contains(a.TagId)))));
     }
     private static object Dto(DirectoryObjectRecord x) => new { x.Id, x.Kind, x.Name, x.DistinguishedName, x.SamAccountName, x.Department,
         x.ObjectSid, x.UsnChanged, x.IsProtected, x.ProtectionKnown, x.ParentOuId };
