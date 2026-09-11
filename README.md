@@ -29,3 +29,5 @@ React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核�
 原始碼與測試資料使用合成資訊。沒有對任何真實 AD、Entra 或 Exchange 執行操作。正式環境名稱、帳號與機密均須由部署設定提供。`.local/`、`.tools/`、credentials 與測試輸出不納入 Git。
 
 開發需求：.NET SDK 10.0.401、PostgreSQL 18，以及分開的 migration/seed 與受限 runtime 資料庫帳號。快速驗證方式與實際測試範圍見 Phase 2 文件；不要用資料庫 superuser 啟動 API。
+
+- [AD 部門提案預覽與限制](docs/deployment/ad-proposals.md)

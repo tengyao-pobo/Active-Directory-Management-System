@@ -105,6 +105,7 @@ app.MapDeviceAssets();
 app.MapDeviceUserLinks();
 app.MapDashboard();
 app.MapDeviceAudit();
+app.MapDirectoryProposals();
 app.Run();
 
 public partial class Program;
