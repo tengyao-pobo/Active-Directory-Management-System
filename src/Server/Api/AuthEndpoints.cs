@@ -16,6 +16,7 @@ public static class AuthEndpoints
 {
     public sealed record LoginRequest(string Username, string Password);
     public sealed record EnrollmentRequest(string Token);
+    public sealed record PreferenceRequest(string Locale);
 
     public static void MapAuth(this WebApplication app)
     {
@@ -28,6 +29,26 @@ public static class AuthEndpoints
             var id = Actor(http);
             return Results.Ok(await db.Principals.Where(x => x.Id == id)
                 .Select(x => new { x.Id, x.DisplayName }).SingleAsync(ct));
+        });
+
+        group.MapGet("/preferences", async (HttpContext http, ConsoleDbContext db, CancellationToken ct) =>
+        {
+            var id = Actor(http);
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT set_config('app.principal_id', {id.ToString()}, true)", ct);
+            var preference = await db.Preferences.AsNoTracking().SingleOrDefaultAsync(x => x.PrincipalId == id, ct);
+            return Results.Ok(new { locale = preference?.Locale ?? "zh-TW" });
+        });
+        group.MapPost("/preferences", async (PreferenceRequest input, HttpContext http, ConsoleDbContext db, TimeProvider time, CancellationToken ct) =>
+        {
+            if (input.Locale is not ("zh-TW" or "en-US")) return Results.Problem(statusCode: 400, title: "InvalidLocale");
+            var id = Actor(http);
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT set_config('app.principal_id', {id.ToString()}, true)", ct);
+            await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"Preferences\" (\"PrincipalId\",\"Locale\") VALUES ({id},{input.Locale}) ON CONFLICT (\"PrincipalId\") DO UPDATE SET \"Locale\"=EXCLUDED.\"Locale\"", ct);
+            db.SecurityEvents.Add(Event(http, time, id, "LanguagePreferenceChanged", "Success"));
+            await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+            return Results.Ok(new { locale = input.Locale });
         });
 
         group.MapPost("/logout", async (HttpContext http, ConsoleDbContext db, TimeProvider time, CancellationToken ct) =>
@@ -176,8 +197,9 @@ public static class AuthEndpoints
         var ceremony = await TakeCeremony(http, db, time, ct);
         if (ceremony is null || ceremony.Kind is not ("login" or "step-up")) return Results.Problem(statusCode: 401, title: "CeremonyInvalid");
         if (ceremony.Kind == "login" && !EmergencyAllowed(http, config)) return Results.Forbid();
-        if (ceremony.Kind == "step-up" && (http.User.Identity?.IsAuthenticated != true ||
-            http.User.FindFirstValue("session") != ceremony.SessionHash || Actor(http) != ceremony.PrincipalId)) return Results.Forbid();
+        if (ceremony.Kind == "step-up" && http.User.Identity?.IsAuthenticated != true)
+            return Results.Problem(statusCode: 401, title: "SessionInvalid");
+        if (ceremony.Kind == "step-up" && (http.User.FindFirstValue("session") != ceremony.SessionHash || Actor(http) != ceremony.PrincipalId)) return Results.Forbid();
         var id = Convert.ToBase64String(input.RawId);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var key = await db.Passkeys.FromSqlInterpolated($"SELECT * FROM \"Passkeys\" WHERE \"CredentialId\"={id} FOR UPDATE").SingleOrDefaultAsync(ct);

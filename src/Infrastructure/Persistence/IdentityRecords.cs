@@ -1,5 +1,11 @@
 namespace ItManagement.Persistence;
 
+public sealed class PrincipalPreference
+{
+    public Guid PrincipalId { get; set; }
+    public string Locale { get; set; } = "zh-TW";
+}
+
 public sealed class LocalCredential
 {
     public Guid PrincipalId { get; set; }

@@ -12,3 +12,7 @@ artifacts/
 *.key
 appsettings.Local.json
 **/node_modules/
+src/Web/dist/
+src/Server/Api/wwwroot/
+**/test-results/
+**/playwright-report/
