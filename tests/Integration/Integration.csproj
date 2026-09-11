@@ -20,6 +20,11 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Server\Api\Api.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure\Persistence\Persistence.csproj" />
+    <ProjectReference Include="..\..\src\Infrastructure\AgentEnrollment\AgentEnrollment.csproj" />
     <ProjectReference Include="..\..\src\Server\ConnectorHost\ConnectorHost.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\build\provision-runtime.sql" Link="provision-runtime.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

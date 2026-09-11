@@ -131,6 +131,12 @@
         "resolved": "10.0.12",
         "contentHash": "L2PHm7ewfjQYgbhBUB+lXiewxoNo+rhn06geWeUJP3qYCDnkL+Qibv6TEPMlMsF/zab4cU2bE8BWTBqzHZYiYg=="
       },
+      "agentenrollment": {
+        "type": "Project",
+        "dependencies": {
+          "Npgsql": "[10.0.3, )"
+        }
+      },
       "agentenrollmenttargets": {
         "type": "Project",
         "dependencies": {

@@ -19,10 +19,49 @@ public sealed class PostgresApiFixture : IAsyncLifetime
     {
         await using var db = CreateDb();
         await db.Database.MigrateAsync();
+        await ProvisionRuntimeAsync(db);
         _previousRuntimeConnection = Environment.GetEnvironmentVariable("ConnectionStrings__Console");
         Environment.SetEnvironmentVariable("ConnectionStrings__Console", _runtimeConnectionString);
         Factory = new ApiFactory();
     }
+
+    private async Task ProvisionRuntimeAsync(ConsoleDbContext db)
+    {
+        var owner = new Npgsql.NpgsqlConnectionStringBuilder(_connectionString);
+        var runtime = new Npgsql.NpgsqlConnectionStringBuilder(_runtimeConnectionString);
+        if (!string.Equals(owner.Database, runtime.Database, StringComparison.Ordinal) || string.IsNullOrWhiteSpace(runtime.Username))
+            throw new InvalidOperationException("The integration runtime connection must target the owner database with a named role.");
+        const string lockOwner = "console_enrollment_plan_locker";
+        await db.Database.ExecuteSqlRawAsync("""
+            DO $block$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='console_enrollment_plan_locker') THEN
+                    CREATE ROLE console_enrollment_plan_locker NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
+                END IF;
+            END
+            $block$;
+            ALTER ROLE console_enrollment_plan_locker NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
+            """);
+        var restrictRuntimeRole = "ALTER ROLE " + QuoteIdentifier(runtime.Username!) +
+            " LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION";
+        await db.Database.ExecuteSqlRawAsync(restrictRuntimeRole);
+        var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "provision-runtime.sql"));
+        script = string.Join('\n', script.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(line => !line.TrimStart().StartsWith('\\')));
+        script = script.Replace(":\"runtime_role\"", QuoteIdentifier(runtime.Username), StringComparison.Ordinal)
+            .Replace(":'runtime_role'", QuoteLiteral(runtime.Username), StringComparison.Ordinal)
+            .Replace(":\"enrollment_plan_lock_owner_role\"", QuoteIdentifier(lockOwner), StringComparison.Ordinal)
+            .Replace(":'enrollment_plan_lock_owner_role'", QuoteLiteral(lockOwner), StringComparison.Ordinal)
+            .Replace(":DBNAME", QuoteIdentifier(owner.Database!), StringComparison.Ordinal);
+        if (script.Contains(":\"runtime_role\"", StringComparison.Ordinal) || script.Contains(":'runtime_role'", StringComparison.Ordinal) ||
+            script.Contains(":\"enrollment_plan_lock_owner_role\"", StringComparison.Ordinal) || script.Contains(":'enrollment_plan_lock_owner_role'", StringComparison.Ordinal) ||
+            script.Contains(":DBNAME", StringComparison.Ordinal))
+            throw new InvalidOperationException("Runtime provisioning substitutions were incomplete.");
+        await db.Database.ExecuteSqlRawAsync(script);
+    }
+
+    private static string QuoteIdentifier(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
+    private static string QuoteLiteral(string value) => $"'{value.Replace("'", "''")}'";
 
     public async Task<TestData> SeedAsync(bool sameOperator = false)
     {

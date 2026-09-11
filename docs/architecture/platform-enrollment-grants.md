@@ -4,6 +4,8 @@
 
 私有原子發行、固定 TTL 與同一操作收據恢復的實作／部署界線見[平台授權儲存層](../deployment/platform-grants-store.md)。此資料庫元件與下列密文 primitive 尚未組合成可執行的平台工作流程。
 
+平台已提供[註冊申請與獨立核准](../deployment/platform-enrollment-plans.md)，包含永久接收公鑰保留及原請求恢復。這一段只保存意圖；execution、durable operation／outbox、私有 mint、撤銷及密文領取仍需後續實作與重新覆核。
+
 ## 授權與不可變計畫
 
 新增 Owner-only、Computer scope 限定的 `AgentEnrollmentGrant.Manage`。提案與執行要求 fresh step-up、目前有效的目錄快照及精確 GUID。計畫保存環境、目錄物件 GUID、伺服器 Device ID、mapping 建立時間、目錄 generation、授權版本、固定 600 秒 TTL，以及一次性接收公鑰與其 SHA-256 fingerprint。核准者須與提案人不同，並有 `Change.Approve`；執行前再次檢查權限、版本及目標。
@@ -32,7 +34,7 @@
 
 ## 已實作的封套 primitive v1
 
-目前僅交付隔離的 .NET 封套產生器與 WebCrypto 接收類別，未接上上述提案、持久化、領取 UI 或任何 listener。RSA 公鑰限 canonical DER SubjectPublicKeyInfo，最多 512 bytes；完整 import 後重新 export 必須逐 byte 相同，key size 固定 3072、exponent 固定 65537。Fingerprint 使用 SPKI 的 SHA-256。
+目前提供隔離的 .NET 封套產生器與 WebCrypto 接收類別。提案已使用公鑰驗證與瀏覽器金鑰產生；封套產生、密文持久化、領取 UI 及 listener 尚未組合啟用。RSA 公鑰限 canonical DER SubjectPublicKeyInfo，最多 512 bytes；完整 import 後重新 export 必須逐 byte 相同，key size 固定 3072、exponent 固定 65537。Fingerprint 使用 SPKI 的 SHA-256。
 
 提案可先使用 `EnrollmentGrantRecipientKey.Validate` 驗證接收公鑰並取得 canonical DER 與 fingerprint，這個步驟不產生 token 或封套。驗證器先複製輸入，再套用相同公鑰限制；封閉的 validated 型別只回傳 byte array 複本。`Seal` 使用此型別執行加密，既有 DER overload 也先經過同一驗證器。此型別僅證明公鑰格式，不能證明核准、fingerprint 未重用或操作者權限；後續平台交易仍須分別保證這些條件。
 

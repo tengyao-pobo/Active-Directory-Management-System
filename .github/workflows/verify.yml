@@ -73,6 +73,7 @@ jobs:
         run: dotnet run --project src/Server/Provisioning -c Release --no-build -- migrate
       - name: Provision restricted CI runtime role
         run: |
-          docker exec ${{ job.services.postgres.id }} psql -U postgres -d console_ci -v ON_ERROR_STOP=1 -c "CREATE ROLE console_runtime LOGIN PASSWORD 'ci-runtime-ephemeral-only' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;"
-          docker exec -i ${{ job.services.postgres.id }} psql -U postgres -d console_ci -v ON_ERROR_STOP=1 -v runtime_role=console_runtime < build/provision-runtime.sql
+          docker exec ${{ job.services.postgres.id }} psql -U postgres -d console_ci -v ON_ERROR_STOP=1 -c "CREATE ROLE console_runtime LOGIN PASSWORD 'ci-runtime-ephemeral-only' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;"
+          docker exec ${{ job.services.postgres.id }} psql -U postgres -d console_ci -v ON_ERROR_STOP=1 -c "CREATE ROLE console_enrollment_plan_locker NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;"
+          docker exec -i ${{ job.services.postgres.id }} psql -U postgres -d console_ci -v ON_ERROR_STOP=1 -v runtime_role=console_runtime -v enrollment_plan_lock_owner_role=console_enrollment_plan_locker < build/provision-runtime.sql
       - run: dotnet test ITManagement.slnx -c Release --no-build --logger trx

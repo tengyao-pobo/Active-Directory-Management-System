@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ApiError, request } from './api';
 import { useI18n } from './i18n';
+import DeviceEnrollmentPlans from './DeviceEnrollmentPlans';
 
 interface Readiness { status: 'Eligible' | 'MappingRequired'; queriedAt: string }
 function Content({ environmentId, id }: { environmentId: string; id: string }) {
@@ -27,8 +28,7 @@ function Content({ environmentId, id }: { environmentId: string; id: string }) {
       });
     return () => controller.abort();
   }, [environmentId, id, revision]);
-  if (hidden || !shown) return null;
-  return <section className="asset-panel" aria-label={t('enrollment.title')}>
+  return <>{!hidden && shown && <section className="asset-panel" aria-label={t('enrollment.title')}>
     <h3>{t('enrollment.title')}</h3>
     {error ? <p role="alert">{t('enrollment.unavailable')}</p> : !data ? <p role="status">{t('enrollment.checking')}</p> : <>
       <p role="status">{t(data.status === 'Eligible' ? 'enrollment.eligible' : 'enrollment.mappingRequired')}</p>
@@ -37,7 +37,9 @@ function Content({ environmentId, id }: { environmentId: string; id: string }) {
     </>}
     <button type="button" className="secondary-button" disabled={!data && !error}
       onClick={() => { setData(null); setError(false); setRevision(value => value + 1); }}>{t('enrollment.refresh')}</button>
-  </section>;
+  </section>}
+    <DeviceEnrollmentPlans environmentId={environmentId} id={id} canRequest={!hidden && !error && data?.status === 'Eligible'} />
+  </>;
 }
 
 export default function DeviceEnrollmentPanel(props: { environmentId: string; id: string }) {
