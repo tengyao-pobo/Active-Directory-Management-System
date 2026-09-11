@@ -4,6 +4,8 @@
 
 ## Phase 1–12
 
+目前已交付 Phase 4 的讀取/同步基礎與 typed preview 契約，見 [Phase 4 驗證紀錄](../deployment/phase4.md)。真實網域與受控 AD 寫入尚未驗收，因此下表 Phase 4 的完整進階條件仍未滿足；不得將 unavailable adapter 視為已完成 AD mutation。
+
 | Phase | 實作交付 | 關鍵驗收 / 進下一階段條件 |
 |---|---|---|
 | 1 Architecture | 元件、資料流、安全、schema、API/protocol、V1 與路線 | 13 項文件一致；獨立安全架構審查；使用者確認後開始程式實作 |

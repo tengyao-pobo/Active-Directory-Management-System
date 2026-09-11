@@ -27,6 +27,8 @@ public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options)
     public DbSet<PasskeyEnrollmentGrant> EnrollmentGrants => Set<PasskeyEnrollmentGrant>();
     public DbSet<SecurityEvent> SecurityEvents => Set<SecurityEvent>();
     public DbSet<PrincipalPreference> Preferences => Set<PrincipalPreference>();
+    public DbSet<DirectoryObjectRecord> DirectoryObjects => Set<DirectoryObjectRecord>();
+    public DbSet<DirectorySyncState> DirectorySync => Set<DirectorySyncState>();
 
     public async Task<IDbContextTransaction> BeginEnvironment(Guid environmentId, Guid principalId, CancellationToken ct)
     {
@@ -37,6 +39,18 @@ public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options)
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        ConfigureTenant<DirectoryObjectRecord>(b, "DirectoryObjects");
+        b.Entity<DirectoryObjectRecord>().HasIndex(x => new { x.EnvironmentId, x.Generation, x.Kind, x.Id });
+        b.Entity<DirectoryObjectRecord>().Property(x => x.Kind).HasMaxLength(32);
+        b.Entity<DirectoryObjectRecord>().Property(x => x.DistinguishedName).HasMaxLength(4096);
+        b.Entity<DirectoryObjectRecord>().Property(x => x.Name).HasMaxLength(256);
+        b.Entity<DirectoryObjectRecord>().Property(x => x.SamAccountName).HasMaxLength(256);
+        b.Entity<DirectoryObjectRecord>().Property(x => x.Department).HasMaxLength(256);
+        b.Entity<DirectoryObjectRecord>().Property(x => x.ObjectSid).HasMaxLength(256);
+        ConfigureTenant<DirectorySyncState>(b, "DirectorySync");
+        b.Entity<DirectorySyncState>().HasIndex(x => x.EnvironmentId).IsUnique();
+        b.Entity<DirectorySyncState>().Property(x => x.Status).HasMaxLength(32);
+        b.Entity<DirectorySyncState>().Property(x => x.ErrorCode).HasMaxLength(64);
         b.Entity<ManagedEnvironment>().ToTable("Environments").HasKey(x => x.Id);
         b.Entity<ManagedEnvironment>().Property(x => x.Version).IsConcurrencyToken();
         b.Entity<ManagedEnvironment>().Property(x => x.Name).HasMaxLength(160);

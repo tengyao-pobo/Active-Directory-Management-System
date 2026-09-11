@@ -100,6 +100,7 @@ app.UseAuthorization();
 app.MapGet("/health/live", () => Results.Ok(new { status = "alive" })).AllowAnonymous();
 app.MapAuth();
 app.MapEnvironmentApi();
+app.MapDirectoryApi();
 app.Run();
 
 public partial class Program;

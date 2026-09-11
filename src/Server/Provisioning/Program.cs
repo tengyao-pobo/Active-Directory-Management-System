@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 if (args.Length == 0)
 {
-    Console.WriteLine("Commands: migrate | create-environment <name> <dns> | bootstrap-owner <environment-guid> <operator-guid> <local-name> | provision-windows <operator-guid> <SID> <display-name> | enrollment-grant <principal-guid>");
+    Console.WriteLine("Commands: migrate | create-environment <name> <dns> | bootstrap-owner <environment-guid> <operator-guid> <local-name> | provision-windows <operator-guid> <SID> <display-name> | enrollment-grant <principal-guid> | provision-connector-principal <environment-guid> <operator-guid> <name>");
     return;
 }
 if (Environment.GetEnvironmentVariable("CONSOLE_PROVISIONING_ALLOWED") != "true")
@@ -19,6 +19,16 @@ await using var tx = await db.Database.BeginTransactionAsync(System.Data.Isolati
 var now = DateTimeOffset.UtcNow;
 switch (args[0])
 {
+    case "provision-connector-principal" when args.Length == 4:
+        var connectorEnv = Guid.Parse(args[1]); var connectorOperator = Guid.Parse(args[2]);
+        if (connectorOperator == Guid.Empty || args[3].Length is < 1 or > 128 || !await db.Environments.AnyAsync(x => x.Id == connectorEnv))
+            throw new ArgumentException("Valid environment, operator identity and name required.");
+        var connector = new Principal { Id = Guid.NewGuid(), OperatorId = connectorOperator, Issuer = "connector", Subject = args[3], DisplayName = args[3], Enabled = true };
+        db.Principals.Add(connector);
+        db.Memberships.Add(new EnvironmentMembership { EnvironmentId = connectorEnv, PrincipalId = connector.Id, Active = true });
+        db.SecurityEvents.Add(new SecurityEvent { PrincipalId = connector.Id, Action = "ConnectorPrincipalProvisioned", Result = "Success", OccurredAt = now, SourceIp = "local-cli" });
+        await db.SaveChangesAsync(); await tx.CommitAsync();
+        Console.WriteLine($"Connector principal ID: {connector.Id}"); return;
     case "create-environment" when args.Length == 3:
         if (args[1].Length is < 1 or > 160 || Uri.CheckHostName(args[2]) != UriHostNameType.Dns) throw new ArgumentException("Name and DNS required.");
         var env = new ManagedEnvironment { Id = Guid.NewGuid(), Name = args[1], CanonicalDns = args[2], DefaultLocale = "zh-TW", Version = 1 };
