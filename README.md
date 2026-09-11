@@ -4,7 +4,7 @@
 
 An internal web-based Active Directory management platform with role-based access control, computer monitoring, remote administration, and IT management tools.
 
-目前階段：**Phase 5 目錄查詢與明細 UI 已實作；真實網域與寫入驗收仍待完成。**
+目前階段：**Phase 5 目錄查詢、跨類型搜尋與明細 UI 已實作；真實網域與寫入驗收仍待完成。**
 
 已實作 .NET 10 Solution、PostgreSQL migrations/RLS、opaque session、Windows SSO adapter、緊急帳號密碼 + Passkey、細粒度 RBAC/Scope、雙人核准的本機設定變更、Audit/Outbox 與離線 provisioning 工具。
 

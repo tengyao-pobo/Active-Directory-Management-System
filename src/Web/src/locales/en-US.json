@@ -1,4 +1,10 @@
 {
+"globalSearch.results": "Results for “{query}”. Each type is paginated independently.",
+  "directory.refresh": "Refresh directory",
+  "nav.search": "Directory search",
+  "globalSearch.description": "Search all four object types in the current environment. Each section has its own authorized results and snapshot time.",
+  "globalSearch.hint": "Enter a name or account to search. Results are limited to your permitted scope.",
+  "globalSearch.label": "Search all directory types",
   "directory.title.User": "Users",
   "directory.title.Group": "Groups",
   "directory.title.Computer": "Computers",

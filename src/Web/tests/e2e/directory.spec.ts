@@ -103,3 +103,81 @@ test('switching environments clears an in-flight detail response', async ({ page
   await expect(page.getByText('east User Alpha')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Object details', exact: true })).toHaveCount(0);
 });
+
+test('global search waits for submission, searches every kind and clears results', async ({ page }, info) => {
+  const state: State = { searches: [] }; await open(page, state, 'search');
+  await expect(page.getByRole('heading', { name: 'Directory search', exact: true })).toBeVisible();
+  expect(state.searches).toEqual([]);
+  await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeDisabled();
+  const literal = 'alpha + % &';
+  await page.getByLabel('Search all directory types').fill(literal);
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect.poll(() => state.searches.length).toBe(4);
+  expect(state.searches.every(value => value === literal)).toBe(true);
+  for (const kind of ['User', 'Group', 'Computer', 'OrganizationalUnit']) await expect(page.getByRole('button', { name: new RegExp(`east ${kind} Alpha`) })).toBeVisible();
+  await page.getByRole('button', { name: /east User Alpha/ }).click();
+  await expect(page.locator('.directory-detail')).toContainText('S-1-5-21');
+  await page.evaluate(() => { (document.activeElement as HTMLElement)?.blur(); window.scrollTo(0, 0); });
+  await page.screenshot({ path: `test-results/screenshots/${info.project.name}-global-search.png`, fullPage: true });
+  await page.locator('.global-directory-search > form').getByRole('button', { name: 'Clear search' }).click();
+  await expect(page.locator('.directory-view')).toHaveCount(0);
+});
+
+test('global query replacement resets all details and cursors; environment switch removes query', async ({ page }, info) => {
+  await open(page, { searches: [] }, 'search');
+  await page.getByLabel('Search all directory types').fill('first');
+  await page.locator('.global-directory-search > form').getByRole('button', { name: 'Search', exact: true }).click();
+  const users = page.getByRole('region', { name: 'Users', exact: true });
+  await users.getByRole('button', { name: 'Next', exact: true }).click();
+  await users.getByRole('button', { name: /east User Beta/ }).click();
+  await expect(users.locator('.directory-detail')).toContainText('Beta');
+  await page.getByLabel('Search all directory types').fill('second');
+  await page.locator('.global-directory-search > form').getByRole('button', { name: 'Search', exact: true }).click();
+  await expect(users.getByRole('button', { name: /east User Alpha/ })).toBeVisible();
+  await expect(page.locator('.directory-detail')).toHaveCount(0);
+  if (info.project.name.includes('mobile')) await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.locator('.environment-picker select').selectOption('west');
+  await expect(page.getByLabel('Search all directory types')).toHaveValue('');
+  await expect(page.locator('.directory-view')).toHaveCount(0);
+});
+
+test('refresh recovers an unconfigured directory without reloading the app', async ({ page }) => {
+  const state: State = { status: 'Unconfigured', searches: [] }; await open(page, state);
+  await expect(page.getByRole('heading', { name: 'Directory connector is not ready' })).toBeVisible();
+  state.status = 'Ready';
+  await page.getByRole('button', { name: 'Refresh directory' }).click();
+  await expect(page.getByRole('button', { name: /east User Alpha/ })).toBeVisible();
+});
+
+test('one unavailable type does not hide other search results or report ready', async ({ page }) => {
+  await open(page, { searches: [] }, 'search');
+  await page.route('**/directory/objects?**', route => {
+    if (new URL(route.request().url()).searchParams.get('kind') !== 'Group') return route.fallback();
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ title: 'DirectoryUnavailable' }) });
+  });
+  await page.getByLabel('Search all directory types').fill('alpha');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect(page.getByRole('button', { name: /east User Alpha/ })).toBeVisible();
+  const groups = page.getByRole('region', { name: 'Groups', exact: true });
+  await expect(groups.getByRole('alert')).toBeVisible();
+  await expect(groups.locator('.directory-source')).not.toContainText('Snapshot ready');
+});
+
+test('a late old global search response cannot replace a new query', async ({ page }) => {
+  await open(page, { searches: [] }, 'search');
+  let release: (() => void) | undefined;
+  await page.route('**/directory/objects?**', async route => {
+    const u = new URL(route.request().url());
+    if (u.searchParams.get('search') !== 'old' || u.searchParams.get('kind') !== 'User') return route.fallback();
+    await new Promise<void>(resolve => { release = resolve; });
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [object('east', 'User', 'Obsolete')], nextCursor: null, generation: 'old', asOf }) }).catch(() => {});
+  });
+  await page.getByLabel('Search all directory types').fill('old');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect.poll(() => Boolean(release)).toBe(true);
+  await page.getByLabel('Search all directory types').fill('new');
+  await page.locator('.global-directory-search > form').getByRole('button', { name: 'Search', exact: true }).click();
+  release?.();
+  await expect(page.getByRole('button', { name: /east User Alpha/ })).toBeVisible();
+  await expect(page.getByText('east User Obsolete')).toHaveCount(0);
+});

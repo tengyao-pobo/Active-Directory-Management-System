@@ -8,6 +8,7 @@ export type DirectoryKind = 'User' | 'Group' | 'Computer' | 'OrganizationalUnit'
 export interface DirectoryViewProps {
   kind: DirectoryKind;
   environmentId: string;
+  initialSearch?: string;
 }
 
 interface DirectoryObject {
@@ -50,13 +51,13 @@ function statusPhase(status: DirectoryStatus): ViewPhase {
   return status.stale ? 'unavailable' : 'ready';
 }
 
-function DirectoryViewContent({ kind, environmentId }: DirectoryViewProps) {
+function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryViewProps) {
   const { t, locale } = useI18n();
   const [phase, setPhase] = useState<ViewPhase>('loading');
   const [status, setStatus] = useState<DirectoryStatus | null>(null);
   const [statusError, setStatusError] = useState<unknown>(null);
-  const [draftSearch, setDraftSearch] = useState('');
-  const [committedSearch, setCommittedSearch] = useState('');
+  const [draftSearch, setDraftSearch] = useState(initialSearch ?? '');
+  const [committedSearch, setCommittedSearch] = useState(initialSearch ?? '');
   const [items, setItems] = useState<DirectoryObject[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
@@ -126,7 +127,7 @@ function DirectoryViewContent({ kind, environmentId }: DirectoryViewProps) {
         setStatus(result);
         const nextPhase = statusPhase(result);
         setPhase(nextPhase);
-        if (nextPhase === 'ready') void loadPage(null, '', [null], 0);
+        if (nextPhase === 'ready') void loadPage(null, initialSearch ?? '', [null], 0);
       } catch (error) {
         if (controller.signal.aborted || initialRequest !== listRequest.current) return;
         setStatusError(error);
@@ -201,21 +202,21 @@ function DirectoryViewContent({ kind, environmentId }: DirectoryViewProps) {
   };
 
   const sourceDate = formattedDate(sourceAsOf ?? status?.completedAt);
-  const statusLabel = phase === 'ready' ? t('directory.statusReady')
+  const statusLabel = phase === 'ready' && !listError ? t('directory.statusReady')
     : phase === 'unconfigured' ? t('directory.statusUnconfigured')
       : phase === 'failed' ? t('directory.statusFailed')
         : phase === 'syncing' ? t('directory.statusSyncing') : t('directory.statusStale');
 
   return (
-    <section className="directory-view" aria-labelledby="directory-heading">
+    <section className="directory-view" aria-labelledby={`directory-heading-${kind}`}>
       <header className="directory-header">
         <div>
           <span className="eyebrow">{t('directory.eyebrow')}</span>
-          <h1 id="directory-heading">{t(`directory.title.${kind}`)}</h1>
+          <h1 id={`directory-heading-${kind}`}>{t(`directory.title.${kind}`)}</h1>
           <p>{t('directory.description')}</p>
         </div>
         {phase !== 'loading' && (
-          <div className={`directory-source ${phase === 'ready' ? 'ready' : 'warning'}`}>
+          <div className={`directory-source ${phase === 'ready' && !listError ? 'ready' : 'warning'}`}>
             <span className="status-dot" aria-hidden="true" />
             <span><strong>{statusLabel}</strong><small>{sourceDate ? t('directory.asOf', { date: sourceDate }) : t('directory.asOfUnknown')}</small></span>
           </div>
@@ -230,14 +231,14 @@ function DirectoryViewContent({ kind, environmentId }: DirectoryViewProps) {
 
       {phase === 'ready' && (
         <>
-          <form className="directory-search" role="search" onSubmit={submitSearch}>
-            <label htmlFor="directory-search-input">{t('directory.searchLabel')}</label>
+          {initialSearch === undefined && <form className="directory-search" role="search" onSubmit={submitSearch}>
+            <label htmlFor={`directory-search-input-${kind}`}>{t('directory.searchLabel')}</label>
             <div>
-              <input id="directory-search-input" value={draftSearch} maxLength={128} onChange={(event) => setDraftSearch(event.target.value)} placeholder={t('directory.searchPlaceholder')} />
+              <input id={`directory-search-input-${kind}`} value={draftSearch} maxLength={128} onChange={(event) => setDraftSearch(event.target.value)} placeholder={t('directory.searchPlaceholder')} />
               {committedSearch && <button type="button" className="directory-clear" onClick={clearSearch}>{t('directory.clearSearch')}</button>}
               <button type="submit" className="secondary-button" disabled={listLoading}>{t('directory.searchAction')}</button>
             </div>
-          </form>
+          </form>}
 
           {restartNotice && <div className="directory-notice" role="status">{t('directory.restartNotice')}</div>}
 
@@ -288,8 +289,8 @@ function DirectoryViewContent({ kind, environmentId }: DirectoryViewProps) {
             </div>
 
             {selectedId && (
-              <aside className="directory-detail" aria-labelledby="directory-detail-title" aria-live="polite">
-                <div className="directory-detail-header"><h2 id="directory-detail-title">{t('directory.detailsTitle')}</h2><button type="button" className="directory-close" onClick={clearDetail} aria-label={t('directory.closeDetails')}>×</button></div>
+              <aside className="directory-detail" aria-labelledby={`directory-detail-title-${kind}`} aria-live="polite">
+                <div className="directory-detail-header"><h2 id={`directory-detail-title-${kind}`}>{t('directory.detailsTitle')}</h2><button type="button" className="directory-close" onClick={clearDetail} aria-label={t('directory.closeDetails')}>×</button></div>
                 {detailLoading && <DirectoryState loading compact title={t('directory.loadingDetails')} />}
                 {!detailLoading && Boolean(detailError) && (() => {
                   const [title, body] = stateCopy('error', detailError);
@@ -325,5 +326,7 @@ function DirectoryState({ title, body, loading = false, error = false, compact =
 }
 
 export default function DirectoryView(props: DirectoryViewProps) {
-  return <DirectoryViewContent key={`${props.environmentId}:${props.kind}`} {...props} />;
+  const { t } = useI18n();
+  const [revision, setRevision] = useState(0);
+  return <div className="directory-wrapper"><button type="button" className="secondary-button" onClick={() => setRevision(value => value + 1)}>{t('directory.refresh')}</button><DirectoryViewContent key={`${props.environmentId}:${props.kind}:${props.initialSearch ?? ''}:${revision}`} {...props} /></div>;
 }
