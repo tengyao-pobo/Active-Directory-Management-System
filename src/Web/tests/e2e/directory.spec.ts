@@ -17,6 +17,8 @@ async function mock(page: Page, state: State) {
     if (path === '/api/v1/environments') return reply({ items: ['east', 'west'].map(id => ({ id, name: `${id} environment`, canonicalDns: `${id}.test`, defaultLocale: 'en-US', version: 1 })) });
     if (path.endsWith('/access')) return reply({ permissions: [] }); // An OU-scoped reader has no All-resource capability.
     if (path.includes('/favorites/')) return reply({ saved: false });
+    if (path.endsWith('/device-tags')) return reply({ items: [], version: 1, canManage: false, canApprove: false });
+    if (path.match(/\/devices\/.+\/tags$/)) return reply({ items: [] });
     if (path.match(/\/devices\/.+\/user$/)) return reply({ user: null, version: 0, updatedAt: null, canEdit: false });
     if (path.match(/\/users\/.+\/devices$/)) return reply({ items: [], nextCursor: null });
     const m = path.match(/\/environments\/(east|west)\/directory\/(status|objects)(?:\/(.+))?$/);

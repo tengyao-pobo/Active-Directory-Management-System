@@ -107,3 +107,8 @@
 .software-inventory > label { display: grid; gap: .4rem; }
 .software-inventory input { width: 100%; box-sizing: border-box; }
 @media (min-width: 621px) { .software-inventory .directory-table-panel th:nth-child(3), .software-inventory .directory-table-panel td:nth-child(3) { display: table-cell; } }
+.tag-action-row { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:.65rem 0; }
+.tag-action-row strong { min-width:8rem; }
+.tag-plan { border-top:1px solid var(--border, #ccd5df); padding:1rem 0; }
+.tag-plan dd, .tag-hash { overflow-wrap:anywhere; }
+.device-tags textarea { display:block; width:100%; min-height:5rem; }

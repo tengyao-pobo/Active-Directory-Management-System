@@ -25,7 +25,8 @@ public sealed class EnvironmentAccess(ConsoleDbContext db, AuthorizationEvaluato
 public sealed record ManagementChange(string Kind, string? Name = null, string? CanonicalDns = null,
     string? DefaultLocale = null, Guid? RoleId = null, Guid? PrincipalId = null, Guid? ScopeId = null,
     Guid? AssignmentId = null, ScopeKind? ScopeKind = null, string? ScopeValue = null,
-    bool IncludeDescendants = false, string? GroupSid = null, string[]? Permissions = null);
+    bool IncludeDescendants = false, string? GroupSid = null, string[]? Permissions = null,
+    Guid? TagId = null, string? TagKey = null, Guid? ObjectId = null, long? ExpectedTagVersion = null);
 public sealed record PlanRequest(ManagementChange Change, long ExpectedVersion, string Reason);
 public sealed record ApprovalRequest(string PlanHash);
 
@@ -97,9 +98,14 @@ public static class EnvironmentApi
             if (error is not null) return Results.Problem(statusCode: 400, title: error);
             await using var tx = await db.BeginEnvironment(environmentId, AuthEndpoints.Actor(http), ct);
             if (!await access.Allows(environmentId, AuthEndpoints.Actor(http), Permission(input.Change), ct)) return Results.NotFound();
+            if (DeviceTagChanges.IsTagChange(input.Change) && !await DeviceTagChanges.Allows(db, access, environmentId, AuthEndpoints.Actor(http), ct)) return Results.NotFound();
             if (!AuthEndpoints.FreshStepUp(http, time, config)) return Results.Problem(statusCode: 403, title: "StepUpRequired");
             var env = await db.Environments.SingleAsync(x => x.Id == environmentId, ct);
             if (env.Version != input.ExpectedVersion) return Results.Problem(statusCode: 412, title: "StaleVersion");
+            // The immutable plan contains the server-generated identity that execution will use.
+            if (input.Change.Kind == "device-tag.create") input = input with { Change = input.Change with { TagId = Guid.NewGuid() } };
+            var tagError = await DeviceTagChanges.Check(db, environmentId, input.Change, time.GetUtcNow(), ct);
+            if (tagError is not null) return Results.Problem(statusCode: 409, title: tagError);
             var plan = plans.Create(environmentId, Guid.NewGuid(), AuthEndpoints.Actor(http), input.Change.Kind,
                 JsonSerializer.Serialize(input.Change), env.Version, time.GetUtcNow().AddMinutes(15),
                 [new ChangePlanItem { Id = Guid.NewGuid(), TargetId = environmentId.ToString(), ExpectedVersion = env.Version }], input.Reason);
@@ -153,10 +159,14 @@ public static class EnvironmentApi
         if (Validate(change) is not null) return Results.BadRequest();
         if (!await access.Allows(environmentId, actor, Permission(change), ct) ||
             !await access.Allows(environmentId, approval.ApproverId, PermissionCatalog.ChangeApprove, ct)) return Results.NotFound();
+        if (DeviceTagChanges.IsTagChange(change) && !await DeviceTagChanges.Allows(db, access, environmentId, actor, ct)) return Results.NotFound();
         var env = await db.Environments.SingleAsync(x => x.Id == environmentId, ct);
         if (!plans.ValidateForExecution(plan, approval, env.Version, new Dictionary<string, long> { [environmentId.ToString()] = env.Version }, time.GetUtcNow()).IsValid)
             return Results.Problem(statusCode: 409, title: "PlanChangedOrExpired");
-        var invalid = await Apply(db, env, change, ct);
+        var invalid = await DeviceTagChanges.Check(db, environmentId, change, time.GetUtcNow(), ct);
+        if (invalid is not null) return Results.Problem(statusCode: 409, title: invalid);
+        if (DeviceTagChanges.IsTagChange(change)) await DeviceTagChanges.Apply(db, environmentId, change, actor, time.GetUtcNow(), ct);
+        else invalid = await Apply(db, env, change, ct);
         if (invalid is not null) return Results.Problem(statusCode: 409, title: invalid);
         env.Version++;
         plan.State = ChangePlanState.Executed;
@@ -210,7 +220,8 @@ public static class EnvironmentApi
         }
         return null;
     }
-    private static string Permission(ManagementChange c) => c.Kind == "environment.update" ? PermissionCatalog.EnvironmentManage : PermissionCatalog.RbacManage;
+    private static string Permission(ManagementChange c) => DeviceTagChanges.IsTagChange(c) ? PermissionCatalog.DeviceTagManage :
+        c.Kind == "environment.update" ? PermissionCatalog.EnvironmentManage : PermissionCatalog.RbacManage;
     private sealed record AuditCursor(DateTimeOffset At, Guid Id);
     private static async Task<bool> DistinctOperators(ConsoleDbContext db, Guid requester, Guid approver, CancellationToken ct)
     {
@@ -219,18 +230,21 @@ public static class EnvironmentApi
     }
     private static string? Validate(ManagementChange c) => c.Kind switch
     {
+        _ when DeviceTagChanges.Valid(c) => null,
         "environment.update" when c.Name?.Length is > 0 and <= 160 && c.CanonicalDns?.Length is > 0 and <= 253 &&
             Uri.CheckHostName(c.CanonicalDns) == UriHostNameType.Dns && c.DefaultLocale is "zh-TW" or "en-US" => null,
         "role.create" when c.Name?.Length is > 0 and <= 128 && !new[] { "Owner", "Admin", "Manager", "Member", "Viewer", "HR" }.Contains(c.Name, StringComparer.OrdinalIgnoreCase) &&
             c.Permissions is { Length: > 0 and <= 100 } && c.Permissions.All(p => PermissionCatalog.IsKnown(p) && !PermissionCatalog.IsOwnerOnly(p)) => null,
-        "scope.create" when c.ScopeKind is { } k && Enum.IsDefined(k) && (k == ScopeKind.All ? c.ScopeValue is null : c.ScopeValue?.Length is > 0 and <= 256) => null,
+        "scope.create" when c.ScopeKind is { } k && Enum.IsDefined(k) &&
+            (k == ScopeKind.DeviceTag ? DeviceTagCatalog.IsCanonicalId(c.ScopeValue) && !c.IncludeDescendants :
+                k == ScopeKind.All ? c.ScopeValue is null : c.ScopeValue?.Length is > 0 and <= 256) => null,
         "membership.add" when c.PrincipalId is { } p && p != Guid.Empty => null,
         "assignment.add" when c.PrincipalId is not null && c.RoleId is not null && c.ScopeId is not null => null,
         "assignment.remove" when c.AssignmentId is not null => null,
         "group-mapping.add" when c.RoleId is not null && c.ScopeId is not null && c.GroupSid is { Length: < 256 } sid && Regex.IsMatch(sid, "^S-1-[0-9]+(-[0-9]+)+$", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50)) => null,
         _ => "InvalidManagementChange"
     };
-    private static object PlanDto(ChangePlan p) => new { p.Id, p.EnvironmentId, p.RequesterId, p.Action, change = JsonSerializer.Deserialize<ManagementChange>(p.ImmutablePlanJson), p.PlanHash, p.PolicyVersion, p.ExpiresAt, state = p.State.ToString(), p.Reason };
+    internal static object PlanDto(ChangePlan p) => new { p.Id, p.EnvironmentId, p.RequesterId, p.Action, change = JsonSerializer.Deserialize<ManagementChange>(p.ImmutablePlanJson), p.PlanHash, p.PolicyVersion, p.ExpiresAt, state = p.State.ToString(), p.Reason };
     private static void Audit(ConsoleDbContext db, HttpContext http, TimeProvider time, Guid env, string action, string target, string result) =>
         db.Audit.Add(new AuditRecord { EnvironmentId = env, Id = Guid.NewGuid(), ActorId = AuthEndpoints.Actor(http), Action = action, TargetId = target,
             Result = result, OccurredAt = time.GetUtcNow(), SourceIp = http.Connection.RemoteIpAddress?.ToString(), CorrelationId = http.TraceIdentifier });

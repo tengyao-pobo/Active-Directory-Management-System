@@ -18,4 +18,7 @@ REVOKE INSERT, DELETE, TRUNCATE ON "LocalCredentials" FROM :"runtime_role";
 REVOKE INSERT, DELETE, TRUNCATE ON "EnrollmentGrants" FROM :"runtime_role";
 REVOKE TRUNCATE ON ALL TABLES IN SCHEMA public FROM :"runtime_role";
 REVOKE INSERT, UPDATE, DELETE ON "DirectoryObjects", "DirectorySync" FROM :"runtime_role";
+REVOKE DELETE ON "DeviceTags" FROM :"runtime_role";
+REVOKE UPDATE ON "DeviceTags", "DeviceTagAssignments" FROM :"runtime_role";
+GRANT UPDATE ("Version", "ArchivedAt", "UpdatedAt", "UpdatedBy") ON "DeviceTags" TO :"runtime_role";
 -- Role must be NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE and not table owner.

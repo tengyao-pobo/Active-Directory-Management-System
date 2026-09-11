@@ -7,6 +7,8 @@ namespace ItManagement.Persistence;
 
 public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options) : DbContext(options)
 {
+    public DbSet<DeviceTag> DeviceTags => Set<DeviceTag>();
+    public DbSet<DeviceTagAssignment> DeviceTagAssignments => Set<DeviceTagAssignment>();
     public DbSet<DirectoryFavorite> Favorites => Set<DirectoryFavorite>();
     public DbSet<DeviceAsset> DeviceAssets => Set<DeviceAsset>();
     public DbSet<DeviceUserLink> DeviceUserLinks => Set<DeviceUserLink>();
@@ -42,6 +44,15 @@ public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options)
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        ConfigureTenant<DeviceTag>(b, "DeviceTags");
+        b.Entity<DeviceTag>().Property(x => x.Key).HasMaxLength(32);
+        b.Entity<DeviceTag>().Property(x => x.Version).IsConcurrencyToken();
+        b.Entity<DeviceTag>().HasIndex(x => new { x.EnvironmentId, x.Key }).IsUnique();
+        b.Entity<DeviceTagAssignment>().ToTable("DeviceTagAssignments")
+            .HasKey(x => new { x.EnvironmentId, x.TagId, x.ObjectId });
+        b.Entity<DeviceTagAssignment>().HasOne<DeviceTag>().WithMany()
+            .HasForeignKey(x => new { x.EnvironmentId, Id = x.TagId }).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<DeviceTagAssignment>().HasIndex(x => new { x.EnvironmentId, x.ObjectId, x.TagId });
         b.Entity<DirectoryFavorite>().ToTable("Favorites").HasKey(x => new { x.EnvironmentId, x.PrincipalId, x.ObjectId });
         b.Entity<DirectoryFavorite>().Property(x => x.Kind).HasMaxLength(32);
         b.Entity<DirectoryFavorite>().Property(x => x.CreatedAt).HasDefaultValueSql("clock_timestamp()");

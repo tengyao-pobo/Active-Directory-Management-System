@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ApiError, getDirectoryObject, getDirectoryObjects, getDirectoryStatus } from './api';
+import { ApiError, getDirectoryObject, getDirectoryObjects, getDirectoryStatus, request } from './api';
 import { useI18n } from './i18n';
 import './directory.css';
 import DeviceTabs from './DeviceTabs';
@@ -62,6 +62,16 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
   const [statusError, setStatusError] = useState<unknown>(null);
   const [draftSearch, setDraftSearch] = useState(initialSearch ?? '');
   const [committedSearch, setCommittedSearch] = useState(initialSearch ?? '');
+  const [tags, setTags] = useState<{ id: string; key: string; archivedAt: string | null }[]>([]);
+  const [tagId, setTagId] = useState('');
+  const tagFilter = useRef('');
+  useEffect(() => {
+    if (kind !== 'Computer') return;
+    const controller = new AbortController();
+    void request<{ items: typeof tags }>(`/api/v1/environments/${encodeURIComponent(environmentId)}/device-tags`, { signal: controller.signal })
+      .then(value => { if (!controller.signal.aborted) setTags(value.items); }).catch(() => { if (!controller.signal.aborted) setTags([]); });
+    return () => controller.abort();
+  }, [environmentId, kind]);
   const [items, setItems] = useState<DirectoryObject[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
@@ -100,7 +110,7 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
     setListError(null);
     setItems([]);
     try {
-      const result = await getDirectoryObjects(environmentId, kind, search, cursor ?? undefined, controller.signal);
+      const result = await getDirectoryObjects(environmentId, kind, search, cursor ?? undefined, controller.signal, tagFilter.current);
       if (requestId !== listRequest.current) return;
       setItems(result.items as DirectoryObject[]);
       setNextCursor(result.nextCursor);
@@ -235,6 +245,9 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
 
       {phase === 'ready' && (
         <>
+          {kind === 'Computer' && tags.length > 0 && <label>{t('tags.filter')}<select value={tagId} disabled={listLoading} onChange={event => {
+            tagFilter.current = event.target.value; setTagId(event.target.value); setRestartNotice(false); void loadPage(null, committedSearch, [null], 0);
+          }}><option value="">{t('tags.all')}</option>{tags.map(tag => <option key={tag.id} value={tag.id}>{t(`tags.key.${tag.key}`)}{tag.archivedAt ? ` (${t('tags.archived')})` : ''}</option>)}</select></label>}
           {initialSearch === undefined && <form className="directory-search" role="search" onSubmit={submitSearch}>
             <label htmlFor={`directory-search-input-${kind}`}>{t('directory.searchLabel')}</label>
             <div>
@@ -258,7 +271,7 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
                 return <DirectoryState compact title={title} body={body} error />;
               })()}
               {!listLoading && !listError && items.length === 0 && (
-                <DirectoryState compact title={t('directory.emptyTitle')} body={t(committedSearch ? 'directory.emptySearchBody' : 'directory.emptyBody')} />
+                <DirectoryState compact title={t('directory.emptyTitle')} body={t(tagId ? 'tags.emptyFilter' : committedSearch ? 'directory.emptySearchBody' : 'directory.emptyBody')} />
               )}
               {!listLoading && !listError && items.length > 0 && (
                 <div className="directory-table-scroll">
