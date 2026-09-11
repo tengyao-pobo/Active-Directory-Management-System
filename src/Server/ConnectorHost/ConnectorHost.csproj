@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType><RootNamespace>ItManagement.ConnectorHost</RootNamespace></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../Infrastructure/Persistence/Persistence.csproj" />
+    <ProjectReference Include="../../Infrastructure/DirectoryConnector/DirectoryConnector.csproj" />
+  </ItemGroup>
+</Project>

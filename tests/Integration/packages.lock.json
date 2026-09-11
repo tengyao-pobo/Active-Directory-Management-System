@@ -590,8 +590,21 @@
           "Persistence": "[1.0.0, )"
         }
       },
+      "connectorhost": {
+        "type": "Project",
+        "dependencies": {
+          "DirectoryConnector": "[1.0.0, )",
+          "Persistence": "[1.0.0, )"
+        }
+      },
       "core": {
         "type": "Project"
+      },
+      "directoryconnector": {
+        "type": "Project",
+        "dependencies": {
+          "System.DirectoryServices.Protocols": "[10.0.12, )"
+        }
       },
       "persistence": {
         "type": "Project",
