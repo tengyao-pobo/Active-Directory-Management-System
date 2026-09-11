@@ -126,7 +126,7 @@ public sealed class OfflineSpool : IAsyncDisposable
         try
         {
             var sequence = _identity.NextSequence;
-            var envelopeHash = ComputeEnvelopeHash(
+            var envelopeHash = EnvelopeDigest.Compute(
                 protocolVersion: 1,
                 _identity.DeviceGuid,
                 _identity.RegistrationEpoch,
@@ -219,20 +219,20 @@ public sealed class OfflineSpool : IAsyncDisposable
     }
 
     public async Task MarkDeliveredAsync(
-        long sequence,
-        string payloadHash,
+        SpoolEnvelope expectedEnvelope,
+        EnvelopeAcknowledgement acknowledgement,
         CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sequence);
-        ArgumentException.ThrowIfNullOrWhiteSpace(payloadHash);
+        ArgumentNullException.ThrowIfNull(expectedEnvelope);
+        ArgumentNullException.ThrowIfNull(acknowledgement);
 
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var path = GetEnvelopePath(sequence);
+            var path = GetEnvelopePath(expectedEnvelope.Sequence);
             if (!File.Exists(path))
             {
-                return;
+                throw new EnvelopeAcknowledgementMismatchException("Acknowledged spool envelope no longer exists.");
             }
 
             var bytes = await ReadBoundedAsync(
@@ -242,9 +242,10 @@ public sealed class OfflineSpool : IAsyncDisposable
             var envelope = JsonSerializer.Deserialize<SpoolEnvelope>(bytes, JsonOptions)
                 ?? throw new InvalidDataException("Spool envelope is invalid.");
             ValidateEnvelope(envelope, path);
-            if (!string.Equals(envelope.PayloadHash, payloadHash, StringComparison.Ordinal))
+            if (!EnvelopeMatches(envelope, expectedEnvelope) || !AcknowledgementMatches(envelope, acknowledgement))
             {
-                throw new InvalidOperationException("Delivered payload hash does not match the queued envelope.");
+                throw new EnvelopeAcknowledgementMismatchException(
+                    "Acknowledgement does not match the queued spool envelope.");
             }
 
             File.Delete(path);
@@ -319,7 +320,7 @@ public sealed class OfflineSpool : IAsyncDisposable
             throw new InvalidDataException($"Spool envelope '{Path.GetFileName(file)}' failed its payload hash check.");
         }
 
-        var actualEnvelopeHash = ComputeEnvelopeHash(
+        var actualEnvelopeHash = EnvelopeDigest.Compute(
             envelope.ProtocolVersion,
             envelope.DeviceGuid,
             envelope.RegistrationEpoch,
@@ -373,35 +374,27 @@ public sealed class OfflineSpool : IAsyncDisposable
         }
     }
 
-    private static string ComputeEnvelopeHash(
-        int protocolVersion,
-        Guid deviceGuid,
-        long registrationEpoch,
-        long sequence,
-        Guid requestId,
-        DateTimeOffset observedAt,
-        string payloadHash)
-    {
-        var material = new EnvelopeHashMaterial(
-            1,
-            protocolVersion,
-            deviceGuid,
-            registrationEpoch,
-            sequence,
-            requestId,
-            observedAt.ToUniversalTime(),
-            payloadHash);
-        return Convert.ToHexStringLower(SHA256.HashData(
-            JsonSerializer.SerializeToUtf8Bytes(material, JsonOptions)));
-    }
+    private static bool EnvelopeMatches(SpoolEnvelope left, SpoolEnvelope right) =>
+        left.ProtocolVersion == right.ProtocolVersion &&
+        left.DeviceGuid == right.DeviceGuid &&
+        left.RegistrationEpoch == right.RegistrationEpoch &&
+        left.Sequence == right.Sequence &&
+        left.RequestId == right.RequestId &&
+        left.ObservedAt.ToUniversalTime() == right.ObservedAt.ToUniversalTime() &&
+        string.Equals(left.PayloadHash, right.PayloadHash, StringComparison.Ordinal) &&
+        string.Equals(left.EnvelopeHash, right.EnvelopeHash, StringComparison.Ordinal) &&
+        string.Equals(left.Payload.GetRawText(), right.Payload.GetRawText(), StringComparison.Ordinal);
 
-    private sealed record EnvelopeHashMaterial(
-        int HashVersion,
-        int ProtocolVersion,
-        Guid DeviceGuid,
-        long RegistrationEpoch,
-        long Sequence,
-        Guid RequestId,
-        DateTimeOffset ObservedAt,
-        string PayloadHash);
+    private static bool AcknowledgementMatches(
+        SpoolEnvelope envelope,
+        EnvelopeAcknowledgement acknowledgement) =>
+        acknowledgement.SchemaVersion == 1 &&
+        acknowledgement.ProtocolVersion == envelope.ProtocolVersion &&
+        acknowledgement.DeviceGuid == envelope.DeviceGuid &&
+        acknowledgement.RegistrationEpoch == envelope.RegistrationEpoch &&
+        acknowledgement.Sequence == envelope.Sequence &&
+        acknowledgement.RequestId == envelope.RequestId &&
+        acknowledgement.ObservedAt.ToUniversalTime() == envelope.ObservedAt.ToUniversalTime() &&
+        string.Equals(acknowledgement.PayloadHash, envelope.PayloadHash, StringComparison.Ordinal) &&
+        string.Equals(acknowledgement.EnvelopeHash, envelope.EnvelopeHash, StringComparison.Ordinal);
 }

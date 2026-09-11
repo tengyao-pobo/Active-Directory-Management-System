@@ -30,6 +30,7 @@
 - PR12：單一 GUID 目標重讀、DC + Invocation ID 綁定、判定服務接點；正式保護分類尚未啟用。
 - PR13：版本化保護政策與保守分類 library；正式事實來源與寫入仍未啟用。
 - Agent 基礎：觀測型別、收集器與離線 spool；服務、註冊與伺服器傳輸仍待完成。
+- Agent runtime：固定盤點／心跳排程、精確收據與重送、Windows Service 宿主；預設未配置，正式 enrollment / mTLS 與伺服器持久化尚未啟用。
 
 ## 目前開發順序
 

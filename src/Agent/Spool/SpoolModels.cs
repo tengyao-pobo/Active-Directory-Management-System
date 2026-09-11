@@ -44,4 +44,17 @@ public sealed record SpoolEnvelope(
     string EnvelopeHash,
     JsonElement Payload);
 
+public sealed record EnvelopeAcknowledgement(
+    int SchemaVersion,
+    int ProtocolVersion,
+    Guid DeviceGuid,
+    long RegistrationEpoch,
+    long Sequence,
+    Guid RequestId,
+    DateTimeOffset ObservedAt,
+    string PayloadHash,
+    string EnvelopeHash);
+
 public sealed class SpoolCapacityExceededException(string message) : InvalidOperationException(message);
+
+public sealed class EnvelopeAcknowledgementMismatchException(string message) : InvalidOperationException(message);
