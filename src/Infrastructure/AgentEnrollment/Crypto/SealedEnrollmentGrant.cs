@@ -28,7 +28,15 @@ public sealed class SealedEnrollmentGrant
         ReadOnlySpan<byte> recipientSubjectPublicKeyInfoDer,
         Guid environmentId,
         Guid operationId)
+        => Seal(EnrollmentGrantRecipientKey.Validate(recipientSubjectPublicKeyInfoDer), environmentId, operationId);
+
+    public static SealedEnrollmentGrant Seal(
+        EnrollmentGrantRecipientKey recipientKey,
+        Guid environmentId,
+        Guid operationId)
     {
+        if (recipientKey is null || environmentId == Guid.Empty || operationId == Guid.Empty)
+            throw new SealedEnrollmentGrantException();
         var token = new byte[TokenBytes];
         try
         {
@@ -38,7 +46,7 @@ public sealed class SealedEnrollmentGrant
             }
             while (CryptographicOperations.FixedTimeEquals(token, new byte[TokenBytes]));
 
-            return SealDeterministic(recipientSubjectPublicKeyInfoDer, environmentId, operationId, token);
+            return SealValidated(recipientKey, environmentId, operationId, token);
         }
         finally
         {
@@ -58,20 +66,27 @@ public sealed class SealedEnrollmentGrant
         Guid environmentId,
         Guid operationId,
         ReadOnlySpan<byte> token)
+        => SealValidated(EnrollmentGrantRecipientKey.Validate(recipientSubjectPublicKeyInfoDer), environmentId, operationId, token);
+
+    private static SealedEnrollmentGrant SealValidated(
+        EnrollmentGrantRecipientKey recipientKey,
+        Guid environmentId,
+        Guid operationId,
+        ReadOnlySpan<byte> token)
     {
         byte[]? payload = null;
         byte[]? tokenCopy = null;
         try
         {
             ValidateIdentifiersAndToken(environmentId, operationId, token);
-            using var recipient = ImportRecipient(recipientSubjectPublicKeyInfoDer);
+            using var recipient = recipientKey.Import();
             tokenCopy = token.ToArray();
             payload = SerializePayload(environmentId, operationId, tokenCopy);
             var ciphertext = recipient.Encrypt(payload, RSAEncryptionPadding.OaepSHA256);
             return new(
                 ciphertext,
                 SHA256.HashData(tokenCopy),
-                SHA256.HashData(recipientSubjectPublicKeyInfoDer));
+                recipientKey.GetFingerprintSha256());
         }
         catch (SealedEnrollmentGrantException)
         {
@@ -99,29 +114,6 @@ public sealed class SealedEnrollmentGrant
         WriteGuid(operationId, payload.AsSpan(48, 36));
         token.CopyTo(payload.AsSpan(84, TokenBytes));
         return payload;
-    }
-
-    private static RSA ImportRecipient(ReadOnlySpan<byte> subjectPublicKeyInfoDer)
-    {
-        if (subjectPublicKeyInfoDer.Length is < 1 or > RecipientSubjectPublicKeyInfoMaximumBytes)
-            throw new SealedEnrollmentGrantException();
-
-        var rsa = RSA.Create();
-        try
-        {
-            rsa.ImportSubjectPublicKeyInfo(subjectPublicKeyInfoDer, out var consumed);
-            var parameters = rsa.ExportParameters(false);
-            if (consumed != subjectPublicKeyInfoDer.Length || rsa.KeySize != 3072 ||
-                parameters.Exponent is not [0x01, 0x00, 0x01] ||
-                !CryptographicOperations.FixedTimeEquals(rsa.ExportSubjectPublicKeyInfo(), subjectPublicKeyInfoDer))
-                throw new SealedEnrollmentGrantException();
-            return rsa;
-        }
-        catch
-        {
-            rsa.Dispose();
-            throw;
-        }
     }
 
     private static void ValidateIdentifiersAndToken(Guid environmentId, Guid operationId, ReadOnlySpan<byte> token)
