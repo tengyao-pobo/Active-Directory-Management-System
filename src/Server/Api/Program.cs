@@ -103,6 +103,7 @@ app.MapEnvironmentApi();
 app.MapDirectoryApi();
 app.MapDeviceAssets();
 app.MapDeviceUserLinks();
+app.MapDashboard();
 app.Run();
 
 public partial class Program;
