@@ -70,7 +70,7 @@ bootstrap-owner 以隱藏 console input（或 stdin）取得密碼，不經 comm
 ./build/verify.ps1
 ```
 
-也可依序 `dotnet restore --locked-mode`、`dotnet build -c Release --no-restore`、`dotnet test -c Release --no-build`。整合測試若缺 DB connection 會失敗，不能靜默 skip 冒充驗證完成。tests 用真 PostgreSQL，不用 EF InMemory 替代交易/RLS。
+也可依序 `dotnet restore --locked-mode`、`dotnet build -c Release --no-restore`、`dotnet test -m:1 -c Release --no-build`。資料庫測試專案會修改共用角色／schema catalog，因此依專案循序執行；單一案例內的並行請求與交易競爭測試仍保留。整合測試若缺 DB connection 會失敗，不能靜默 skip 冒充驗證完成。tests 用真 PostgreSQL，不用 EF InMemory 替代交易/RLS。
 
 測試資料都是新 UUID 與合成帳號。因 Audit/SecurityEvents append-only，測試故意保留這些記錄；只有重建整個明確隔離的 test DB 才清除，禁止對正式資料庫執行測試或 cleanup。
 

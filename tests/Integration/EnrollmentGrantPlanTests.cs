@@ -292,6 +292,7 @@ public sealed partial class EnrollmentGrantPlanTests
     public async Task StartupProfileRejectsBroadenedReservationPrivileges(string drift)
     {
         await using var db = Db();
+        var databaseName = QuoteIdentifier(db.Database.GetDbConnection().Database);
         var apply = drift switch
         {
             "runtime-update" => "GRANT UPDATE ON public.\"EnrollmentGrantRecipientReservations\" TO console_runtime",
@@ -308,8 +309,8 @@ public sealed partial class EnrollmentGrantPlanTests
             "runtime-directory-column-update" => "GRANT UPDATE (\"Generation\") ON public.\"DirectorySync\" TO console_runtime",
             "runtime-directory-table-insert" => "GRANT INSERT ON public.\"DirectoryObjects\" TO console_runtime",
             "runtime-directory-column-insert" => "GRANT INSERT (\"Generation\") ON public.\"DirectorySync\" TO console_runtime",
-            "runtime-database-create" => "GRANT CREATE ON DATABASE console_test TO console_runtime",
-            "locker-database-create" => "GRANT CREATE ON DATABASE console_test TO console_enrollment_plan_locker",
+            "runtime-database-create" => $"GRANT CREATE ON DATABASE {databaseName} TO console_runtime",
+            "locker-database-create" => $"GRANT CREATE ON DATABASE {databaseName} TO console_enrollment_plan_locker",
             "runtime-public-schema-create" => "GRANT CREATE ON SCHEMA public TO console_runtime",
             _ => "CREATE SCHEMA enrollment_plan_audit_drift; GRANT USAGE ON SCHEMA enrollment_plan_audit_drift TO console_enrollment_plan_locker",
         };
@@ -329,8 +330,8 @@ public sealed partial class EnrollmentGrantPlanTests
             "runtime-directory-column-update" => "REVOKE UPDATE (\"Generation\") ON public.\"DirectorySync\" FROM console_runtime",
             "runtime-directory-table-insert" => "REVOKE INSERT ON public.\"DirectoryObjects\" FROM console_runtime",
             "runtime-directory-column-insert" => "REVOKE INSERT (\"Generation\") ON public.\"DirectorySync\" FROM console_runtime",
-            "runtime-database-create" => "REVOKE CREATE ON DATABASE console_test FROM console_runtime",
-            "locker-database-create" => "REVOKE CREATE ON DATABASE console_test FROM console_enrollment_plan_locker",
+            "runtime-database-create" => $"REVOKE CREATE ON DATABASE {databaseName} FROM console_runtime",
+            "locker-database-create" => $"REVOKE CREATE ON DATABASE {databaseName} FROM console_enrollment_plan_locker",
             "runtime-public-schema-create" => "REVOKE CREATE ON SCHEMA public FROM console_runtime",
             _ => "REVOKE USAGE ON SCHEMA enrollment_plan_audit_drift FROM console_enrollment_plan_locker; DROP SCHEMA enrollment_plan_audit_drift",
         };
@@ -366,6 +367,7 @@ public sealed partial class EnrollmentGrantPlanTests
     private static string CreatePath(Seeded seeded) => $"/api/v1/environments/{seeded.Data.Environment.Id}/devices/{seeded.DirectoryObjectId}/enrollment-grant-plans";
     private static string ReadPath(Seeded seeded, Guid plan) => $"/api/v1/environments/{seeded.Data.Environment.Id}/enrollment-grant-plans/{plan}";
     private static string ApprovalPath(Seeded seeded, Guid plan) => $"{ReadPath(seeded, plan)}/approval";
+    private static string QuoteIdentifier(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
     private static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     private static async Task<(HttpStatusCode Status, JsonElement Json)> Post(HttpClient client, string path, object body)
     {

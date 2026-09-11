@@ -64,6 +64,6 @@ psql <approved-database-connection> -v runtime_role=<api-runtime-role> -v enroll
 
 ## 驗證
 
-後端完成 locked restore、零警告／錯誤的 Release build 及完整方案回歸。最後權限矩陣增量另通過 59 項註冊計畫 PostgreSQL／HTTP 測試與 5 項登入安全測試：包含兩份實際等待同一資料庫鎖的相同申請、單次恢復、跨環境衝突交易回復、損壞計畫拒絕、resolver 期間權限漂移、取得最後一把鎖後的期限／step-up 重查、非空 rollback 拒絕，以及角色、函式、RLS、索引、trigger 與 table／column 權限漂移。最終 API、migration、provision 腳本與 CI 設定已完成專項安全覆核。
+後端完成 locked restore、零警告／錯誤的 Release build 及 777 項完整方案回歸。當中包括 59 項註冊計畫 PostgreSQL／HTTP 測試與 5 項登入安全測試：涵蓋兩份實際等待同一資料庫鎖的相同申請、單次恢復、跨環境衝突交易回復、損壞計畫拒絕、resolver 期間權限漂移、取得最後一把鎖後的期限／step-up 重查、非空 rollback 拒絕，以及角色、函式、RLS、索引、trigger 與 table／column 權限漂移。修改共用 PostgreSQL catalog 的測試專案循序執行，案例內的並行競爭仍照常驗證。最終 API、migration、provision 腳本與 CI 權限配置已完成專項安全覆核。
 
 前端 lint、production build、37 項單元測試及完整 164 項桌面／手機瀏覽器回歸通過。新增的 34 項瀏覽器案例涵蓋真實 WebCrypto 公鑰產生、原請求重試、獨立核准、跨設備／登入切換、私鑰期限、查詢失敗後保留同一金鑰、額外 DTO 欄位拒絕，以及舊申請到期不影響另一份查詢。平台 UI 的一般覆核與專項安全覆核均完成；瀏覽器 API 使用合成回應，資料庫行為另以後端整合測試驗證。
