@@ -77,10 +77,10 @@ public sealed class SealedEnrollmentGrantTests
         var result = SealedEnrollmentGrant.SealDeterministic(recipient.ExportSubjectPublicKeyInfo(), EnvironmentId, OperationId, token);
         var ciphertext = result.GetCiphertext();
 
-        Assert.Throws<CryptographicException>(() => wrong.Decrypt(ciphertext, RSAEncryptionPadding.OaepSHA256));
-        Assert.Throws<CryptographicException>(() => recipient.Decrypt(ciphertext, RSAEncryptionPadding.OaepSHA1));
+        Assert.ThrowsAny<CryptographicException>(() => wrong.Decrypt(ciphertext, RSAEncryptionPadding.OaepSHA256));
+        Assert.ThrowsAny<CryptographicException>(() => recipient.Decrypt(ciphertext, RSAEncryptionPadding.OaepSHA1));
         ciphertext[^1] ^= 1;
-        Assert.Throws<CryptographicException>(() => recipient.Decrypt(ciphertext, RSAEncryptionPadding.OaepSHA256));
+        Assert.ThrowsAny<CryptographicException>(() => recipient.Decrypt(ciphertext, RSAEncryptionPadding.OaepSHA256));
 
         var plaintext = recipient.Decrypt(result.GetCiphertext(), RSAEncryptionPadding.OaepSHA256);
         Assert.NotEqual(SealedEnrollmentGrant.SerializePayload(Guid.NewGuid(), OperationId, token), plaintext);
