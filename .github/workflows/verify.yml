@@ -5,6 +5,16 @@ on:
 permissions:
   contents: read
 jobs:
+  agent-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+      - run: dotnet restore tests/Agent/Agent.Tests.csproj --locked-mode
+      - run: dotnet test tests/Agent/Agent.Tests.csproj -c Release --no-restore --logger trx
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 15

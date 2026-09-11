@@ -1,5 +1,7 @@
 <Solution>
-  <Folder Name="/src/" />
+  <Folder Name="/src/">
+    <Project Path="src/Agent/Agent.csproj" />
+  </Folder>
   <Folder Name="/src/Infrastructure/">
     <Project Path="src/Infrastructure/DirectoryConnector/DirectoryConnector.csproj" />
     <Project Path="src/Infrastructure/Persistence/Persistence.csproj" />
@@ -11,6 +13,7 @@
     <Project Path="src/Server/Provisioning/Provisioning.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Agent/Agent.Tests.csproj" />
     <Project Path="tests/Integration/Integration.csproj" />
     <Project Path="tests/Security/Security.csproj" />
     <Project Path="tests/Unit/Unit.csproj" />
