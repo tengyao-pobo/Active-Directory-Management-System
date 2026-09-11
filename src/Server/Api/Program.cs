@@ -3,6 +3,7 @@ using Fido2NetLib;
 using ItManagement.Api;
 using ItManagement.Core;
 using ItManagement.Persistence;
+using ItManagement.AgentProjection;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Negotiate;
@@ -16,6 +17,8 @@ options.Validate();
 var connection = builder.Configuration.GetConnectionString("Console") ?? throw new InvalidOperationException("ConnectionStrings:Console required.");
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<ConfiguredAgentProjectionReader>();
+builder.Services.AddSingleton<IAgentBitLockerProjectionReader>(services => services.GetRequiredService<ConfiguredAgentProjectionReader>());
 builder.Services.AddDbContext<ConsoleDbContext>(o => o.UseNpgsql(connection));
 builder.Services.AddScoped<IPasswordHasher<Principal>, PasswordHasher<Principal>>();
 builder.Services.Configure<PasswordHasherOptions>(o => o.IterationCount = 210000);
@@ -42,6 +45,8 @@ builder.Services.AddRateLimiter(o =>
 builder.Services.AddProblemDetails();
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 128 * 1024);
 var app = builder.Build();
+await app.Services.GetRequiredService<ConfiguredAgentProjectionReader>().InitializeAsync(
+    builder.Configuration.GetSection("AgentProjection").Get<AgentProjectionOptions>() ?? new(), CancellationToken.None);
 
 // Runtime identity must not be able to bypass tenant RLS or own the schema.
 await using (var startupScope = app.Services.CreateAsyncScope())
@@ -106,6 +111,7 @@ app.MapDeviceAssets();
 app.MapDeviceUserLinks();
 app.MapDashboard();
 app.MapDeviceAudit();
+app.MapDeviceBitLocker();
 app.MapDirectoryProposals();
 app.Run();
 

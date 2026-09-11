@@ -86,6 +86,8 @@
 .device-open-link { display: block; margin: 1rem; }
 .favorite-control { margin: .8rem 1rem; }
 .favorite-control p { color: var(--muted); font-size: .75rem; line-height: 1.5; }
+.bitlocker-volume { border-top: 1px solid var(--line); padding-top: .8rem; margin-top: 1rem; }
+.bitlocker-volume h4 { margin: .3rem 1rem; font-size: .9rem; }
 .device-tab-hint { padding: 0 .8rem; font-size: .75rem; color: var(--muted); }
 .device-full-page a, .device-open-link, .dashboard-panel a { color: var(--teal); }
 

@@ -37,6 +37,77 @@ async function mock(page: Page, state: State) {
 }
 async function open(page: Page, state: State, hash = 'users') { await mock(page, state); await page.goto(`/#/${hash}`); }
 
+const bitLockerSnapshot = { state: 'Current', queriedAt: asOf, sourceObservedAt: asOf, collectedAt: asOf, receivedAt: asOf,
+  lastSeenAt: asOf, isTruncated: false, volumes: [{ driveLetter: 'C:', volumeType: 0, protectionStatus: 1,
+    conversionStatus: 1, encryptionMethod: 7, isVolumeInitializedForProtection: true }] };
+async function openSecurity(page: Page, body: unknown, status = 200) {
+  await mock(page, { searches: [] });
+  await page.route('**/devices/**/bitlocker', route => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }));
+  await page.goto('/#/device?environment=east&id=east-Computer-Alpha');
+  await page.getByRole('tab', { name: 'AD', exact: true }).press('End');
+  await expect(page.getByRole('tab', { name: 'Security', exact: true })).toBeFocused();
+}
+
+test('device security renders observations and clears them on a failed refresh', async ({ page }, info) => {
+  await openSecurity(page, bitLockerSnapshot);
+  const panel = page.getByRole('tabpanel');
+  await expect(panel).toContainText('Protection on'); await expect(panel).toContainText('XTS-AES 256');
+  await expect(panel).toContainText('Last recorded heartbeat'); await expect(panel).not.toContainText('Online');
+  await page.screenshot({ path: `test-results/screenshots/${info.project.name}-bitlocker.png`, fullPage: true });
+  await page.route('**/devices/**/bitlocker', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ title: 'BitLockerUnavailable' }) }));
+  await page.getByRole('button', { name: 'Refresh BitLocker observations' }).click();
+  await expect(panel.getByRole('alert')).toContainText('unavailable or access denied');
+  await expect(panel).not.toContainText('Protection on'); await expect(panel).not.toContainText('XTS-AES 256');
+});
+
+test('stale incomplete metadata and unknown codes never imply healthy protection', async ({ page }) => {
+  await openSecurity(page, { ...bitLockerSnapshot, state: 'Stale', isTruncated: true,
+    volumes: [{ driveLetter: null, volumeType: null, protectionStatus: 4294967295, conversionStatus: null, encryptionMethod: 99, isVolumeInitializedForProtection: null }] });
+  const panel = page.getByRole('tabpanel');
+  await expect(panel).toContainText('older than 24 hours'); await expect(panel).toContainText('observation is incomplete');
+  await expect(panel).toContainText('Volume 1 (no drive letter)'); await expect(panel.getByText('Unknown', { exact: true })).toHaveCount(5);
+  await expect(panel).not.toContainText('Protection on'); await expect(panel).not.toContainText('Fully encrypted');
+});
+
+for (const state of ['Missing', 'Current']) {
+  test(`security distinguishes ${state} empty observations`, async ({ page }) => {
+    await openSecurity(page, { ...bitLockerSnapshot, state, volumes: [] });
+    const panel = page.getByRole('tabpanel');
+    await expect(panel).toContainText(state === 'Missing' ? 'No current registered Agent observation' : 'does not prove BitLocker is disabled');
+    await expect(panel).not.toContainText('Protection off');
+  });
+}
+
+test('expired security read clears the authenticated console', async ({ page }) => {
+  await openSecurity(page, bitLockerSnapshot);
+  await expect(page.getByRole('tabpanel')).toContainText('Protection on');
+  await page.route('**/devices/**/bitlocker', route => route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ title: 'SessionInvalid' }) }));
+  await page.getByRole('button', { name: 'Refresh BitLocker observations' }).click();
+  await expect(page.getByRole('tabpanel')).toHaveCount(0);
+  await expect(page.getByText('Protection on', { exact: true })).toHaveCount(0);
+});
+
+test('late BitLocker response cannot replace another device observation', async ({ page }) => {
+  await mock(page, { searches: [] });
+  let release!: () => void; const pending = new Promise<void>(resolve => { release = resolve; }); let waiting = false;
+  await page.route('**/devices/**/bitlocker', async route => {
+    const old = route.request().url().includes('Alpha');
+    if (old) { waiting = true; await pending; }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...bitLockerSnapshot,
+      volumes: [{ ...bitLockerSnapshot.volumes[0], driveLetter: old ? 'X:' : 'D:' }] }) }).catch(() => {});
+  });
+  await page.goto('/#/device?environment=east&id=east-Computer-Alpha');
+  await page.getByRole('tab', { name: 'Security', exact: true }).click();
+  await expect.poll(() => waiting).toBe(true);
+  await page.evaluate(() => { location.hash = '#/device?environment=east&id=east-Computer-Beta'; });
+  await expect(page.getByRole('heading', { name: 'east Computer Beta', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Security', exact: true }).click();
+  await expect(page.getByRole('tabpanel').getByRole('heading', { name: 'D:', exact: true })).toBeVisible();
+  release();
+  await expect(page.getByRole('tabpanel').getByRole('heading', { name: 'X:', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('tabpanel').getByRole('heading', { name: 'D:', exact: true })).toBeVisible();
+});
+
 for (const [hash, kind, heading] of [['users', 'User', 'Users'], ['groups', 'Group', 'Groups'], ['computers', 'Computer', 'Computers'], ['ou', 'OrganizationalUnit', 'Organizational units']]) {
   test(`${kind} list and authorized detail support a scoped operator`, async ({ page }, info) => {
     await open(page, { searches: [] }, hash);

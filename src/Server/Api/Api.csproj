@@ -2,6 +2,7 @@
   <PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>ItManagement.Api</RootNamespace></PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../Infrastructure/Persistence/Persistence.csproj" />
+    <ProjectReference Include="../../Infrastructure/AgentProjection/AgentProjection.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.12" />
     <PackageReference Include="Fido2" Version="4.0.1" />
   </ItemGroup>
