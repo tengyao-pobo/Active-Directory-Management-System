@@ -37,6 +37,7 @@
 - 硬體收集：固定唯讀 WMI 來源與逐來源錯誤／截斷資訊；SMART、安全姿態與 Windows 實際驗收仍待完成。
 - Agent 接收資料庫：獨立 schema 與登入、憑證綁定映射、原子收據／心跳／快照歷史／投影與重送調和；尚未接上正式 enrollment、mTLS listener、Web 授權查詢與畫面。
 - Agent 註冊身分：schema 2 pending／enrolled 狀態、穩定 request ID、獨占 lease、精確完成與中斷恢復；伺服器 grant／CSR／CA／憑證領取及 listener 仍待完成。
+- Agent 註冊資料庫與格式驗證：一次性 grant 原子消耗、固定發證編號、租約調和、不可重用 epoch、不可變發證結果，以及 CSR／釘選憑證鏈的嚴格 profile。正式 CA 操作綁定、撤銷驗證、平台授權發行 UI、憑證領取與 mTLS listener 仍待完成，服務維持未啟用。
 
 ## 目前開發順序
 

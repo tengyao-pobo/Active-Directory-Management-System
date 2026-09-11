@@ -21,6 +21,8 @@ public sealed partial class AgentIngestionFixture : IAsyncLifetime
     private string _ingestPassword = null!;
     private string _webPassword = null!;
     private bool _rolesCreated;
+    private NpgsqlConnection? _schemaLease;
+    private bool _disposed;
 
     public string DefinerRole => $"ai_def_{_suffix}";
 
@@ -37,6 +39,27 @@ public sealed partial class AgentIngestionFixture : IAsyncLifetime
     public NpgsqlDataSource WebDataSource { get; private set; } = null!;
 
     public async Task InitializeAsync()
+    {
+        ValidateTestTarget(new NpgsqlConnectionStringBuilder(_ownerConnectionString));
+        _schemaLease = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(_ownerConnectionString)
+        { Pooling = false }.ConnectionString);
+        try
+        {
+            await _schemaLease.OpenAsync();
+            // Shared with AgentEnrollment tests: these assemblies use the same fixed private schema.
+            await using var command = new NpgsqlCommand("SELECT pg_catalog.pg_advisory_lock(7912040301)", _schemaLease)
+            { CommandTimeout = 120 };
+            await command.ExecuteNonQueryAsync();
+            await InitializeOwnedAsync();
+        }
+        catch
+        {
+            await DisposeAsync();
+            throw;
+        }
+    }
+
+    private async Task InitializeOwnedAsync()
     {
         OwnerDataSource = NpgsqlDataSource.Create(_ownerConnectionString);
         _ingestPassword = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
@@ -248,6 +271,21 @@ public sealed partial class AgentIngestionFixture : IAsyncLifetime
     }
 
     public async Task DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        try { await DisposeOwnedAsync(); }
+        finally
+        {
+            if (_schemaLease is not null)
+            {
+                await _schemaLease.DisposeAsync();
+                _schemaLease = null;
+            }
+        }
+    }
+
+    private async Task DisposeOwnedAsync()
     {
         if (WebDataSource is not null)
         {

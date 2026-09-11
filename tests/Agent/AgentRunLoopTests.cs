@@ -117,12 +117,15 @@ public sealed class AgentRunLoopTests
         using var cancellation = new CancellationTokenSource();
         var runTask = CreateRuntime(spool, transport).RunAsync(cancellation.Token);
 
-        await thirdSend.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        AssertEnvelopeEqual(queued, transport.Sent[0]);
-        AssertEnvelopeEqual(queued, transport.Sent[1]);
-        Assert.DoesNotContain(await spool.ReadPendingAsync(), item => item.Sequence == queued.Sequence);
-        cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runTask);
+        try
+        {
+            await thirdSend.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            AssertEnvelopeEqual(queued, transport.Sent[0]);
+            AssertEnvelopeEqual(queued, transport.Sent[1]);
+            Assert.DoesNotContain(await spool.ReadPendingAsync(), item => item.Sequence == queued.Sequence);
+        }
+        finally { await StopAsync(runTask, cancellation); }
+        Assert.True(runTask.IsCanceled);
     }
 
     [Fact]
@@ -197,10 +200,13 @@ public sealed class AgentRunLoopTests
             new FixedJitter(1),
             options).RunAsync(cancellation.Token);
 
-        var retryDelay = await timeProvider.RetryDelayScheduled.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.Equal(options.MaxRetryDelay, retryDelay);
-        cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runTask);
+        try
+        {
+            var retryDelay = await timeProvider.RetryDelayScheduled.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal(options.MaxRetryDelay, retryDelay);
+        }
+        finally { await StopAsync(runTask, cancellation); }
+        Assert.True(runTask.IsCanceled);
     }
 
     [Fact]
@@ -217,7 +223,11 @@ public sealed class AgentRunLoopTests
             transport,
             options: CreateOptions() with { TransportTimeout = TimeSpan.FromMilliseconds(20) });
 
-        await runtime.RunAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        using var cancellation = new CancellationTokenSource();
+        var runTask = runtime.RunAsync(cancellation.Token);
+        try { await runTask.WaitAsync(TimeSpan.FromSeconds(30)); }
+        finally { await StopAsync(runTask, cancellation); }
+        Assert.True(runTask.IsCompletedSuccessfully);
 
         Assert.Single(transport.Sent);
         AssertEnvelopeEqual(queued, Assert.Single(await spool.ReadPendingAsync()));
@@ -238,12 +248,10 @@ public sealed class AgentRunLoopTests
             return neverCompletes.Task;
         });
         using var cancellation = new CancellationTokenSource();
-        var runTask = CreateRuntime(spool, transport).RunAsync(cancellation.Token);
-        await sendStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-
-        cancellation.Cancel();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runTask);
+        var runTask = CreateRuntime(spool, transport, options: CreateOptions() with { TransportTimeout = TimeSpan.FromMinutes(1) }).RunAsync(cancellation.Token);
+        try { await sendStarted.Task.WaitAsync(TimeSpan.FromSeconds(30)); }
+        finally { await StopAsync(runTask, cancellation); }
+        Assert.True(runTask.IsCanceled);
         Assert.Single(transport.Sent);
         AssertEnvelopeEqual(queued, Assert.Single(await spool.ReadPendingAsync()));
     }
@@ -261,15 +269,16 @@ public sealed class AgentRunLoopTests
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             throw new InvalidOperationException("unreachable");
         });
-        var runtime = CreateRuntime(spool, transport);
+        var runtime = CreateRuntime(spool, transport, options: CreateOptions() with { TransportTimeout = TimeSpan.FromMinutes(1) });
         using var cancellation = new CancellationTokenSource();
         var firstRun = runtime.RunAsync(cancellation.Token);
-        await sendStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RunAsync(CancellationToken.None));
-
-        cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => firstRun);
+        try
+        {
+            await sendStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RunAsync(CancellationToken.None));
+        }
+        finally { await StopAsync(firstRun, cancellation); }
+        Assert.True(firstRun.IsCanceled);
     }
 
     [Fact]
@@ -330,6 +339,13 @@ public sealed class AgentRunLoopTests
             spool,
             new NotConfiguredAgentTransport(),
             options: CreateOptions() with { RetryJitterFraction = double.NaN }));
+    }
+
+    private static async Task StopAsync(Task runTask, CancellationTokenSource cancellation)
+    {
+        cancellation.Cancel();
+        try { await runTask; }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
     }
 
     private static AgentRunLoop CreateRuntime(

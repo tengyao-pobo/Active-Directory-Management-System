@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Infrastructure\AgentEnrollment\AgentEnrollment.csproj" />
+    <ProjectReference Include="..\..\src\Infrastructure\AgentIngestion\AgentIngestion.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\build\agent-store.sql" Link="agent-store.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\provision-agent-store.sql" Link="provision-agent-store.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\agent-enrollment-store.sql" Link="agent-enrollment-store.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\provision-agent-enrollment.sql" Link="provision-agent-enrollment.sql" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
