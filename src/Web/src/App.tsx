@@ -20,16 +20,17 @@ import {
 import { useI18n } from './i18n';
 import './styles.css';
 import DirectoryView from './DirectoryView';
+import DirectorySearch from './DirectorySearch';
 import { getDirectoryStatus, type DirectoryKind, type DirectoryStatus } from './api';
 
-type View = 'overview' | 'environment' | 'access' | 'audit' | 'settings' | 'users' | 'groups' | 'computers' | 'ou';
+type View = 'overview' | 'environment' | 'access' | 'audit' | 'settings' | 'users' | 'groups' | 'computers' | 'ou' | 'search';
 type AsyncState = 'idle' | 'loading' | 'ready' | 'empty' | 'error';
 
 type AccessData = { permissions: string[] };
 type RbacData = Rbac;
 type AuditData = AuditPage;
 
-const views: View[] = ['overview', 'environment', 'access', 'audit', 'settings', 'users', 'groups', 'computers', 'ou'];
+const views: View[] = ['overview', 'environment', 'access', 'audit', 'settings', 'users', 'groups', 'computers', 'ou', 'search'];
 const directoryKinds: Partial<Record<View, DirectoryKind>> = { users: 'User', groups: 'Group', computers: 'Computer', ou: 'OrganizationalUnit' };
 
 function routeFromHash(): View {
@@ -80,6 +81,7 @@ function App() {
   const [auditHistory, setAuditHistory] = useState<(string | undefined)[]>([]);
   const requestGeneration = useRef(0);
 
+  const isDirectory = Boolean(directoryKinds[view]) || view === 'search';
   const environment = environments.find((item) => item.id === environmentId) ?? null;
 
   useEffect(() => {
@@ -277,7 +279,7 @@ function App() {
             {navMatches('environment') && <NavButton active={view === 'environment'} icon="◇" label={t('nav.environment')} onClick={() => navigate('environment')} />}
           </NavGroup>
           <NavGroup title={t('nav.group.directory')}>
-            {(['computers', 'users', 'groups', 'ou'] as const).filter(navMatches).map(item => <NavButton key={item} active={view === item} icon="◇" label={t(`nav.${item}`)} onClick={() => navigate(item)} />)}
+            {(['search', 'computers', 'users', 'groups', 'ou'] as const).filter(navMatches).map(item => <NavButton key={item} active={view === item} icon="◇" label={t(`nav.${item}`)} onClick={() => navigate(item)} />)}
           </NavGroup>
           <NavGroup title={t('nav.group.system')}>
             {navMatches('access') && <NavButton active={view === 'access'} icon="⌑" label={t('nav.access')} onClick={() => navigate('access')} />}
@@ -309,14 +311,15 @@ function App() {
         </header>
         <main id="main-content" tabIndex={-1}>
           {authError && <div className="inline-alert" role="alert">{t(authError)}</div>}
-          {!directoryKinds[view] && <PageHeader view={view} environment={environment} t={t} />}
+          {!isDirectory && <PageHeader view={view} environment={environment} t={t} />}
           {envState === 'loading' && <StatePanel kind="loading" title={t('state.loadingEnvironments')} t={t} />}
           {envState === 'error' && <StatePanel kind="error" title={t(dataError || 'error.generic')} t={t} />}
           {envState === 'empty' && <StatePanel kind="empty" title={t('environment.noneTitle')} body={t('environment.noneBody')} t={t} />}
+          {envState === 'ready' && environment && view === 'search' && <DirectorySearch key={environment.id} environmentId={environment.id} />}
           {envState === 'ready' && environment && directoryKinds[view] && <DirectoryView key={`${environment.id}:${view}`} environmentId={environment.id} kind={directoryKinds[view]!} />}
-          {!directoryKinds[view] && envState === 'ready' && dataState === 'loading' && <StatePanel kind="loading" title={t('state.loadingData')} t={t} />}
-          {!directoryKinds[view] && envState === 'ready' && dataState === 'error' && <StatePanel kind="error" title={t(dataError || 'error.generic')} t={t} />}
-          {!directoryKinds[view] && envState === 'ready' && dataState === 'ready' && environment && loadedEnvironmentId === environment.id && (
+          {!isDirectory && envState === 'ready' && dataState === 'loading' && <StatePanel kind="loading" title={t('state.loadingData')} t={t} />}
+          {!isDirectory && envState === 'ready' && dataState === 'error' && <StatePanel kind="error" title={t(dataError || 'error.generic')} t={t} />}
+          {!isDirectory && envState === 'ready' && dataState === 'ready' && environment && loadedEnvironmentId === environment.id && (
             <PageContent view={view} environment={environment} access={access} rbac={rbac} audit={audit} locale={locale} setLocale={setLocale} t={t}
               onAuditNext={() => { if (audit?.nextCursor) { setDataState('loading'); setAuditHistory((items) => [...items, auditCursor]); setAuditCursor(audit.nextCursor); } }}
               onAuditPrevious={() => { setDataState('loading'); const previous = auditHistory[auditHistory.length - 1]; setAuditHistory((items) => items.slice(0, -1)); setAuditCursor(previous); }}

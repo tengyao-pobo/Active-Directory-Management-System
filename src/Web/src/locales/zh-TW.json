@@ -1,4 +1,10 @@
 {
+"globalSearch.results": "「{query}」的搜尋結果，各類型獨立分頁。",
+  "directory.refresh": "重新整理目錄",
+  "nav.search": "跨類型目錄搜尋",
+  "globalSearch.description": "搜尋目前環境中的四種物件。各區塊分別顯示授權範圍內的結果與快照時間。",
+  "globalSearch.hint": "請輸入名稱或帳號，僅查詢你有權限存取的範圍。",
+  "globalSearch.label": "搜尋所有目錄類型",
   "directory.title.User": "使用者",
   "directory.title.Group": "群組",
   "directory.title.Computer": "電腦",

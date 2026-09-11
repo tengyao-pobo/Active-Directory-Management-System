@@ -67,3 +67,7 @@
   .directory-object-link { min-width: 0; }
   .directory-pagination { justify-content: space-between; }
 }
+
+.directory-wrapper > button { margin-bottom: 1rem; }
+.global-directory-results > .directory-wrapper { border-top: 1px solid var(--line); padding-top: 1.5rem; margin-top: 1.5rem; }
+.global-directory-search > p, .global-directory-results > p { color: var(--muted); font-size: .8rem; }
