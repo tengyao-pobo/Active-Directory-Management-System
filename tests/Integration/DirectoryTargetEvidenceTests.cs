@@ -10,7 +10,7 @@ public sealed class DirectoryTargetEvidenceTests
     private static DirectoryTargetSnapshot Target() => new(Domain, new string('A',64), Source, DateTimeOffset.UtcNow.AddSeconds(-1), DateTimeOffset.UtcNow,
         new(Guid.NewGuid(), DirectoryObjectKind.User, "CN=User,DC=example,DC=test", "User", "user", "IT", null, 42, false, false, "DC=example,DC=test") { Enabled=true });
     private static DirectoryEvidenceBinding Binding(DirectoryTargetSnapshot target) => new(Guid.NewGuid(), Domain, target.Entry.ObjectId, Guid.NewGuid(),
-        PermissionCatalog.UserDisable, 1, target.ConfigurationHash, new(Source.DnsHostName, Source.ServiceDn, Source.DsaObjectId, Source.InvocationId));
+        PermissionCatalog.UserDisable, 1, target.ConfigurationHash, new(Source.DnsHostName, Source.ServiceDn, Source.DsaObjectId, Source.InvocationId),new string('C',64));
     [Fact]
     public async Task Real_default_classifier_keeps_direct_reads_unusable_for_approval()
     {
@@ -51,7 +51,15 @@ public sealed class DirectoryTargetEvidenceTests
         Assert.Equal(DirectoryEvidenceFailure.StaleObservation,(await service.ReadAsync(binding,DirectoryChangeKind.DisableUser,default)).Failure);
     }
     private sealed class Reader(DirectoryTargetSnapshot target) : IDirectoryTargetReader
-    { public Task<DirectoryTargetSnapshot> ReadUserAsync(Guid id,CancellationToken ct) { ct.ThrowIfCancellationRequested(); return Task.FromResult(target); } }
+    { public int Calls {get;private set;} public Task<DirectoryTargetSnapshot> ReadUserAsync(Guid id,CancellationToken ct) { Calls++;ct.ThrowIfCancellationRequested(); return Task.FromResult(target); } }
+    [Fact]
+    public async Task Invalid_policy_binding_is_rejected_before_ldap_io()
+    {
+        var target=Target();var reader=new Reader(target);
+        var service=new DirectoryTargetEvidenceService(reader,new ScopeAssessor(),new SyntheticProtection(),TimeProvider.System);
+        var result=await service.ReadAsync(Binding(target) with{ProtectionPolicyHash="invalid"},DirectoryChangeKind.DisableUser,default);
+        Assert.Equal(DirectoryEvidenceFailure.InvalidBinding,result.Failure);Assert.Equal(0,reader.Calls);
+    }
     private sealed class ScopeAssessor : IDirectoryScopeAssessor
     {
         public int Calls {get;private set;}
@@ -62,6 +70,7 @@ public sealed class DirectoryTargetEvidenceTests
     {
         public Task<DirectoryProtectionObservation> AssessAsync(DirectoryObjectObservation o,CancellationToken ct) =>
             Task.FromResult(new DirectoryProtectionObservation(wrongActor ? o.Binding with { ActorId=Guid.NewGuid() } : o.Binding,
-                o.Object.UsnChanged,o.Object.DistinguishedName,DirectoryProtectionDecision.Unprotected,DateTimeOffset.UtcNow));
+                o.Object.UsnChanged,o.Object.DistinguishedName,DirectoryProtectionDecision.Unprotected,DateTimeOffset.UtcNow)
+                {FactsHash=new string('D',64),FactsReadStartedAt=o.ReadCompletedAt,FactsReadCompletedAt=o.ReadCompletedAt});
     }
 }

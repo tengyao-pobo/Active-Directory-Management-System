@@ -6,13 +6,14 @@ public sealed class DirectoryEvidenceAssemblyTests
 {
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-09-11T15:00:00Z");
     private static readonly DirectoryEvidenceBinding Binding = new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
-        Guid.NewGuid(), PermissionCatalog.UserDisable, 7, new string('A', 64), new("dc01.example.test", "CN=NTDS Settings,CN=DC01,CN=Configuration,DC=example,DC=test", Guid.NewGuid(), Guid.NewGuid()));
+        Guid.NewGuid(), PermissionCatalog.UserDisable, 7, new string('A', 64), new("dc01.example.test", "CN=NTDS Settings,CN=DC01,CN=Configuration,DC=example,DC=test", Guid.NewGuid(), Guid.NewGuid()), new string('C',64));
     private static readonly DirectoryChangeEvidence Object = new(Binding.EnvironmentId, Binding.DomainId, Binding.ObjectId,
         "User", "CN=Test,DC=example,DC=test", 42, Binding.ConfigurationHash, Binding.PolicyVersion,
         false, false, false, Now.AddSeconds(-1), true, "IT");
     private static DirectoryObjectObservation Read() => new(Binding, Object, DirectoryObservationSource.DirectDirectoryRead, Now.AddSeconds(-2), Now.AddSeconds(-1));
     private static DirectoryScopeObservation Scope() => new(Binding, 42, Object.DistinguishedName, true, Now);
-    private static DirectoryProtectionObservation Protection() => new(Binding, 42, Object.DistinguishedName, DirectoryProtectionDecision.Unprotected, Now);
+    private static DirectoryProtectionObservation Protection() => new(Binding, 42, Object.DistinguishedName, DirectoryProtectionDecision.Unprotected, Now)
+    {FactsHash=new string('D',64),FactsReadStartedAt=Now.AddSeconds(-1),FactsReadCompletedAt=Now};
     private static DirectoryEvidenceAssemblyResult Assemble(DirectoryObjectObservation? read = null,
         DirectoryScopeObservation? scope = null, DirectoryProtectionObservation? protection = null) =>
         DirectoryEvidenceAssembler.Assemble(Binding, DirectoryChangeKind.DisableUser, read ?? Read(), scope ?? Scope(), protection ?? Protection(), Now);
@@ -39,6 +40,7 @@ public sealed class DirectoryEvidenceAssemblyTests
         yield return [Binding with { PolicyVersion = 8 }];
         yield return [Binding with { ConfigurationHash = new string('B', 64) }];
         yield return [Binding with { SchemaVersion = 1 }];
+        yield return [Binding with { ProtectionPolicyHash = new string('D',64) }];
         yield return [Binding with { Server = Binding.Server with { DnsHostName = "dc02.example.test" } }];
         yield return [Binding with { Server = Binding.Server with { ServiceDn = "CN=Other" } }];
         yield return [Binding with { Server = Binding.Server with { DsaObjectId = Guid.NewGuid() } }];
