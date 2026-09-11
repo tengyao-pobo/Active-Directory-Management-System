@@ -21,6 +21,7 @@ React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核�
 - [Phase 5 電腦備註與生命週期](docs/deployment/device-assets.md)
 - [Phase 5 人員與電腦雙向關聯](docs/deployment/device-user-links.md)
 - [Phase 5 Dashboard 與維修清單](docs/deployment/dashboard.md)
+- [Phase 5 設備明細頁籤](docs/deployment/device-details.md)
 - [目前 API 契約](docs/api/phase2.md)
 
 三個產品界線：Web Server 負責平台與受控 Connector；Endpoint Agent 僅盤點；Windows Helper 僅在管理員工作站啟動允許的本機工具。

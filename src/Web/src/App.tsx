@@ -22,16 +22,17 @@ import './styles.css';
 import DirectoryView from './DirectoryView';
 import DirectorySearch from './DirectorySearch';
 import Dashboard from './Dashboard';
+import DeviceDetails from './DeviceDetails';
 import { getDirectoryStatus, type DirectoryKind, type DirectoryStatus } from './api';
 
-type View = 'overview' | 'environment' | 'access' | 'audit' | 'settings' | 'users' | 'groups' | 'computers' | 'ou' | 'search';
+type View = 'overview' | 'environment' | 'access' | 'audit' | 'settings' | 'users' | 'groups' | 'computers' | 'ou' | 'search' | 'device';
 type AsyncState = 'idle' | 'loading' | 'ready' | 'empty' | 'error';
 
 type AccessData = { permissions: string[] };
 type RbacData = Rbac;
 type AuditData = AuditPage;
 
-const views: View[] = ['overview', 'environment', 'access', 'audit', 'settings', 'users', 'groups', 'computers', 'ou', 'search'];
+const views: View[] = ['overview', 'environment', 'access', 'audit', 'settings', 'users', 'groups', 'computers', 'ou', 'search', 'device'];
 const directoryKinds: Partial<Record<View, DirectoryKind>> = { users: 'User', groups: 'Group', computers: 'Computer', ou: 'OrganizationalUnit' };
 
 function routeFromHash(): View {
@@ -66,6 +67,7 @@ function App() {
   const [principal, setPrincipal] = useState<Principal | null>(null);
   const [authState, setAuthState] = useState<AsyncState>('loading');
   const [authError, setAuthError] = useState<string>('');
+  const [routeHash, setRouteHash] = useState(window.location.hash);
   const [view, setView] = useState<View>(routeFromHash);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pageSearch, setPageSearch] = useState('');
@@ -82,11 +84,13 @@ function App() {
   const [auditHistory, setAuditHistory] = useState<(string | undefined)[]>([]);
   const requestGeneration = useRef(0);
 
-  const isDirectory = Boolean(directoryKinds[view]) || view === 'search';
+  const isDirectory = Boolean(directoryKinds[view]) || view === 'search' || view === 'device';
+  const targetParams = new URLSearchParams(routeHash.split('?')[1] ?? '');
   const environment = environments.find((item) => item.id === environmentId) ?? null;
 
   useEffect(() => {
     const onHash = () => {
+      setRouteHash(window.location.hash);
       setView(routeFromHash());
       setSidebarOpen(false);
       setPageSearch('');
@@ -316,6 +320,7 @@ function App() {
           {envState === 'loading' && <StatePanel kind="loading" title={t('state.loadingEnvironments')} t={t} />}
           {envState === 'error' && <StatePanel kind="error" title={t(dataError || 'error.generic')} t={t} />}
           {envState === 'empty' && <StatePanel kind="empty" title={t('environment.noneTitle')} body={t('environment.noneBody')} t={t} />}
+          {envState === 'ready' && environment && view === 'device' && <DeviceDetails key={environment.id + ':' + routeHash} environmentId={environment.id} targetEnvironment={targetParams.get('environment') ?? ''} id={targetParams.get('id') ?? ''} />}
           {envState === 'ready' && environment && view === 'search' && <DirectorySearch key={environment.id} environmentId={environment.id} />}
           {envState === 'ready' && environment && directoryKinds[view] && <DirectoryView key={`${environment.id}:${view}`} environmentId={environment.id} kind={directoryKinds[view]!} />}
           {!isDirectory && envState === 'ready' && dataState === 'loading' && <StatePanel kind="loading" title={t('state.loadingData')} t={t} />}

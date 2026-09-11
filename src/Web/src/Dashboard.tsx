@@ -32,7 +32,7 @@ export default function Dashboard({ environmentId }: { environmentId: string }) 
       <p>{t('dashboard.queriedAt', { date: date(data.queriedAt) })}</p>
       <h3>{t('dashboard.repairs', { count: data.lifecycle.Repair })}</h3>
       <p>{t('dashboard.repairHint')}</p>
-      {data.repairs.length === 0 ? <p>{t(cursor ? 'dashboard.end' : 'dashboard.empty')}</p> : <ul>{data.repairs.map(item => <li key={item.id}><strong>{item.name}</strong><small> {item.id}</small></li>)}</ul>}
+      {data.repairs.length === 0 ? <p>{t(cursor ? 'dashboard.end' : 'dashboard.empty')}</p> : <ul>{data.repairs.map(item => <li key={item.id}><a href={`#/device?environment=${encodeURIComponent(environmentId)}&id=${encodeURIComponent(item.id)}`}>{item.name}</a></li>)}</ul>}
       <button type="button" className="secondary-button" disabled={!data.nextCursor} onClick={() => setCursor(data.nextCursor)}>{t('directory.next')}</button>
     </>}
     <button type="button" className="secondary-button" onClick={() => { setCursor(null); setRevision(value => value + 1); }}>{t('dashboard.refresh')}</button>
