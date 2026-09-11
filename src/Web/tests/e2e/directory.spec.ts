@@ -37,6 +37,82 @@ async function mock(page: Page, state: State) {
 }
 async function open(page: Page, state: State, hash = 'users') { await mock(page, state); await page.goto(`/#/${hash}`); }
 
+const inventorySource = { availability: 'Observed', freshness: 'Current', sourceObservedAt: asOf, isTruncated: false };
+const inventorySnapshot = { queriedAt: asOf, collectedAt: asOf, receivedAt: asOf, lastSeenAt: asOf,
+  basic: { ...inventorySource, data: { hostName: 'synthetic-client', operatingSystem: { description: 'Windows synthetic', version: '10.0', architecture: 'X64' },
+    networkInterfaces: [{ name: 'Ethernet synthetic', interfaceType: 'Ethernet', macAddress: '00:00:00:00:00:01', addresses: ['192.0.2.10'], gateways: ['192.0.2.1'], dnsServers: ['192.0.2.53'] }] } },
+  hardware: { ...inventorySource, sections: [
+    { ...inventorySource, kind: 'System', rows: [{ Manufacturer: 'Synthetic vendor', Model: 'Synthetic model', TotalPhysicalMemory: '17179869184' }] },
+    { ...inventorySource, kind: 'Battery', availability: 'NotApplicable', freshness: 'Stale', rows: [] },
+  ] },
+  software: { ...inventorySource, applications: Array.from({ length: 73 }, (_, i) => ({ name: `Synthetic App ${String(i + 1).padStart(3, '0')}`, version: '1.0', publisher: 'Synthetic publisher', installDate: '20240229', architecture: 'x64' })) },
+};
+async function openInventory(page: Page, body: unknown) {
+  await mock(page, { searches: [] });
+  await page.route('**/devices/**/inventory', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) }));
+  await page.goto('/#/device?environment=east&id=east-Computer-Alpha');
+  await page.getByRole('tab', { name: 'Inventory', exact: true }).click();
+}
+
+test('platform inventory displays typed sources and filters paginated software', async ({ page }, info) => {
+  await openInventory(page, inventorySnapshot); const panel = page.getByRole('tabpanel');
+  await expect(panel).toContainText('synthetic-client'); await expect(panel).toContainText('16.0 GiB');
+  await panel.getByText('Ethernet synthetic', { exact: true }).click();
+  await expect(panel).toContainText('192.0.2.10');
+  await expect(panel.locator('tbody tr')).toHaveCount(50); await expect(panel).toContainText('Page 1 of 2');
+  await panel.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(panel.locator('tbody tr')).toHaveCount(23); await expect(panel).toContainText('Synthetic App 073');
+  await panel.getByRole('searchbox').fill('app 073');
+  await expect(panel.locator('tbody tr')).toHaveCount(1); await expect(panel).toContainText('2024-02-29');
+  await panel.getByRole('searchbox').blur();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: `test-results/screenshots/${info.project.name}-inventory.png`, fullPage: true });
+  await panel.getByRole('searchbox').fill('not-installed-canary');
+  await expect(panel).toContainText('No entries match this filter.');
+});
+
+test('inventory keeps unavailable data hidden and retains stale not-applicable semantics', async ({ page }) => {
+  await openInventory(page, { ...inventorySnapshot, basic: { ...inventorySnapshot.basic, availability: 'Unavailable', freshness: null },
+    software: { ...inventorySnapshot.software, isTruncated: true } });
+  const panel = page.getByRole('tabpanel'); await expect(panel).not.toContainText('synthetic-client');
+  await expect(panel).toContainText('This source is incomplete');
+  await panel.getByText('Batteries', { exact: true }).click();
+  await expect(panel).toContainText('The provider reported no applicable instances');
+  await expect(panel).toContainText('This observation is older than 24 hours');
+  await page.route('**/devices/**/inventory', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"title":"InventoryUnavailable"}' }));
+  await panel.getByRole('button', { name: 'Refresh inventory' }).click();
+  await expect(panel.getByRole('alert')).toContainText('Inventory unavailable or access denied');
+  await expect(panel).not.toContainText('Synthetic model'); await expect(panel.locator('tbody tr')).toHaveCount(0);
+});
+
+test('inventory expiry removes previously rendered device data', async ({ page }) => {
+  await openInventory(page, inventorySnapshot);
+  await expect(page.getByRole('tabpanel')).toContainText('synthetic-client');
+  await page.route('**/devices/**/inventory', route => route.fulfill({ status: 401, contentType: 'application/json', body: '{"title":"SessionInvalid"}' }));
+  await page.getByRole('button', { name: 'Refresh inventory', exact: true }).click();
+  await expect(page.getByRole('tabpanel')).toHaveCount(0);
+  await expect(page.getByText('synthetic-client', { exact: true })).toHaveCount(0);
+});
+
+test('late inventory response cannot repopulate another device', async ({ page }) => {
+  await mock(page, { searches: [] }); let release!: () => void; let waiting = false;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/devices/**/inventory', async route => {
+    const old = route.request().url().includes('Alpha');
+    if (old) { waiting = true; await pending; }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...inventorySnapshot,
+      basic: { ...inventorySnapshot.basic, data: { ...inventorySnapshot.basic.data, hostName: old ? 'old-device-canary' : 'new-device' } } }) }).catch(() => {});
+  });
+  await page.goto('/#/device?environment=east&id=east-Computer-Alpha');
+  await page.getByRole('tab', { name: 'Inventory', exact: true }).click(); await expect.poll(() => waiting).toBe(true);
+  await page.evaluate(() => { location.hash = '#/device?environment=east&id=east-Computer-Beta'; });
+  await expect(page.getByRole('heading', { name: 'east Computer Beta', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Inventory', exact: true }).click();
+  await expect(page.getByRole('tabpanel')).toContainText('new-device'); release();
+  await expect(page.getByRole('tabpanel')).not.toContainText('old-device-canary');
+  await expect(page.getByRole('tabpanel')).toContainText('new-device');
+});
+
 const bitLockerSnapshot = { state: 'Current', queriedAt: asOf, sourceObservedAt: asOf, collectedAt: asOf, receivedAt: asOf,
   lastSeenAt: asOf, isTruncated: false, volumes: [{ driveLetter: 'C:', volumeType: 0, protectionStatus: 1,
     conversionStatus: 1, encryptionMethod: 7, isVolumeInitializedForProtection: true }] };
@@ -325,7 +401,7 @@ test('device deep link lazy loads tabs and supports keyboard navigation', async 
   expect(requests.every(path => path.endsWith('/audit'))).toBe(true); // StrictMode may start and cancel a duplicate read.
   await page.getByRole('tab', { name: 'Audit', exact: true }).press('ArrowRight');
   await expect(page.getByRole('tab', { name: 'Inventory' })).toBeFocused();
-  await expect(page.getByRole('tabpanel')).toContainText('Inventory source unavailable');
+  await expect(page.getByRole('tabpanel')).toContainText('Inventory unavailable or access denied');
   await page.getByRole('tab', { name: 'Inventory' }).press('Home');
   await expect(page.getByRole('tab', { name: 'AD', exact: true })).toBeFocused();
   await page.screenshot({ path: `test-results/screenshots/${info.project.name}-device-details.png`, fullPage: true });

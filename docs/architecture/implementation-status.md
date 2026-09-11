@@ -36,11 +36,13 @@
 - 設備政策：Health 權重／證據覆蓋率／Critical override、機齡來源與下限、七因素汰換引擎；原始盤點 adapter、policy 持久化、API 與畫面綁定仍待完成。
 - 硬體收集：固定唯讀 WMI 來源與逐來源錯誤／截斷資訊；SMART、安全姿態與 Windows 實際驗收仍待完成。
 - BitLocker 觀測：固定本機唯讀屬性、typed metadata、單一 native query、來源失效／不完整語義與接收端 exact schema；另有獨立投影讀取角色、目錄身分綁定、三項資源權限交集 API 與設備 Security 頁籤。百分比、protector／TPM／escrow、正式 Windows 驗收及正式註冊連線仍待完成。沒有收集或保存回復金鑰。
-- Agent 接收資料庫：獨立 schema 與登入、憑證綁定映射、原子收據／心跳／快照歷史／投影與重送調和；BitLocker 已有 Web 授權查詢與畫面，其餘 collector 查閱、正式 enrollment 與 mTLS listener 仍待完成。
+- Agent 接收資料庫：獨立 schema 與登入、憑證綁定映射、原子收據／心跳／快照歷史／投影與重送調和；BitLocker 與基本資料／硬體／已安裝軟體已有 Web 授權查詢與畫面；其餘 collector、正式 enrollment 與 mTLS listener 仍待完成。
 - Agent 註冊身分：schema 2 pending／enrolled 狀態、穩定 request ID、獨占 lease、精確完成與中斷恢復；伺服器 grant／CSR／CA／憑證領取及 listener 仍待完成。
 - Agent 註冊資料庫與格式驗證：一次性 grant 原子消耗、固定發證編號、租約調和、不可重用 epoch、不可變發證結果，以及 CSR／釘選憑證鏈的嚴格 profile。正式 CA 操作綁定、撤銷驗證、平台授權發行 UI、憑證領取與 mTLS listener 仍待完成，服務維持未啟用。
 
 - 個人收藏：四種目錄物件的加入／取消、私有持久化、範圍化分頁及雙語介面；只顯示目前有權查看且仍在有效目錄快照中的物件。
+
+- 平台盤點：Inventory 頁籤提供基本系統／網路、九類硬體與可篩選分頁的已安裝軟體；逐來源與硬體分區區分缺失、不可用、不適用、過舊與截斷。私有投影 v2 提供精確版本稽核及交易式 v1 升降級。尚不代表正式 Agent 連線啟用或設備健康判定。
 
 ## 目前開發順序
 

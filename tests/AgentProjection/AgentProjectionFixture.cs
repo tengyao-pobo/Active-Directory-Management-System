@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Npgsql;
 
@@ -65,6 +66,28 @@ public sealed partial class AgentProjectionFixture:IAsyncLifetime
           """,P("env",seed.EnvironmentId),P("device",seed.DeviceId),P("device_state",deviceState),P("registration",seed.RegistrationId),P("epoch",epoch),P("device_guid",Guid.NewGuid()),P("registration_state",registrationState),P("binding",Guid.NewGuid()),P("fingerprint",RandomNumberGenerator.GetBytes(32)),P("receipt",seed.ReceiptId),P("request",Guid.NewGuid()),P("payload",payload),P("directory",seed.DirectoryObjectId));return seed;
     }
     public static string ValidPayload(bool truncated=false,uint protection=uint.MaxValue)=>JsonSerializer.Serialize(new{SchemaVersion=1,CollectedAt=DateTimeOffset.Parse("2026-01-02T03:04:05Z"),Collectors=new[]{new{Collector="bitlocker",Status=0,Quality=0,Source=@"root\cimv2\Security\MicrosoftVolumeEncryption:Win32_EncryptableVolume",ObservedAt=DateTimeOffset.Parse("2026-01-02T03:03:05Z"),Data=new{SchemaVersion=1,Volumes=new[]{new{DeviceId="synthetic-volume",PersistentVolumeId="",DriveLetter="C:",VolumeType=(uint?)0,ProtectionStatus=(uint?)protection,ConversionStatus=(uint?)1,EncryptionMethod=(uint?)6,IsVolumeInitializedForProtection=(bool?)true}},IsTruncated=truncated,ErrorCode=(string?)null},ItemCount=1,ErrorCode=(string?)null}}});
+    public static string ValidInventoryPayload()
+    {
+        const string observed="2026-01-02T03:03:05Z";var sections=new JsonArray();
+        void Section(int kind,string source,JsonObject row)=>sections.Add(new JsonObject{{"Kind",kind},{"Source",source},{"Quality",0},{"ObservedAt",observed},{"Rows",new JsonArray(row)},{"IsTruncated",false},{"ErrorCode",null}});
+        Section(0,"Win32_ComputerSystem",new(){{"Manufacturer","Synthetic"},{"Model","Model"},{"TotalPhysicalMemory",ulong.MaxValue}});
+        Section(1,"Win32_ComputerSystemProduct",new(){{"UUID","synthetic-uuid"}});
+        Section(2,"Win32_BIOS",new(){{"Manufacturer","Synthetic"},{"SerialNumber","serial"},{"SMBIOSBIOSVersion","1.0"},{"ReleaseDate",null}});
+        Section(3,"Win32_OperatingSystem",new(){{"Caption","Synthetic OS"},{"Version","1"},{"BuildNumber","2"},{"InstallDate",null},{"LastBootUpTime",null}});
+        Section(4,"Win32_Processor",new(){{"Name","CPU"},{"Manufacturer","Synthetic"},{"NumberOfCores",8},{"NumberOfLogicalProcessors",16}});
+        Section(5,"Win32_PhysicalMemory",new(){{"BankLabel","BANK0"},{"DeviceLocator","DIMM0"},{"Capacity",17179869184UL},{"Speed",3200}});
+        Section(6,"Win32_VideoController",new(){{"Name","GPU"},{"AdapterRAM",4294967296UL}});
+        Section(7,"Win32_DiskDrive",new(){{"Model","Disk"},{"SerialNumber","disk-serial"},{"Size",1000000000000UL},{"MediaType","SSD"}});
+        Section(8,"Win32_Battery",new(){{"Name","Battery"},{"EstimatedChargeRemaining",99},{"DesignCapacity",50000},{"FullChargeCapacity",48000}});
+        var collectors=new JsonArray
+        {
+            JsonSerializer.SerializeToNode(new{Collector="basic-device",Status=0,Quality=0,Source="basic-device",ObservedAt=observed,Data=new{HostName="synthetic-host",OperatingSystem=new{Description="Synthetic OS",Version="1",Architecture="x64"},NetworkInterfaces=new[]{new{Name="Ethernet",InterfaceType="Ethernet",Addresses=new[]{"192.0.2.1"},Gateways=new[]{"192.0.2.254"},DnsServers=new[]{"192.0.2.53"},MacAddress=(string?)null}},IsTruncated=false},ItemCount=2,ErrorCode=(string?)null}),
+            JsonSerializer.SerializeToNode(new{Collector="installed-software",Status=0,Quality=0,Source="HKLM uninstall registry (32-bit and 64-bit views)",ObservedAt=observed,Data=new{Applications=new[]{new{Name="Synthetic App",Version="1",Publisher=(string?)null,InstallDate=(string?)null,Architecture="x64"}},IsTruncated=false},ItemCount=1,ErrorCode=(string?)null}),
+            new JsonObject{{"Collector","hardware"},{"Status",0},{"Quality",0},{"Source","hardware"},{"ObservedAt",observed},{"Data",new JsonObject{{"SchemaVersion",1},{"Sections",sections}}},{"ItemCount",9},{"ErrorCode",null}},
+            new JsonObject{{"Collector","bitlocker"},{"RecoveryPassword","secret-canary"}}
+        };
+        return new JsonObject{{"SchemaVersion",1},{"CollectedAt","2026-01-02T03:04:05Z"},{"Collectors",collectors}}.ToJsonString();
+    }
     public async Task Execute(string sql,params NpgsqlParameter[] parameters){await using var command=Owner.CreateCommand(sql);command.Parameters.AddRange(parameters);await command.ExecuteNonQueryAsync();}
     public async Task<T> Scalar<T>(string sql,params NpgsqlParameter[] parameters){await using var command=Owner.CreateCommand(sql);command.Parameters.AddRange(parameters);return (T)(await command.ExecuteScalarAsync())!;}
     public async Task ReprovisionSeparately(Guid environment)
@@ -73,6 +96,22 @@ public sealed partial class AgentProjectionFixture:IAsyncLifetime
     {var replacements=ProjectionProvisionReplacements(EnvironmentId);replacements[":\"agent_projection_role\""]=Id(TableOwnerRole);replacements[":'agent_projection_role'"]=Lit(TableOwnerRole);await Execute(await Render("provision-agent-projection.sql",replacements));}
     public async Task ReprovisionWithEnrollmentDefinerAlias()
     {var replacements=ProjectionProvisionReplacements(EnvironmentId);replacements[":\"agent_projection_definer_role\""]=Id(EnrollmentDefinerRole);replacements[":'agent_projection_definer_role'"]=Lit(EnrollmentDefinerRole);await Execute(await Render("provision-agent-projection.sql",replacements));}
+    public Task UpgradeProjection()=>Script("upgrade-v1-to-v2.sql",ProjectionMigrationReplacements());
+    public Task DowngradeProjection()=>Script("downgrade-v2-to-v1.sql",ProjectionMigrationReplacements());
+    public async Task VerifyFailedLateDowngradeRollsBack()
+    {
+        var sql=await Render("downgrade-v2-to-v1.sql",ProjectionMigrationReplacements());sql=sql.Replace("COMMIT;","SELECT 1/0 AS forced_late_failure; COMMIT;",StringComparison.Ordinal);
+        await using var connection=await Owner.OpenConnectionAsync();try{await using var command=new NpgsqlCommand(sql,connection);await command.ExecuteNonQueryAsync();throw new InvalidOperationException("Downgrade unexpectedly succeeded.");}
+        catch(PostgresException){await using var rollback=new NpgsqlCommand("ROLLBACK",connection);await rollback.ExecuteNonQueryAsync();}
+    }
+    public async Task VerifyPostflightAclDriftRollsBack()
+    {
+        var sql=await Render("downgrade-v2-to-v1.sql",ProjectionMigrationReplacements());var postflight=sql.LastIndexOf("WITH login AS",StringComparison.Ordinal);
+        if(postflight<0)throw new InvalidOperationException("Downgrade postflight was not found.");
+        sql=sql.Insert(postflight,$"GRANT SELECT ON agent_private.devices TO {Id(ProjectionRole)};\n");
+        await using var connection=await Owner.OpenConnectionAsync();try{await using var command=new NpgsqlCommand(sql,connection);await command.ExecuteNonQueryAsync();throw new InvalidOperationException("Downgrade with ACL drift unexpectedly succeeded.");}
+        catch(PostgresException){await using var rollback=new NpgsqlCommand("ROLLBACK",connection);await rollback.ExecuteNonQueryAsync();}
+    }
     private async Task VerifyUnsafeStoreRollback()
     {
         var replacements=ProjectionStoreReplacements();replacements[":\"agent_projection_definer_role\""]=Id(UnsafeDefinerRole);replacements[":'agent_projection_definer_role'"]=Lit(UnsafeDefinerRole);
@@ -88,6 +127,7 @@ public sealed partial class AgentProjectionFixture:IAsyncLifetime
     private async Task Cleanup(){if(_disposed)return;_disposed=true;try{try{if(Projection is not null)await Projection.DisposeAsync();}finally{try{if(Ingest is not null)await Ingest.DisposeAsync();}finally{try{if(Enroll is not null)await Enroll.DisposeAsync();}finally{if(Issue is not null)await Issue.DisposeAsync();}}}if(Owner is not null&&_rolesCreated){if(await Scalar<long>("SELECT count(*) FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner WHERE nspname='agent_private' AND rolname=@owner",P("owner",TableOwnerRole))==1)await Execute("DROP SCHEMA agent_private CASCADE");var database=new NpgsqlConnectionStringBuilder(_connectionString).Database!;await Execute($"REVOKE CONNECT ON DATABASE {Id(database)} FROM {Id(IngestRole)},{Id(EnrollRole)},{Id(IssueRole)},{Id(ProjectionRole)}; DROP ROLE IF EXISTS {Id(UnsafeDefinerRole)},{Id(ProjectionRole)},{Id(ProjectionDefinerRole)},{Id(IssueRole)},{Id(EnrollRole)},{Id(EnrollmentDefinerRole)},{Id(IngestRole)},{Id(TableOwnerRole)};");}}finally{try{if(_lease is not null)await _lease.DisposeAsync();}finally{if(Owner is not null)await Owner.DisposeAsync();}}}
     private Dictionary<string,string> ProjectionStoreReplacements()=>new(){[":\"agent_table_owner_role\""]=Id(TableOwnerRole),[":\"agent_projection_definer_role\""]=Id(ProjectionDefinerRole),[":'agent_table_owner_role'"]=Lit(TableOwnerRole),[":'agent_projection_definer_role'"]=Lit(ProjectionDefinerRole)};
     private Dictionary<string,string> ProjectionProvisionReplacements(Guid environment){var database=new NpgsqlConnectionStringBuilder(_connectionString).Database!;return new(){[":\"agent_table_owner_role\""]=Id(TableOwnerRole),[":\"agent_projection_definer_role\""]=Id(ProjectionDefinerRole),[":\"agent_projection_role\""]=Id(ProjectionRole),[":'agent_table_owner_role'"]=Lit(TableOwnerRole),[":'agent_projection_definer_role'"]=Lit(ProjectionDefinerRole),[":'agent_projection_role'"]=Lit(ProjectionRole),[":'environment_id'"]=Lit(environment.ToString()),[":DBNAME"]=Id(database)};}
+    private Dictionary<string,string> ProjectionMigrationReplacements()=>ProjectionProvisionReplacements(EnvironmentId);
     private async Task Script(string file,Dictionary<string,string> replacements)=>await Execute(await Render(file,replacements));
     private static async Task<string> Render(string file,Dictionary<string,string> replacements){var lines=await File.ReadAllLinesAsync(Path.Combine(AppContext.BaseDirectory,file));var sql=string.Join('\n',lines.Where(x=>!x.StartsWith('\\')));foreach(var pair in replacements.OrderByDescending(x=>x.Key.Length))sql=sql.Replace(pair.Key,pair.Value,StringComparison.Ordinal);return sql;}
     private static NpgsqlDataSource DataSource(NpgsqlConnectionStringBuilder source,string role,string password)=>NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(source.ConnectionString){Username=role,Password=password,Pooling=false}.ConnectionString);

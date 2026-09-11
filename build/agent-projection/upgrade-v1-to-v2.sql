@@ -1,90 +1,79 @@
 \set ON_ERROR_STOP on
 BEGIN;
-
-SELECT 1/pg_catalog.count(*) AS owners_are_distinct FROM (SELECT 1 WHERE :'agent_table_owner_role'<>:'agent_projection_definer_role') checked;
-SELECT 1/pg_catalog.count(*) AS owners_are_safe FROM (SELECT 1 WHERE
- (SELECT pg_catalog.count(*)=1 FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_projection_definer_role' AND NOT role.rolcanlogin AND NOT role.rolsuper AND
-  NOT role.rolbypassrls AND NOT role.rolcreatedb AND NOT role.rolcreaterole AND NOT role.rolinherit AND NOT role.rolreplication) AND
- NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership JOIN pg_catalog.pg_roles role ON membership.member=role.oid OR membership.roleid=role.oid
-  WHERE role.rolname=:'agent_projection_definer_role') AND
- NOT EXISTS(SELECT 1 FROM pg_catalog.pg_database database JOIN pg_catalog.pg_roles role ON role.oid=database.datdba WHERE role.rolname=:'agent_projection_definer_role') AND
- NOT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace namespace JOIN pg_catalog.pg_roles role ON role.oid=namespace.nspowner WHERE role.rolname=:'agent_projection_definer_role') AND
- NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object JOIN pg_catalog.pg_roles role ON role.oid=object.relowner WHERE role.rolname=:'agent_projection_definer_role') AND
- NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_roles role ON role.oid=function.proowner WHERE role.rolname=:'agent_projection_definer_role') AND
- NOT pg_catalog.has_schema_privilege(:'agent_projection_definer_role','agent_private','CREATE') AND
- NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace WHERE namespace.nspname='agent_private' AND object.relkind IN('r','p','v','m') AND
-  (pg_catalog.has_table_privilege(:'agent_projection_definer_role',object.oid,'SELECT') OR pg_catalog.has_table_privilege(:'agent_projection_definer_role',object.oid,'INSERT') OR
-   pg_catalog.has_table_privilege(:'agent_projection_definer_role',object.oid,'UPDATE') OR pg_catalog.has_table_privilege(:'agent_projection_definer_role',object.oid,'DELETE') OR
-   pg_catalog.has_table_privilege(:'agent_projection_definer_role',object.oid,'TRUNCATE') OR pg_catalog.has_table_privilege(:'agent_projection_definer_role',object.oid,'REFERENCES') OR
-   pg_catalog.has_table_privilege(:'agent_projection_definer_role',object.oid,'TRIGGER'))) AND
- NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute attribute JOIN pg_catalog.pg_class object ON object.oid=attribute.attrelid
-  JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace WHERE namespace.nspname='agent_private' AND attribute.attnum>0 AND NOT attribute.attisdropped AND
-  (pg_catalog.has_column_privilege(:'agent_projection_definer_role',object.oid,attribute.attnum,'SELECT') OR pg_catalog.has_column_privilege(:'agent_projection_definer_role',object.oid,attribute.attnum,'INSERT') OR
-   pg_catalog.has_column_privilege(:'agent_projection_definer_role',object.oid,attribute.attnum,'UPDATE') OR pg_catalog.has_column_privilege(:'agent_projection_definer_role',object.oid,attribute.attnum,'REFERENCES'))) AND
- NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace WHERE namespace.nspname='agent_private' AND object.relkind='S' AND
-  (pg_catalog.has_sequence_privilege(:'agent_projection_definer_role',object.oid,'USAGE') OR pg_catalog.has_sequence_privilege(:'agent_projection_definer_role',object.oid,'SELECT') OR pg_catalog.has_sequence_privilege(:'agent_projection_definer_role',object.oid,'UPDATE'))) AND
- NOT EXISTS(SELECT 1 FROM agent_private.agent_database_bindings binding WHERE binding.login_role=:'agent_projection_definer_role'::name) AND
- NOT EXISTS(SELECT 1 FROM agent_private.enrollment_database_bindings binding WHERE binding.login_role=:'agent_projection_definer_role'::name) AND
- (SELECT pg_catalog.count(*)=1 FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_table_owner_role' AND NOT role.rolcanlogin AND NOT role.rolsuper AND
-  NOT role.rolbypassrls AND NOT role.rolcreatedb AND NOT role.rolcreaterole AND NOT role.rolinherit AND NOT role.rolreplication) AND
- NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership JOIN pg_catalog.pg_roles role ON membership.member=role.oid OR membership.roleid=role.oid
-  WHERE role.rolname=:'agent_table_owner_role') AND
- NOT EXISTS(SELECT 1 FROM pg_catalog.pg_database database JOIN pg_catalog.pg_roles role ON role.oid=database.datdba WHERE role.rolname=:'agent_table_owner_role') AND
- (SELECT pg_catalog.count(*)=1 FROM pg_catalog.pg_namespace namespace JOIN pg_catalog.pg_roles role ON role.oid=namespace.nspowner
-  WHERE namespace.nspname='agent_private' AND role.rolname=:'agent_table_owner_role') AND
- (SELECT pg_catalog.count(*)=4 AND pg_catalog.bool_and(owner.rolname=:'agent_table_owner_role') FROM pg_catalog.pg_class object
-  JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace JOIN pg_catalog.pg_roles owner ON owner.oid=object.relowner
-  WHERE namespace.nspname='agent_private' AND object.relkind='r' AND object.relname IN('devices','registrations','inventory_projection','receipts'))) checked;
-
-CREATE TABLE agent_private.agent_projection_database_bindings (
-    login_role name PRIMARY KEY,
-    environment_id uuid NOT NULL,
-    purpose text NOT NULL CHECK (purpose='ReadDeviceProjection'),
-    UNIQUE(environment_id,purpose)
-);
-CREATE TABLE agent_private.agent_device_directory_bindings (
-    environment_id uuid NOT NULL,
-    directory_object_id uuid NOT NULL,
-    device_id uuid NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
-    creation_source text NOT NULL CHECK (creation_source='OwnerProvisioning'),
-    PRIMARY KEY(environment_id,directory_object_id),
-    UNIQUE(environment_id,device_id),
-    FOREIGN KEY(environment_id,device_id) REFERENCES agent_private.devices(environment_id,device_id)
-);
-ALTER TABLE agent_private.agent_projection_database_bindings OWNER TO :"agent_table_owner_role";
-ALTER TABLE agent_private.agent_device_directory_bindings OWNER TO :"agent_table_owner_role";
-ALTER TABLE agent_private.agent_projection_database_bindings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE agent_private.agent_projection_database_bindings FORCE ROW LEVEL SECURITY;
-ALTER TABLE agent_private.agent_device_directory_bindings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE agent_private.agent_device_directory_bindings FORCE ROW LEVEL SECURITY;
-CREATE POLICY definer_all ON agent_private.agent_projection_database_bindings TO :"agent_table_owner_role" USING(true) WITH CHECK(true);
-CREATE POLICY definer_all ON agent_private.agent_device_directory_bindings TO :"agent_table_owner_role" USING(true) WITH CHECK(true);
-CREATE POLICY projection_definer_select ON agent_private.agent_projection_database_bindings FOR SELECT TO :"agent_projection_definer_role" USING(true);
-CREATE POLICY projection_definer_select ON agent_private.agent_device_directory_bindings FOR SELECT TO :"agent_projection_definer_role" USING(true);
-
-DROP POLICY IF EXISTS projection_definer_select ON agent_private.devices;
-DROP POLICY IF EXISTS projection_definer_select ON agent_private.agent_database_bindings;
-DROP POLICY IF EXISTS projection_definer_select ON agent_private.enrollment_database_bindings;
-DROP POLICY IF EXISTS projection_definer_select ON agent_private.registrations;
-DROP POLICY IF EXISTS projection_definer_select ON agent_private.inventory_projection;
-DROP POLICY IF EXISTS projection_definer_select ON agent_private.receipts;
-CREATE POLICY projection_definer_select ON agent_private.devices FOR SELECT TO :"agent_projection_definer_role" USING(true);
-CREATE POLICY projection_definer_select ON agent_private.agent_database_bindings FOR SELECT TO :"agent_projection_definer_role" USING(true);
-CREATE POLICY projection_definer_select ON agent_private.enrollment_database_bindings FOR SELECT TO :"agent_projection_definer_role" USING(true);
-CREATE POLICY projection_definer_select ON agent_private.registrations FOR SELECT TO :"agent_projection_definer_role" USING(true);
-CREATE POLICY projection_definer_select ON agent_private.inventory_projection FOR SELECT TO :"agent_projection_definer_role" USING(true);
-CREATE POLICY projection_definer_select ON agent_private.receipts FOR SELECT TO :"agent_projection_definer_role" USING(true);
-
-GRANT USAGE ON SCHEMA agent_private TO :"agent_projection_definer_role";
-GRANT SELECT(login_role,environment_id,purpose) ON agent_private.agent_projection_database_bindings TO :"agent_projection_definer_role";
-GRANT SELECT(login_role) ON agent_private.agent_database_bindings TO :"agent_projection_definer_role";
-GRANT SELECT(login_role) ON agent_private.enrollment_database_bindings TO :"agent_projection_definer_role";
-GRANT SELECT(environment_id,directory_object_id,device_id) ON agent_private.agent_device_directory_bindings TO :"agent_projection_definer_role";
-GRANT SELECT(environment_id,device_id,state,last_seen_at) ON agent_private.devices TO :"agent_projection_definer_role";
-GRANT SELECT(environment_id,registration_id,device_id,registration_epoch,state) ON agent_private.registrations TO :"agent_projection_definer_role";
-GRANT SELECT(environment_id,device_id,registration_id,registration_epoch,sequence,receipt_id,normalized_payload) ON agent_private.inventory_projection TO :"agent_projection_definer_role";
-GRANT SELECT(environment_id,registration_id,registration_epoch,sequence,receipt_id,device_id,received_at) ON agent_private.receipts TO :"agent_projection_definer_role";
+WITH login AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_projection_role'::name),
+ function_owner AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_projection_definer_role'::name),
+ table_owner AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_table_owner_role'::name),
+ schema_info AS(SELECT namespace.oid,namespace.nspowner FROM pg_catalog.pg_namespace namespace WHERE namespace.nspname='agent_private'),
+expected_columns(relname,attname,privilege_type,is_grantable) AS(VALUES
+  ('agent_database_bindings','login_role','SELECT',false),('enrollment_database_bindings','login_role','SELECT',false),
+  ('agent_projection_database_bindings','login_role','SELECT',false),('agent_projection_database_bindings','environment_id','SELECT',false),('agent_projection_database_bindings','purpose','SELECT',false),
+  ('agent_device_directory_bindings','environment_id','SELECT',false),('agent_device_directory_bindings','directory_object_id','SELECT',false),('agent_device_directory_bindings','device_id','SELECT',false),
+  ('devices','environment_id','SELECT',false),('devices','device_id','SELECT',false),('devices','state','SELECT',false),('devices','last_seen_at','SELECT',false),
+  ('registrations','environment_id','SELECT',false),('registrations','registration_id','SELECT',false),('registrations','device_id','SELECT',false),('registrations','registration_epoch','SELECT',false),('registrations','state','SELECT',false),
+  ('inventory_projection','environment_id','SELECT',false),('inventory_projection','device_id','SELECT',false),('inventory_projection','registration_id','SELECT',false),('inventory_projection','registration_epoch','SELECT',false),('inventory_projection','sequence','SELECT',false),('inventory_projection','receipt_id','SELECT',false),('inventory_projection','normalized_payload','SELECT',false),
+  ('receipts','environment_id','SELECT',false),('receipts','registration_id','SELECT',false),('receipts','registration_epoch','SELECT',false),('receipts','sequence','SELECT',false),('receipts','receipt_id','SELECT',false),('receipts','device_id','SELECT',false),('receipts','received_at','SELECT',false)),
+ actual_columns AS(SELECT object.relname,attribute.attname,acl.privilege_type,acl.is_grantable FROM pg_catalog.pg_class object
+  JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid=object.oid,schema_info,function_owner,
+  LATERAL pg_catalog.aclexplode(attribute.attacl) acl WHERE object.relnamespace=schema_info.oid AND acl.grantee=function_owner.oid),
+ expected_execute(proname) AS(VALUES('read_current_bitlocker_projection'),('audit_projection_privileges')),
+ actual_execute AS(SELECT function.proname FROM pg_catalog.pg_proc function,schema_info WHERE function.pronamespace=schema_info.oid AND
+  pg_catalog.has_function_privilege(:'agent_projection_role',function.oid,'EXECUTE')),
+ checks AS(SELECT
+  (SELECT pg_catalog.count(*)=1 FROM login) AND (SELECT pg_catalog.count(*)=1 FROM function_owner) AND (SELECT pg_catalog.count(*)=1 FROM table_owner) AND
+  NOT EXISTS(SELECT 1 FROM login WHERE rolcanlogin=false OR rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolinherit OR rolreplication) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership,login WHERE membership.member=login.oid OR membership.roleid=login.oid) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_database database,login WHERE database.datdba=login.oid) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function,schema_info,login WHERE function.pronamespace=schema_info.oid AND function.proowner=login.oid) AND
+  NOT EXISTS(SELECT 1 FROM agent_private.agent_database_bindings binding WHERE binding.login_role=:'agent_projection_role'::name) AND
+  NOT EXISTS(SELECT 1 FROM agent_private.enrollment_database_bindings binding WHERE binding.login_role=:'agent_projection_role'::name) AND
+  (SELECT pg_catalog.count(*)=1 FROM agent_private.agent_projection_database_bindings binding WHERE binding.login_role=:'agent_projection_role'::name AND binding.environment_id=:'environment_id'::uuid AND binding.purpose='ReadBitLocker') AND
+  NOT pg_catalog.has_schema_privilege(:'agent_projection_role','agent_private','CREATE') AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object,schema_info WHERE object.relnamespace=schema_info.oid AND object.relkind IN('r','p','v','m') AND
+   (pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'SELECT') OR pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'INSERT') OR pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'UPDATE') OR
+    pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'DELETE') OR pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'TRUNCATE') OR pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'REFERENCES') OR pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'TRIGGER'))) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid=object.oid,
+   schema_info,login,LATERAL pg_catalog.aclexplode(attribute.attacl) acl WHERE object.relnamespace=schema_info.oid AND acl.grantee=login.oid) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid=object.oid,
+   schema_info,LATERAL pg_catalog.aclexplode(attribute.attacl) acl WHERE object.relnamespace=schema_info.oid AND acl.grantee=0) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object,schema_info WHERE object.relnamespace=schema_info.oid AND object.relkind='S' AND
+   (pg_catalog.has_sequence_privilege(:'agent_projection_role',object.oid,'USAGE') OR pg_catalog.has_sequence_privilege(:'agent_projection_role',object.oid,'SELECT') OR pg_catalog.has_sequence_privilege(:'agent_projection_role',object.oid,'UPDATE'))) AND
+  NOT EXISTS((SELECT * FROM expected_execute EXCEPT SELECT * FROM actual_execute) UNION ALL(SELECT * FROM actual_execute EXCEPT SELECT * FROM expected_execute)) AND
+  NOT EXISTS(SELECT 1 FROM function_owner WHERE rolcanlogin OR rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolinherit OR rolreplication) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership,function_owner WHERE membership.member=function_owner.oid OR membership.roleid=function_owner.oid) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_database database,function_owner WHERE database.datdba=function_owner.oid) AND
+  NOT EXISTS(SELECT 1 FROM schema_info,function_owner WHERE schema_info.nspowner=function_owner.oid) AND
+  NOT pg_catalog.has_schema_privilege(:'agent_projection_definer_role'::name,'agent_private','CREATE') AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object,schema_info,function_owner WHERE object.relnamespace=schema_info.oid AND object.relowner=function_owner.oid) AND
+  (SELECT pg_catalog.count(*)=2 FROM pg_catalog.pg_proc function,schema_info,function_owner WHERE function.pronamespace=schema_info.oid AND function.proowner=function_owner.oid) AND
+  NOT EXISTS(SELECT 1 FROM agent_private.agent_database_bindings binding,function_owner WHERE binding.login_role=function_owner.rolname::name) AND
+  NOT EXISTS(SELECT 1 FROM agent_private.enrollment_database_bindings binding,function_owner WHERE binding.login_role=function_owner.rolname::name) AND
+  NOT EXISTS(SELECT 1 FROM agent_private.agent_projection_database_bindings binding,function_owner WHERE binding.login_role=function_owner.rolname::name) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object,schema_info,function_owner WHERE object.relnamespace=schema_info.oid AND object.relkind IN('r','p','v','m') AND
+   (pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'SELECT') OR pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'INSERT') OR pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'UPDATE') OR
+    pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'DELETE') OR pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'TRUNCATE') OR pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'REFERENCES') OR pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'TRIGGER'))) AND
+  NOT EXISTS((SELECT * FROM expected_columns EXCEPT SELECT * FROM actual_columns) UNION ALL(SELECT * FROM actual_columns EXCEPT SELECT * FROM expected_columns)) AND
+  NOT EXISTS(SELECT 1 FROM table_owner WHERE rolcanlogin OR rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolinherit OR rolreplication) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership,table_owner WHERE membership.member=table_owner.oid OR membership.roleid=table_owner.oid) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_database database,table_owner WHERE database.datdba=table_owner.oid) AND
+  (SELECT pg_catalog.count(*)=1 FROM schema_info,table_owner WHERE schema_info.nspowner=table_owner.oid) AND
+  (SELECT pg_catalog.count(*)=2 AND pg_catalog.bool_and(function.proowner=function_owner.oid AND function.prosecdef AND function.proconfig=ARRAY['search_path=pg_catalog, agent_private, pg_temp']::text[])
+   FROM pg_catalog.pg_proc function,schema_info,function_owner WHERE function.pronamespace=schema_info.oid AND function.proname IN('read_current_bitlocker_projection','audit_projection_privileges')) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function,schema_info,LATERAL pg_catalog.aclexplode(COALESCE(function.proacl,pg_catalog.acldefault('f',function.proowner))) acl
+   WHERE function.pronamespace=schema_info.oid AND function.proname IN('read_current_bitlocker_projection','audit_projection_privileges') AND acl.grantee=0 AND acl.privilege_type='EXECUTE') AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function,schema_info,function_owner,login,
+   LATERAL pg_catalog.aclexplode(COALESCE(function.proacl,pg_catalog.acldefault('f',function.proowner))) acl
+   WHERE function.pronamespace=schema_info.oid AND function.proname IN('read_current_bitlocker_projection','audit_projection_privileges') AND
+    acl.privilege_type='EXECUTE' AND (acl.grantee NOT IN(function_owner.oid,login.oid) OR (acl.grantee=login.oid AND acl.is_grantable))) AND
+  (SELECT pg_catalog.count(*)=8 AND pg_catalog.bool_and(object.relowner=table_owner.oid AND object.relrowsecurity AND object.relforcerowsecurity)
+   FROM pg_catalog.pg_class object,schema_info,table_owner WHERE object.relnamespace=schema_info.oid AND object.relkind='r' AND object.relname IN('agent_database_bindings','enrollment_database_bindings','agent_projection_database_bindings','agent_device_directory_bindings','devices','registrations','inventory_projection','receipts')) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object,schema_info,function_owner WHERE object.relnamespace=schema_info.oid AND
+   object.relname IN('agent_database_bindings','enrollment_database_bindings','agent_projection_database_bindings','agent_device_directory_bindings','devices','registrations','inventory_projection','receipts') AND NOT EXISTS(
+    SELECT 1 FROM pg_catalog.pg_policy policy WHERE policy.polrelid=object.oid AND policy.polname='projection_definer_select' AND policy.polroles=ARRAY[function_owner.oid]::oid[] AND policy.polcmd='r' AND
+     pg_catalog.pg_get_expr(policy.polqual,policy.polrelid)='true' AND policy.polwithcheck IS NULL)) AS valid)
+SELECT 1/pg_catalog.count(*) AS exact_v1_preflight FROM checks WHERE checks.valid;
+ALTER TABLE agent_private.agent_projection_database_bindings DROP CONSTRAINT agent_projection_database_bindings_purpose_check;
+UPDATE agent_private.agent_projection_database_bindings SET purpose='ReadDeviceProjection' WHERE login_role=:'agent_projection_role'::name AND environment_id=:'environment_id'::uuid AND purpose='ReadBitLocker';
+ALTER TABLE agent_private.agent_projection_database_bindings ADD CONSTRAINT agent_projection_database_bindings_purpose_check CHECK(purpose='ReadDeviceProjection');
 
 CREATE OR REPLACE FUNCTION agent_private.read_current_bitlocker_projection(p_environment_id uuid,p_directory_object_id uuid)
 RETURNS TABLE(outcome text,diagnostic_code text,environment_id uuid,directory_object_id uuid,device_id uuid,
@@ -328,6 +317,7 @@ EXCEPTION
 END;
 $function$;
 
+DROP FUNCTION agent_private.audit_projection_privileges(uuid,name,name);
 CREATE OR REPLACE FUNCTION agent_private.audit_projection_privileges(p_expected_environment_id uuid,p_expected_table_owner name,p_expected_function_owner name)
 RETURNS TABLE(is_valid boolean,diagnostic_code text,profile_version smallint)
 LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,agent_private,pg_temp AS $function$
@@ -406,10 +396,84 @@ expected_columns(relname,attname,privilege_type,is_grantable) AS(VALUES
 SELECT checks.valid,CASE WHEN checks.valid THEN 'None' ELSE 'PrivilegeAuditFailed' END,2::smallint FROM checks;
 $function$;
 
+
 ALTER FUNCTION agent_private.read_current_bitlocker_projection(uuid,uuid) OWNER TO :"agent_projection_definer_role";
 ALTER FUNCTION agent_private.read_current_inventory_projection(uuid,uuid) OWNER TO :"agent_projection_definer_role";
 ALTER FUNCTION agent_private.audit_projection_privileges(uuid,name,name) OWNER TO :"agent_projection_definer_role";
-REVOKE ALL ON FUNCTION agent_private.read_current_bitlocker_projection(uuid,uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION agent_private.read_current_inventory_projection(uuid,uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION agent_private.audit_projection_privileges(uuid,name,name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION agent_private.read_current_bitlocker_projection(uuid,uuid),agent_private.read_current_inventory_projection(uuid,uuid),agent_private.audit_projection_privileges(uuid,name,name) FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA agent_private FROM :"agent_projection_role";
+GRANT EXECUTE ON FUNCTION agent_private.read_current_bitlocker_projection(uuid,uuid),agent_private.read_current_inventory_projection(uuid,uuid),agent_private.audit_projection_privileges(uuid,name,name) TO :"agent_projection_role";
+WITH login AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_projection_role'::name),
+ function_owner AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_projection_definer_role'::name),
+ table_owner AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_table_owner_role'::name),
+ schema_info AS(SELECT namespace.oid,namespace.nspowner FROM pg_catalog.pg_namespace namespace WHERE namespace.nspname='agent_private'),
+expected_columns(relname,attname,privilege_type,is_grantable) AS(VALUES
+  ('agent_database_bindings','login_role','SELECT',false),('enrollment_database_bindings','login_role','SELECT',false),
+  ('agent_projection_database_bindings','login_role','SELECT',false),('agent_projection_database_bindings','environment_id','SELECT',false),('agent_projection_database_bindings','purpose','SELECT',false),
+  ('agent_device_directory_bindings','environment_id','SELECT',false),('agent_device_directory_bindings','directory_object_id','SELECT',false),('agent_device_directory_bindings','device_id','SELECT',false),
+  ('devices','environment_id','SELECT',false),('devices','device_id','SELECT',false),('devices','state','SELECT',false),('devices','last_seen_at','SELECT',false),
+  ('registrations','environment_id','SELECT',false),('registrations','registration_id','SELECT',false),('registrations','device_id','SELECT',false),('registrations','registration_epoch','SELECT',false),('registrations','state','SELECT',false),
+  ('inventory_projection','environment_id','SELECT',false),('inventory_projection','device_id','SELECT',false),('inventory_projection','registration_id','SELECT',false),('inventory_projection','registration_epoch','SELECT',false),('inventory_projection','sequence','SELECT',false),('inventory_projection','receipt_id','SELECT',false),('inventory_projection','normalized_payload','SELECT',false),
+  ('receipts','environment_id','SELECT',false),('receipts','registration_id','SELECT',false),('receipts','registration_epoch','SELECT',false),('receipts','sequence','SELECT',false),('receipts','receipt_id','SELECT',false),('receipts','device_id','SELECT',false),('receipts','received_at','SELECT',false)),
+ actual_columns AS(SELECT object.relname,attribute.attname,acl.privilege_type,acl.is_grantable FROM pg_catalog.pg_class object
+  JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid=object.oid,schema_info,function_owner,
+  LATERAL pg_catalog.aclexplode(attribute.attacl) acl WHERE object.relnamespace=schema_info.oid AND acl.grantee=function_owner.oid),
+ expected_execute(proname) AS(VALUES('read_current_bitlocker_projection'),('read_current_inventory_projection'),('audit_projection_privileges')),
+ actual_execute AS(SELECT function.proname FROM pg_catalog.pg_proc function,schema_info WHERE function.pronamespace=schema_info.oid AND
+  pg_catalog.has_function_privilege(:'agent_projection_role',function.oid,'EXECUTE')),
+ checks AS(SELECT
+  (SELECT pg_catalog.count(*)=1 FROM login) AND (SELECT pg_catalog.count(*)=1 FROM function_owner) AND (SELECT pg_catalog.count(*)=1 FROM table_owner) AND
+  NOT EXISTS(SELECT 1 FROM login WHERE rolcanlogin=false OR rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolinherit OR rolreplication) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership,login WHERE membership.member=login.oid OR membership.roleid=login.oid) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_database database,login WHERE database.datdba=login.oid) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function,schema_info,login WHERE function.pronamespace=schema_info.oid AND function.proowner=login.oid) AND
+  NOT EXISTS(SELECT 1 FROM agent_private.agent_database_bindings binding WHERE binding.login_role=:'agent_projection_role'::name) AND
+  NOT EXISTS(SELECT 1 FROM agent_private.enrollment_database_bindings binding WHERE binding.login_role=:'agent_projection_role'::name) AND
+  (SELECT pg_catalog.count(*)=1 FROM agent_private.agent_projection_database_bindings binding WHERE binding.login_role=:'agent_projection_role'::name AND binding.environment_id=:'environment_id'::uuid AND binding.purpose='ReadDeviceProjection') AND
+  NOT pg_catalog.has_schema_privilege(:'agent_projection_role','agent_private','CREATE') AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object,schema_info WHERE object.relnamespace=schema_info.oid AND object.relkind IN('r','p','v','m') AND
+   (pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'SELECT') OR pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'INSERT') OR pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'UPDATE') OR
+    pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'DELETE') OR pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'TRUNCATE') OR pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'REFERENCES') OR pg_catalog.has_table_privilege(:'agent_projection_role',object.oid,'TRIGGER'))) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid=object.oid,
+   schema_info,login,LATERAL pg_catalog.aclexplode(attribute.attacl) acl WHERE object.relnamespace=schema_info.oid AND acl.grantee=login.oid) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid=object.oid,
+   schema_info,LATERAL pg_catalog.aclexplode(attribute.attacl) acl WHERE object.relnamespace=schema_info.oid AND acl.grantee=0) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object,schema_info WHERE object.relnamespace=schema_info.oid AND object.relkind='S' AND
+   (pg_catalog.has_sequence_privilege(:'agent_projection_role',object.oid,'USAGE') OR pg_catalog.has_sequence_privilege(:'agent_projection_role',object.oid,'SELECT') OR pg_catalog.has_sequence_privilege(:'agent_projection_role',object.oid,'UPDATE'))) AND
+  NOT EXISTS((SELECT * FROM expected_execute EXCEPT SELECT * FROM actual_execute) UNION ALL(SELECT * FROM actual_execute EXCEPT SELECT * FROM expected_execute)) AND
+  NOT EXISTS(SELECT 1 FROM function_owner WHERE rolcanlogin OR rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolinherit OR rolreplication) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership,function_owner WHERE membership.member=function_owner.oid OR membership.roleid=function_owner.oid) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_database database,function_owner WHERE database.datdba=function_owner.oid) AND
+  NOT EXISTS(SELECT 1 FROM schema_info,function_owner WHERE schema_info.nspowner=function_owner.oid) AND
+  NOT pg_catalog.has_schema_privilege(:'agent_projection_definer_role'::name,'agent_private','CREATE') AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object,schema_info,function_owner WHERE object.relnamespace=schema_info.oid AND object.relowner=function_owner.oid) AND
+  (SELECT pg_catalog.count(*)=3 FROM pg_catalog.pg_proc function,schema_info,function_owner WHERE function.pronamespace=schema_info.oid AND function.proowner=function_owner.oid) AND
+  NOT EXISTS(SELECT 1 FROM agent_private.agent_database_bindings binding,function_owner WHERE binding.login_role=function_owner.rolname::name) AND
+  NOT EXISTS(SELECT 1 FROM agent_private.enrollment_database_bindings binding,function_owner WHERE binding.login_role=function_owner.rolname::name) AND
+  NOT EXISTS(SELECT 1 FROM agent_private.agent_projection_database_bindings binding,function_owner WHERE binding.login_role=function_owner.rolname::name) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object,schema_info,function_owner WHERE object.relnamespace=schema_info.oid AND object.relkind IN('r','p','v','m') AND
+   (pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'SELECT') OR pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'INSERT') OR pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'UPDATE') OR
+    pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'DELETE') OR pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'TRUNCATE') OR pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'REFERENCES') OR pg_catalog.has_table_privilege(function_owner.rolname,object.oid,'TRIGGER'))) AND
+  NOT EXISTS((SELECT * FROM expected_columns EXCEPT SELECT * FROM actual_columns) UNION ALL(SELECT * FROM actual_columns EXCEPT SELECT * FROM expected_columns)) AND
+  NOT EXISTS(SELECT 1 FROM table_owner WHERE rolcanlogin OR rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolinherit OR rolreplication) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership,table_owner WHERE membership.member=table_owner.oid OR membership.roleid=table_owner.oid) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_database database,table_owner WHERE database.datdba=table_owner.oid) AND
+  (SELECT pg_catalog.count(*)=1 FROM schema_info,table_owner WHERE schema_info.nspowner=table_owner.oid) AND
+  (SELECT pg_catalog.count(*)=3 AND pg_catalog.bool_and(function.proowner=function_owner.oid AND function.prosecdef AND function.proconfig=ARRAY['search_path=pg_catalog, agent_private, pg_temp']::text[] AND
+    pg_catalog.pg_get_function_identity_arguments(function.oid)=CASE function.proname WHEN 'read_current_bitlocker_projection' THEN 'p_environment_id uuid, p_directory_object_id uuid' WHEN 'read_current_inventory_projection' THEN 'p_environment_id uuid, p_directory_object_id uuid' ELSE 'p_expected_environment_id uuid, p_expected_table_owner name, p_expected_function_owner name' END AND
+    pg_catalog.pg_get_function_result(function.oid)=CASE function.proname WHEN 'read_current_bitlocker_projection' THEN 'TABLE(outcome text, diagnostic_code text, environment_id uuid, directory_object_id uuid, device_id uuid, registration_id uuid, registration_epoch bigint, sequence bigint, receipt_id uuid, collected_at timestamp with time zone, source_observed_at timestamp with time zone, received_at timestamp with time zone, last_seen_at timestamp with time zone, source text, is_truncated boolean, volumes_json text)' WHEN 'read_current_inventory_projection' THEN 'TABLE(outcome text, diagnostic_code text, environment_id uuid, directory_object_id uuid, device_id uuid, registration_id uuid, registration_epoch bigint, sequence bigint, receipt_id uuid, collected_at timestamp with time zone, received_at timestamp with time zone, last_seen_at timestamp with time zone, basic_json text, software_json text, hardware_json text)' ELSE 'TABLE(is_valid boolean, diagnostic_code text, profile_version smallint)' END)
+   FROM pg_catalog.pg_proc function,schema_info,function_owner WHERE function.pronamespace=schema_info.oid AND function.proname IN('read_current_bitlocker_projection','read_current_inventory_projection','audit_projection_privileges')) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function,schema_info,LATERAL pg_catalog.aclexplode(COALESCE(function.proacl,pg_catalog.acldefault('f',function.proowner))) acl
+   WHERE function.pronamespace=schema_info.oid AND function.proname IN('read_current_bitlocker_projection','read_current_inventory_projection','audit_projection_privileges') AND acl.grantee=0 AND acl.privilege_type='EXECUTE') AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function,schema_info,function_owner,login,
+   LATERAL pg_catalog.aclexplode(COALESCE(function.proacl,pg_catalog.acldefault('f',function.proowner))) acl
+   WHERE function.pronamespace=schema_info.oid AND function.proname IN('read_current_bitlocker_projection','read_current_inventory_projection','audit_projection_privileges') AND
+    acl.privilege_type='EXECUTE' AND (acl.grantee NOT IN(function_owner.oid,login.oid) OR (acl.grantee=login.oid AND acl.is_grantable))) AND
+  (SELECT pg_catalog.count(*)=8 AND pg_catalog.bool_and(object.relowner=table_owner.oid AND object.relrowsecurity AND object.relforcerowsecurity)
+   FROM pg_catalog.pg_class object,schema_info,table_owner WHERE object.relnamespace=schema_info.oid AND object.relkind='r' AND object.relname IN('agent_database_bindings','enrollment_database_bindings','agent_projection_database_bindings','agent_device_directory_bindings','devices','registrations','inventory_projection','receipts')) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class object,schema_info,function_owner WHERE object.relnamespace=schema_info.oid AND
+   object.relname IN('agent_database_bindings','enrollment_database_bindings','agent_projection_database_bindings','agent_device_directory_bindings','devices','registrations','inventory_projection','receipts') AND NOT EXISTS(
+    SELECT 1 FROM pg_catalog.pg_policy policy WHERE policy.polrelid=object.oid AND policy.polname='projection_definer_select' AND policy.polroles=ARRAY[function_owner.oid]::oid[] AND policy.polcmd='r' AND
+     pg_catalog.pg_get_expr(policy.polqual,policy.polrelid)='true' AND policy.polwithcheck IS NULL)) AS valid)
+SELECT 1/pg_catalog.count(*) AS exact_v2_postflight FROM checks WHERE checks.valid;
 COMMIT;
