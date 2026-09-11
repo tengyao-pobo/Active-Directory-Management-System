@@ -56,6 +56,7 @@ async function mockConsoleApi(page: Page, state: MockState) {
     }
     if (path === '/api/v1/environments') { await route.fulfill(json({ items: environments })); return; }
     if (path.endsWith('/directory/status')) { await route.fulfill(json({ status: 'Unconfigured', stale: true, mutationAvailable: false })); return; }
+    if (path.endsWith('/dashboard')) { await route.fulfill(json(dashboard(path.includes('/prod/') ? 'prod' : 'dev'))); return; }
     const match = path.match(/^\/api\/v1\/environments\/(prod|dev)\/(access|rbac|audit)$/);
     if (match) {
       const [, environment, resource] = match;
@@ -164,4 +165,43 @@ test('a short server session-expiration header returns the console to login', as
   const state: MockState = { signedIn: true, protectedUnauthorized: false, savedLocales: [], sessionRemainingMs: 800 };
   await openAuthenticatedConsole(page, state);
   await expect(page.getByRole('heading', { name: 'Sign in to IT Management' })).toBeVisible({ timeout: 3_000 });
+});
+
+function dashboard(env: string, second = false) {
+  return { counts: { User: 17, Group: 3, Computer: 9, OrganizationalUnit: 4 }, lifecycle: { Unknown: 7, Active: 0, Spare: 0, Repair: 2, Retired: 0 }, repairs: [{ id: second ? 'second' : 'first', name: `${env}-repair-${second ? 'second' : 'first'}` }], nextCursor: second ? null : 'synthetic-cursor', asOf: '2026-09-11T14:00:00Z', queriedAt: '2026-09-11T14:01:00Z', health: 'Unknown', agent: 'Unknown' };
+}
+
+test('dashboard pages repairs, shows unknown health, and clears counts on unavailable response', async ({ page }, info) => {
+  await openAuthenticatedConsole(page, { signedIn: true, protectedUnauthorized: false, savedLocales: [] });
+  const panel = page.getByRole('region', { name: 'Directory and asset dashboard' });
+  await expect(panel).toContainText('prod-repair-first');
+  await expect(panel).toContainText('Agent status: unknown. Device health: unknown.');
+  let unavailable = false;
+  await page.route('**/dashboard**', route => route.fulfill(unavailable ? json({}, 503) : json(dashboard('prod', new URL(route.request().url()).searchParams.has('cursor')))));
+  await panel.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(panel).toContainText('prod-repair-second');
+  await expect(panel).not.toContainText('prod-repair-first');
+  await panel.screenshot({ path: `test-results/screenshots/${info.project.name}-dashboard.png` });
+  unavailable = true;
+  await panel.getByRole('button', { name: 'Refresh dashboard / first page' }).click();
+  await expect(panel.getByRole('alert')).toContainText('No counts can be confirmed');
+  await expect(panel.locator('.metric-card')).toHaveCount(0);
+});
+
+test('dashboard late response cannot replace a different environment', async ({ page }, info) => {
+  await openAuthenticatedConsole(page, { signedIn: true, protectedUnauthorized: false, savedLocales: [] });
+  let release: (() => void) | undefined;
+  await page.route('**/prod/dashboard**', async route => {
+    await new Promise<void>(resolve => { release = resolve; });
+    await route.fulfill(json(dashboard('obsolete'))).catch(() => {});
+  });
+  await page.getByRole('button', { name: 'Refresh dashboard / first page' }).click();
+  await expect.poll(() => Boolean(release)).toBe(true);
+  if (info.project.name.includes('mobile')) await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.locator('.environment-picker select').selectOption('dev');
+  if (info.project.name.includes('mobile')) await page.getByRole('button', { name: 'Close menu', exact: true }).first().click();
+  release?.();
+  const panel = page.getByRole('region', { name: 'Directory and asset dashboard' });
+  await expect(panel).toContainText('dev-repair-first');
+  await expect(panel).not.toContainText('obsolete');
 });

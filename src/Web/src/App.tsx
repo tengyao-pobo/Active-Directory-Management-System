@@ -21,6 +21,7 @@ import { useI18n } from './i18n';
 import './styles.css';
 import DirectoryView from './DirectoryView';
 import DirectorySearch from './DirectorySearch';
+import Dashboard from './Dashboard';
 import { getDirectoryStatus, type DirectoryKind, type DirectoryStatus } from './api';
 
 type View = 'overview' | 'environment' | 'access' | 'audit' | 'settings' | 'users' | 'groups' | 'computers' | 'ou' | 'search';
@@ -424,6 +425,7 @@ function Overview({ environment, access, rbac, audit, t }: { environment: Manage
     [t('overview.auditEvents'), audit ? String(audit.items.length) : '—', t('overview.auditHint')],
   ];
   return <div className="content-grid">
+    <Dashboard key={environment.id} environmentId={environment.id} />
     <section className="metric-grid" aria-label={t('overview.operationalStatus')}>{cards.map(([label, value, hint]) => <article className="metric-card" key={label}><span>{label}</span><strong>{value}</strong><small>{hint}</small></article>)}</section>
     <section className="panel integration-panel"><PanelTitle title={t('overview.readiness')} subtitle={t('overview.readinessSubtitle')} />
       <div className="readiness-list"><ReadinessRow label={t('overview.consoleApi')} status={t('status.available')} ready /><ConnectorReadiness key={environment.id} environmentId={environment.id} /><ReadinessRow label={t('overview.auditPipeline')} status={audit ? t('status.available') : t('status.unavailable')} ready={Boolean(audit)} /></div>
