@@ -1,5 +1,13 @@
 \set ON_ERROR_STOP on
 BEGIN;
+
+-- The historical v1 audit cannot validate the platform-grant isolation capability.
+-- Preserve v1 artifacts and reject this downgrade before any mutation while it is installed.
+SELECT 1/pg_catalog.count(*) AS platform_grant_extension_is_absent FROM (SELECT 1 WHERE
+    pg_catalog.to_regclass('agent_private.platform_grant_database_bindings') IS NULL AND
+    pg_catalog.to_regclass('agent_private.platform_grant_receipts') IS NULL) checked;
+-- An allowed downgrade invalidates the completed isolation upgrade capability.
+DROP FUNCTION IF EXISTS agent_private.platform_grant_isolation_profile();
 WITH login AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_projection_role'::name),
  function_owner AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_projection_definer_role'::name),
  table_owner AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'agent_table_owner_role'::name),

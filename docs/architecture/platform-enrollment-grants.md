@@ -2,6 +2,8 @@
 
 此文件定義平台統一發行 initial enrollment grant 的目標契約。公司工作站是否安裝 RSAT 不改變此流程；操作人員在平台提出申請、檢查精確設備、取得另一位操作人員核准並領取授權。此文件本身不啟用執行端點、背景工作、CA 或 listener。
 
+私有原子發行、固定 TTL 與同一操作收據恢復的實作／部署界線見[平台授權儲存層](../deployment/platform-grants-store.md)。此資料庫元件與下列密文 primitive 尚未組合成可執行的平台工作流程。
+
 ## 授權與不可變計畫
 
 新增 Owner-only、Computer scope 限定的 `AgentEnrollmentGrant.Manage`。提案與執行要求 fresh step-up、目前有效的目錄快照及精確 GUID。計畫保存環境、目錄物件 GUID、伺服器 Device ID、mapping 建立時間、目錄 generation、授權版本、固定 600 秒 TTL，以及一次性接收公鑰與其 SHA-256 fingerprint。核准者須與提案人不同，並有 `Change.Approve`；執行前再次檢查權限、版本及目標。

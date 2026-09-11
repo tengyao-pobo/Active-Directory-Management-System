@@ -1,6 +1,11 @@
 \set ON_ERROR_STOP on
 BEGIN;
 
+SELECT 1 / pg_catalog.count(*) AS roles_have_no_platform_grant_binding FROM (SELECT 1 WHERE
+    agent_private.platform_grant_role_is_unbound(:'agent_table_owner_role'::name) AND
+    agent_private.platform_grant_role_is_unbound(:'agent_projection_definer_role'::name) AND
+    agent_private.platform_grant_role_is_unbound(:'agent_projection_role'::name)) checked;
+
 SELECT 1/pg_catalog.count(*) AS roles_are_distinct FROM (SELECT 1 WHERE
  :'agent_table_owner_role'<>:'agent_projection_definer_role' AND
  :'agent_table_owner_role'<>:'agent_projection_role' AND
