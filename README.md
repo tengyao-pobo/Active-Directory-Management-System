@@ -8,7 +8,7 @@ An internal web-based Active Directory management platform with role-based acces
 
 已實作 .NET 10 Solution、PostgreSQL migrations/RLS、opaque session、Windows SSO adapter、緊急帳號密碼 + Passkey、細粒度 RBAC/Scope、雙人核准的本機設定變更、Audit/Outbox 與離線 provisioning 工具。
 
-React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核與語言設定。AD Connector 提供受限 LDAPS 讀取、原子同步與 scoped API；實際 AD 寫入保持不可用。Inventory Agent、Helper 與雲端整合尚未實作。Windows SSO 尚需企業 IIS/Kerberos 驗收；Owner 轉移/移除、AD 群組即時角色解析與復原碼流程尚待完成，相關變更入口未開放。
+React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核與語言設定。AD Connector 提供受限 LDAPS 讀取、原子同步與 scoped API；實際 AD 寫入保持不可用。Inventory Agent 已有收集器及離線佇列 library，尚未部署為服務或接入伺服器；Helper 與雲端整合尚未實作。Windows SSO 尚需企業 IIS/Kerberos 驗收；Owner 轉移/移除、AD 群組即時角色解析與復原碼流程尚待完成，相關變更入口未開放。
 
 - [架構設計：13 項交付內容](docs/architecture/architecture.md)
 - [資料模型與資料保護](docs/architecture/database.md)
@@ -39,3 +39,4 @@ React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核�
 - [全部需求實作追蹤](docs/architecture/implementation-status.md)
 
 - [版本化 AD 保護政策與保守分類](docs/deployment/ad-protection-policy.md)
+- [Agent 盤點與離線佇列基礎](docs/deployment/agent-foundation.md)
