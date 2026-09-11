@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, getDirectoryObject, getDirectoryObjects, getDirectoryStatus } from './api';
 import { useI18n } from './i18n';
 import './directory.css';
+import DeviceAssetPanel from './DeviceAssetPanel';
 
 export type DirectoryKind = 'User' | 'Group' | 'Computer' | 'OrganizationalUnit';
 
@@ -297,6 +298,7 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
                   return <DirectoryState compact error title={title} body={body ?? t('directory.detailsError')} />;
                 })()}
                 {!detailLoading && detail && <DetailFields item={detail} asOf={formattedDate(detailAsOf)} t={t} />}
+                {!detailLoading && detail?.kind === 'Computer' && <DeviceAssetPanel key={`${environmentId}:${detail.id}`} environmentId={environmentId} id={detail.id} />}
               </aside>
             )}
           </div>
