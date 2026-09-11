@@ -118,6 +118,11 @@ public sealed class DirectorySyncTests(PostgresApiFixture fixture)
             var name = "test_connector_" + Guid.NewGuid().ToString("N");
             var password = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
             await using var owner = Owner();
+            // PostgreSQL ACL updates touch shared catalog rows even for distinct generated roles.
+            // Use the same cross-suite lock as the Agent database fixtures for role DDL.
+            owner.Database.SetCommandTimeout(120);
+            await using var roleDdl = await owner.Database.BeginTransactionAsync();
+            await owner.Database.ExecuteSqlRawAsync("SELECT pg_catalog.pg_advisory_xact_lock(7912040301)");
             await owner.Database.ExecuteSqlRawAsync($"CREATE ROLE \"{name}\" LOGIN PASSWORD '{password}' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE");
             var builder = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CONSOLE_TEST_DB")!);
             var scriptPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../build/provision-connector.sql"));
@@ -126,15 +131,20 @@ public sealed class DirectorySyncTests(PostgresApiFixture fixture)
                 .Replace(":'environment_id'", $"'{environment}'").Replace(":'principal_id'", $"'{principal}'")
                 .Replace(":DBNAME", $"\"{builder.Database}\"");
             await owner.Database.ExecuteSqlRawAsync(script);
+            await roleDdl.CommitAsync();
             builder.Username = name; builder.Password = password; builder.Pooling = false;
             return new ConnectorRole(name, builder.ConnectionString);
         }
         public async ValueTask DisposeAsync()
         {
             await using var owner = Owner();
+            owner.Database.SetCommandTimeout(120);
+            await using var roleDdl = await owner.Database.BeginTransactionAsync();
+            await owner.Database.ExecuteSqlRawAsync("SELECT pg_catalog.pg_advisory_xact_lock(7912040301)");
             await owner.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM \"DirectoryDatabaseBindings\" WHERE \"LoginRole\"={name}");
             // This generated role owns no objects; revoke only its test grants before dropping it.
             await owner.Database.ExecuteSqlRawAsync($"REVOKE ALL ON ALL TABLES IN SCHEMA public FROM \"{name}\"; REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM \"{name}\"; REVOKE ALL ON SCHEMA public FROM \"{name}\"; REVOKE ALL ON DATABASE \"{new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CONSOLE_TEST_DB")!).Database}\" FROM \"{name}\"; DROP ROLE \"{name}\"");
+            await roleDdl.CommitAsync();
         }
     }
 #pragma warning restore EF1002
