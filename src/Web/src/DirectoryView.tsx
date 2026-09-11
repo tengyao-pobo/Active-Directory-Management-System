@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ApiError, getDirectoryObject, getDirectoryObjects, getDirectoryStatus, request } from './api';
+import { ApiError, getDirectoryObject, getDirectoryObjects, getDirectoryStatus, request, type DirectoryPage } from './api';
 import { useI18n } from './i18n';
 import './directory.css';
 import DeviceTabs from './DeviceTabs';
@@ -13,6 +13,7 @@ export interface DirectoryViewProps {
   kind: DirectoryKind;
   environmentId: string;
   initialSearch?: string;
+  savedFilter?: { id: string; version: number };
 }
 
 interface DirectoryObject {
@@ -55,7 +56,7 @@ function statusPhase(status: DirectoryStatus): ViewPhase {
   return status.stale ? 'unavailable' : 'ready';
 }
 
-function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryViewProps) {
+function DirectoryViewContent({ kind, environmentId, initialSearch, savedFilter }: DirectoryViewProps) {
   const { t, locale } = useI18n();
   const [phase, setPhase] = useState<ViewPhase>('loading');
   const [status, setStatus] = useState<DirectoryStatus | null>(null);
@@ -66,12 +67,12 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
   const [tagId, setTagId] = useState('');
   const tagFilter = useRef('');
   useEffect(() => {
-    if (kind !== 'Computer') return;
+    if (kind !== 'Computer' || savedFilter) return;
     const controller = new AbortController();
     void request<{ items: typeof tags }>(`/api/v1/environments/${encodeURIComponent(environmentId)}/device-tags`, { signal: controller.signal })
       .then(value => { if (!controller.signal.aborted) setTags(value.items); }).catch(() => { if (!controller.signal.aborted) setTags([]); });
     return () => controller.abort();
-  }, [environmentId, kind]);
+  }, [environmentId, kind, savedFilter]);
   const [items, setItems] = useState<DirectoryObject[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
@@ -110,7 +111,9 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
     setListError(null);
     setItems([]);
     try {
-      const result = await getDirectoryObjects(environmentId, kind, search, cursor ?? undefined, controller.signal, tagFilter.current);
+      const result = savedFilter
+        ? await request<DirectoryPage>(`/api/v1/environments/${encodeURIComponent(environmentId)}/saved-filters/${encodeURIComponent(savedFilter.id)}/results?filterVersion=${savedFilter.version}&limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal: controller.signal })
+        : await getDirectoryObjects(environmentId, kind, search, cursor ?? undefined, controller.signal, tagFilter.current);
       if (requestId !== listRequest.current) return;
       setItems(result.items as DirectoryObject[]);
       setNextCursor(result.nextCursor);
@@ -119,7 +122,7 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
       setPageIndex(index);
     } catch (error) {
       if (controller.signal.aborted || requestId !== listRequest.current) return;
-      if (retrySnapshot && error instanceof ApiError && error.status === 409) {
+      if (retrySnapshot && error instanceof ApiError && error.status === 409 && error.code !== 'SavedFilterChanged') {
         setRestartNotice(true);
         void loadPage(null, search, [null], 0, false);
         return;
@@ -267,6 +270,8 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
               </div>
               {listLoading && <DirectoryState loading compact title={t('directory.loading')} />}
               {!listLoading && Boolean(listError) && (() => {
+                if (listError instanceof ApiError && listError.code === 'SavedFilterChanged')
+                  return <DirectoryState compact error title={t('filters.changed')} />;
                 const [title, body] = stateCopy('error', listError);
                 return <DirectoryState compact title={title} body={body} error />;
               })()}
@@ -348,5 +353,5 @@ function DirectoryState({ title, body, loading = false, error = false, compact =
 export default function DirectoryView(props: DirectoryViewProps) {
   const { t } = useI18n();
   const [revision, setRevision] = useState(0);
-  return <div className="directory-wrapper"><button type="button" className="secondary-button" onClick={() => setRevision(value => value + 1)}>{t('directory.refresh')}</button><DirectoryViewContent key={`${props.environmentId}:${props.kind}:${props.initialSearch ?? ''}:${revision}`} {...props} /></div>;
+  return <div className="directory-wrapper"><button type="button" className="secondary-button" onClick={() => setRevision(value => value + 1)}>{t('directory.refresh')}</button><DirectoryViewContent key={`${props.environmentId}:${props.kind}:${props.initialSearch ?? ''}:${props.savedFilter?.id ?? ''}:${props.savedFilter?.version ?? ''}:${revision}`} {...props} /></div>;
 }
