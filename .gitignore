@@ -1,0 +1,14 @@
+.tools/
+.local/
+**/bin/
+**/obj/
+**/TestResults/
+artifacts/
+.vs/
+.env
+*.user
+*.pfx
+*.p12
+*.key
+appsettings.Local.json
+**/node_modules/

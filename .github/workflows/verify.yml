@@ -1,0 +1,42 @@
+name: Verify backend
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: console_ci
+          POSTGRES_PASSWORD: ci-owner-ephemeral-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d console_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      CONSOLE_TEST_DB: Host=127.0.0.1;Port=5432;Database=console_ci;Username=postgres;Password=ci-owner-ephemeral-only
+      CONSOLE_TEST_RUNTIME_DB: Host=127.0.0.1;Port=5432;Database=console_ci;Username=console_runtime;Password=ci-runtime-ephemeral-only
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+      - run: dotnet restore ITManagement.slnx --locked-mode
+      - run: dotnet build ITManagement.slnx -c Release --no-restore
+      - name: Migrate isolated CI database
+        env:
+          CONSOLE_PROVISIONING_ALLOWED: 'true'
+          ConnectionStrings__Console: ${{ env.CONSOLE_TEST_DB }}
+        run: dotnet run --project src/Server/Provisioning -c Release --no-build -- migrate
+      - name: Provision restricted CI runtime role
+        run: |
+          docker exec ${{ job.services.postgres.id }} psql -U postgres -d console_ci -v ON_ERROR_STOP=1 -c "CREATE ROLE console_runtime LOGIN PASSWORD 'ci-runtime-ephemeral-only' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;"
+          docker exec -i ${{ job.services.postgres.id }} psql -U postgres -d console_ci -v ON_ERROR_STOP=1 -v runtime_role=console_runtime < build/provision-runtime.sql
+      - run: dotnet test ITManagement.slnx -c Release --no-build --logger trx
