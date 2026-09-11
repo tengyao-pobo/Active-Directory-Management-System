@@ -1,0 +1,69 @@
+.directory-view { min-width: 0; }
+.directory-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 1.5rem; margin-bottom: 1.25rem; }
+.directory-header h1 { margin: .32rem 0 .35rem; color: var(--text); font-size: clamp(1.55rem,2.4vw,2.1rem); font-weight: 550; letter-spacing: -.035em; }
+.directory-header p { max-width: 650px; margin: 0; color: var(--muted); font-size: .76rem; line-height: 1.55; }
+.directory-source { flex: 0 0 auto; display: flex; align-items: center; gap: .65rem; min-width: 205px; padding: .65rem .75rem; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+.directory-source > span:last-child { display: grid; gap: .15rem; }
+.directory-source strong { font-size: .7rem; font-weight: 600; }
+.directory-source small { color: var(--muted); font-size: .61rem; }
+.directory-source.warning .status-dot { background: var(--amber); box-shadow: 0 0 8px rgba(234,184,104,.45); }
+.directory-search { display: grid; gap: .42rem; margin-bottom: .9rem; }
+.directory-search label { color: #91a3a1; font-size: .64rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
+.directory-search > div { display: flex; align-items: center; gap: .55rem; }
+.directory-search input { min-width: 0; width: min(480px,100%); padding: .62rem .72rem; color: var(--text); background: #111819; border: 1px solid #344344; border-radius: 4px; font-size: .75rem; }
+.directory-clear { align-self: stretch; padding: 0 .45rem; color: var(--muted); background: transparent; border: 0; font-size: .68rem; }
+.directory-clear:hover { color: var(--teal); }
+.directory-notice { margin: 0 0 .9rem; padding: .65rem .75rem; color: #e8c991; background: rgba(234,184,104,.07); border-left: 2px solid var(--amber); font-size: .68rem; }
+.directory-layout { display: grid; grid-template-columns: minmax(0,1fr); gap: 1rem; align-items: start; }
+.directory-layout.has-detail { grid-template-columns: minmax(0,1fr) minmax(280px,34%); }
+.directory-table-panel, .directory-detail { min-width: 0; overflow: hidden; background: linear-gradient(145deg,rgba(29,40,41,.98),rgba(23,32,33,.98)); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 12px 32px rgba(0,0,0,.1); }
+.directory-table-heading { display: flex; justify-content: space-between; gap: 1rem; padding: .9rem 1rem; border-bottom: 1px solid var(--line-soft); }
+.directory-table-heading strong { font-size: .76rem; font-weight: 600; }
+.directory-table-heading small { color: var(--muted); font-size: .61rem; }
+.directory-table-scroll { overflow: auto; }
+.directory-table-panel table { width: 100%; border-collapse: collapse; font-size: .69rem; }
+.directory-table-panel th { padding: .65rem .8rem; color: #718482; background: #151e1f; font-size: .58rem; text-align: left; text-transform: uppercase; letter-spacing: .07em; white-space: nowrap; }
+.directory-table-panel td { max-width: 290px; padding: .7rem .8rem; color: #b9c7c5; border-top: 1px solid var(--line-soft); vertical-align: middle; overflow-wrap: anywhere; }
+.directory-table-panel tbody tr:hover, .directory-table-panel tbody tr.selected { background: rgba(52,209,186,.04); }
+.directory-object-link { width: 100%; padding: 0; color: inherit; background: transparent; border: 0; text-align: left; }
+.directory-object-link strong, .directory-object-link small { display: block; }
+.directory-object-link strong { color: #dcf2ef; font-weight: 550; }
+.directory-object-link small { margin-top: .16rem; color: var(--muted); font: .59rem/1.35 "Cascadia Code",Consolas,monospace; overflow-wrap: anywhere; }
+.directory-object-link:hover strong { color: var(--teal); }
+.directory-protection { display: inline-block; padding: .2rem .38rem; color: #b7c5c3; background: #293536; border-radius: 3px; font-size: .58rem; white-space: nowrap; }
+.directory-protection.protected { color: var(--teal); background: var(--teal-dim); }
+.directory-protection.unknown { color: #d8bd8f; background: #3a3021; }
+.directory-pagination { display: flex; justify-content: flex-end; align-items: center; gap: .65rem; padding: .72rem .85rem; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: .63rem; }
+.directory-pagination .secondary-button { padding: .42rem .62rem; }
+.directory-detail { position: sticky; top: 84px; }
+.directory-detail-header { display: flex; align-items: center; justify-content: space-between; padding: .85rem 1rem; border-bottom: 1px solid var(--line-soft); }
+.directory-detail-header h2 { margin: 0; font-size: .82rem; font-weight: 600; }
+.directory-close { display: grid; place-items: center; width: 28px; height: 28px; color: var(--muted); background: transparent; border: 0; border-radius: 3px; font-size: 1.15rem; line-height: 1; }
+.directory-close:hover { color: var(--teal); background: var(--surface-3); }
+.directory-detail-fields { margin: 0; padding: .2rem 1rem .75rem; }
+.directory-detail-fields > div { padding: .68rem 0; border-bottom: 1px solid var(--line-soft); }
+.directory-detail-fields dt { margin-bottom: .24rem; color: #758785; font-size: .57rem; text-transform: uppercase; letter-spacing: .07em; }
+.directory-detail-fields dd { margin: 0; color: #dce7e5; font: .66rem/1.45 "Cascadia Code",Consolas,monospace; overflow-wrap: anywhere; }
+.directory-detail-asof { margin: 0; padding: .7rem 1rem; color: var(--muted); background: rgba(15,22,23,.45); font-size: .59rem; }
+.directory-state { display: grid; place-items: center; min-height: 285px; padding: 2rem; text-align: center; border: 1px dashed #344445; border-radius: 7px; background: rgba(24,33,34,.75); }
+.directory-state.compact { min-height: 190px; border: 0; border-radius: 0; background: transparent; }
+.directory-state .spinner, .directory-state-icon { margin-bottom: .55rem; }
+.directory-state-icon { display: grid; place-items: center; width: 38px; height: 38px; color: var(--teal); background: #16312f; border: 1px solid #2b5550; border-radius: 50%; font-size: .72rem; }
+.directory-state.error .directory-state-icon { color: var(--red); background: #382123; border-color: #69393d; }
+.directory-state h2 { margin: .18rem 0; font-size: .88rem; }
+.directory-state p { max-width: 510px; margin: .3rem 0; color: var(--muted); font-size: .7rem; line-height: 1.5; }
+.directory-state small { margin-top: .35rem; color: #a69c8b; font: .6rem "Cascadia Code",Consolas,monospace; }
+@media (max-width: 1080px) { .directory-layout.has-detail { grid-template-columns: minmax(0,1fr) minmax(260px,38%); }.directory-table-panel th:nth-child(3),.directory-table-panel td:nth-child(3) { display: none; } }
+@media (max-width: 800px) { .directory-layout.has-detail { grid-template-columns: 1fr; }.directory-detail { position: static; }.directory-header { align-items: flex-start; }.directory-source { min-width: 180px; } }
+@media (max-width: 620px) {
+  .directory-header { display: block; }.directory-source { width: 100%; margin-top: .8rem; }
+  .directory-search > div { flex-wrap: wrap; }.directory-search input { width: 100%; flex: 1 0 100%; }
+  .directory-table-heading { display: grid; gap: .22rem; }
+  .directory-table-panel thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  .directory-table-panel table,.directory-table-panel tbody,.directory-table-panel tr,.directory-table-panel td { display: block; width: 100%; }
+  .directory-table-panel tr { padding: .45rem .75rem; border-top: 1px solid var(--line-soft); }
+  .directory-table-panel td,.directory-table-panel td:nth-child(3) { display: grid; grid-template-columns: 92px minmax(0,1fr); max-width: none; padding: .38rem 0; border: 0; }
+  .directory-table-panel td::before { content: attr(data-label); color: #718482; font-size: .57rem; text-transform: uppercase; letter-spacing: .05em; }
+  .directory-object-link { min-width: 0; }
+  .directory-pagination { justify-content: space-between; }
+}

@@ -55,6 +55,7 @@ async function mockConsoleApi(page: Page, state: MockState) {
       return;
     }
     if (path === '/api/v1/environments') { await route.fulfill(json({ items: environments })); return; }
+    if (path.endsWith('/directory/status')) { await route.fulfill(json({ status: 'Unconfigured', stale: true, mutationAvailable: false })); return; }
     const match = path.match(/^\/api\/v1\/environments\/(prod|dev)\/(access|rbac|audit)$/);
     if (match) {
       const [, environment, resource] = match;
