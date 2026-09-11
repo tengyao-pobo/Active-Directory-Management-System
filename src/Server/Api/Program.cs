@@ -109,6 +109,7 @@ app.MapEnvironmentApi();
 app.MapDirectoryApi();
 app.MapFavorites();
 app.MapDeviceTags();
+app.MapSavedFilters();
 app.MapDeviceAssets();
 app.MapDeviceUserLinks();
 app.MapDashboard();

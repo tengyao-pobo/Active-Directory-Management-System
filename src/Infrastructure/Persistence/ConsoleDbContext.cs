@@ -7,6 +7,7 @@ namespace ItManagement.Persistence;
 
 public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options) : DbContext(options)
 {
+    public DbSet<SavedFilter> SavedFilters => Set<SavedFilter>();
     public DbSet<DeviceTag> DeviceTags => Set<DeviceTag>();
     public DbSet<DeviceTagAssignment> DeviceTagAssignments => Set<DeviceTagAssignment>();
     public DbSet<DirectoryFavorite> Favorites => Set<DirectoryFavorite>();
@@ -44,6 +45,15 @@ public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options)
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        b.Entity<SavedFilter>().ToTable("SavedFilters").HasKey(x => new { x.EnvironmentId, x.PrincipalId, x.Id });
+        b.Entity<SavedFilter>().Property(x => x.Name).HasMaxLength(128);
+        b.Entity<SavedFilter>().Property(x => x.Kind).HasMaxLength(32);
+        b.Entity<SavedFilter>().Property(x => x.Search).HasMaxLength(128);
+        b.Entity<SavedFilter>().Property(x => x.Version).IsConcurrencyToken();
+        b.Entity<SavedFilter>().HasOne<EnvironmentMembership>().WithMany()
+            .HasForeignKey(x => new { x.EnvironmentId, x.PrincipalId }).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<SavedFilter>().HasOne<DeviceTag>().WithMany()
+            .HasForeignKey(x => new { x.EnvironmentId, Id = x.TagId }).OnDelete(DeleteBehavior.Restrict);
         ConfigureTenant<DeviceTag>(b, "DeviceTags");
         b.Entity<DeviceTag>().Property(x => x.Key).HasMaxLength(32);
         b.Entity<DeviceTag>().Property(x => x.Version).IsConcurrencyToken();

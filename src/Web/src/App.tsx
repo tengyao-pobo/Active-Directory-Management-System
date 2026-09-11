@@ -1,3 +1,4 @@
+import SavedFiltersView from './SavedFiltersView';
 import DeviceTagPanel from './DeviceTagPanel';
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
@@ -27,14 +28,14 @@ import DeviceDetails from './DeviceDetails';
 import FavoritesView from './FavoritesView';
 import { getDirectoryStatus, type DirectoryKind, type DirectoryStatus } from './api';
 
-type View = 'overview' | 'environment' | 'access' | 'audit' | 'settings' | 'users' | 'groups' | 'computers' | 'ou' | 'search' | 'device' | 'favorites' | 'tags';
+type View = 'overview' | 'environment' | 'access' | 'audit' | 'settings' | 'users' | 'groups' | 'computers' | 'ou' | 'search' | 'device' | 'favorites' | 'tags' | 'filters';
 type AsyncState = 'idle' | 'loading' | 'ready' | 'empty' | 'error';
 
 type AccessData = { permissions: string[] };
 type RbacData = Rbac;
 type AuditData = AuditPage;
 
-const views: View[] = ['overview', 'environment', 'access', 'audit', 'settings', 'users', 'groups', 'computers', 'ou', 'search', 'device', 'favorites', 'tags'];
+const views: View[] = ['overview', 'environment', 'access', 'audit', 'settings', 'users', 'groups', 'computers', 'ou', 'search', 'device', 'favorites', 'tags', 'filters'];
 const directoryKinds: Partial<Record<View, DirectoryKind>> = { users: 'User', groups: 'Group', computers: 'Computer', ou: 'OrganizationalUnit' };
 
 function routeFromHash(): View {
@@ -86,7 +87,7 @@ function App() {
   const [auditHistory, setAuditHistory] = useState<(string | undefined)[]>([]);
   const requestGeneration = useRef(0);
 
-  const isDirectory = Boolean(directoryKinds[view]) || view === 'search' || view === 'device' || view === 'favorites' || view === 'tags';
+  const isDirectory = Boolean(directoryKinds[view]) || view === 'search' || view === 'device' || view === 'favorites' || view === 'tags' || view === 'filters';
   const targetParams = new URLSearchParams(routeHash.split('?')[1] ?? '');
   const environment = environments.find((item) => item.id === environmentId) ?? null;
 
@@ -286,7 +287,7 @@ function App() {
             {navMatches('environment') && <NavButton active={view === 'environment'} icon="◇" label={t('nav.environment')} onClick={() => navigate('environment')} />}
           </NavGroup>
           <NavGroup title={t('nav.group.directory')}>
-            {(['search', 'favorites', 'tags', 'computers', 'users', 'groups', 'ou'] as const).filter(navMatches).map(item => <NavButton key={item} active={view === item} icon="◇" label={t(`nav.${item}`)} onClick={() => navigate(item)} />)}
+            {(['search', 'favorites', 'tags', 'filters', 'computers', 'users', 'groups', 'ou'] as const).filter(navMatches).map(item => <NavButton key={item} active={view === item} icon="◇" label={t(`nav.${item}`)} onClick={() => navigate(item)} />)}
           </NavGroup>
           <NavGroup title={t('nav.group.system')}>
             {navMatches('access') && <NavButton active={view === 'access'} icon="⌑" label={t('nav.access')} onClick={() => navigate('access')} />}
@@ -324,6 +325,7 @@ function App() {
           {envState === 'empty' && <StatePanel kind="empty" title={t('environment.noneTitle')} body={t('environment.noneBody')} t={t} />}
           {envState === 'ready' && environment && view === 'device' && <DeviceDetails key={environment.id + ':' + routeHash} environmentId={environment.id} targetEnvironment={targetParams.get('environment') ?? ''} id={targetParams.get('id') ?? ''} />}
           {envState === 'ready' && environment && view === 'search' && <DirectorySearch key={environment.id} environmentId={environment.id} />}
+          {envState === 'ready' && environment && view === 'filters' && <SavedFiltersView key={environment.id} environmentId={environment.id} />}
           {envState === 'ready' && environment && view === 'tags' && <DeviceTagPanel key={environment.id} environmentId={environment.id} />}
           {envState === 'ready' && environment && view === 'favorites' && <FavoritesView key={environment.id} environmentId={environment.id} />}
           {envState === 'ready' && environment && directoryKinds[view] && <DirectoryView key={`${environment.id}:${view}`} environmentId={environment.id} kind={directoryKinds[view]!} />}

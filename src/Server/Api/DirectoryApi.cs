@@ -10,7 +10,7 @@ namespace ItManagement.Api;
 public static class DirectoryApi
 {
     private sealed record Cursor(Guid Environment, Guid Actor, Guid Generation, long Version, string Kind, string Search, Guid? TagId, Guid After);
-    private static string? Permission(string kind) => kind switch
+    internal static string? Permission(string kind) => kind switch
     {
         "User" => PermissionCatalog.UserView, "Group" => PermissionCatalog.GroupView,
         "Computer" => PermissionCatalog.ComputerView, "OrganizationalUnit" => PermissionCatalog.EnvironmentView, _ => null
@@ -82,7 +82,7 @@ public static class DirectoryApi
         });
     }
 
-    private static Task<bool> Member(ConsoleDbContext db, Guid env, Guid actor, CancellationToken ct) =>
+    internal static Task<bool> Member(ConsoleDbContext db, Guid env, Guid actor, CancellationToken ct) =>
         db.Memberships.AnyAsync(x => x.EnvironmentId == env && x.PrincipalId == actor && x.Active, ct);
 
     internal static async Task<IQueryable<DirectoryObjectRecord>> Scoped(ConsoleDbContext db, Guid env, Guid actor, string permission, Guid generation, CancellationToken ct)
@@ -102,6 +102,6 @@ public static class DirectoryApi
             (all || (x.Department != null && departments.Contains(x.Department)) || (x.ParentOuId != null && exact.Contains(x.ParentOuId.Value)) || x.OuAncestry.Any(id => subtree.Contains(id)) ||
                 (x.Kind == "Computer" && db.DeviceTagAssignments.Any(a => a.EnvironmentId == env && a.ObjectId == x.Id && tags.Contains(a.TagId)))));
     }
-    private static object Dto(DirectoryObjectRecord x) => new { x.Id, x.Kind, x.Name, x.DistinguishedName, x.SamAccountName, x.Department,
+    internal static object Dto(DirectoryObjectRecord x) => new { x.Id, x.Kind, x.Name, x.DistinguishedName, x.SamAccountName, x.Department,
         x.ObjectSid, x.UsnChanged, x.IsProtected, x.ProtectionKnown, x.ParentOuId };
 }
