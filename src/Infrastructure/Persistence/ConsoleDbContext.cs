@@ -26,6 +26,7 @@ public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options)
     public DbSet<AuthCeremony> Ceremonies => Set<AuthCeremony>();
     public DbSet<PasskeyEnrollmentGrant> EnrollmentGrants => Set<PasskeyEnrollmentGrant>();
     public DbSet<SecurityEvent> SecurityEvents => Set<SecurityEvent>();
+    public DbSet<PrincipalPreference> Preferences => Set<PrincipalPreference>();
 
     public async Task<IDbContextTransaction> BeginEnvironment(Guid environmentId, Guid principalId, CancellationToken ct)
     {
@@ -97,6 +98,9 @@ public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options)
         b.Entity<PasskeyEnrollmentGrant>().ToTable("EnrollmentGrants").HasKey(x => x.IdHash);
         b.Entity<PasskeyEnrollmentGrant>().HasOne<Principal>().WithMany().HasForeignKey(x => x.PrincipalId).OnDelete(DeleteBehavior.Restrict);
         b.Entity<SecurityEvent>().ToTable("SecurityEvents").HasKey(x => x.Id);
+        b.Entity<PrincipalPreference>().ToTable("Preferences").HasKey(x => x.PrincipalId);
+        b.Entity<PrincipalPreference>().Property(x => x.Locale).HasMaxLength(16);
+        b.Entity<PrincipalPreference>().HasOne<Principal>().WithMany().HasForeignKey(x => x.PrincipalId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureTenant<T>(ModelBuilder b, string table) where T : class

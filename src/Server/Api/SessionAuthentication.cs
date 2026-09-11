@@ -40,6 +40,8 @@ public sealed class SessionAuthentication(
                 x.ExpiresAt > now && x.LastSeenAt > now.AddMinutes(-config.IdleMinutes))
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.LastSeenAt, now), Context.RequestAborted);
         if (touched != 1) return AuthenticateResult.Fail("Session invalid.");
+        var remaining = Math.Min((session.ExpiresAt - now).TotalMilliseconds, TimeSpan.FromMinutes(config.IdleMinutes).TotalMilliseconds);
+        Response.Headers["X-Session-Remaining-Ms"] = ((long)remaining).ToString(System.Globalization.CultureInfo.InvariantCulture);
         Context.Items[typeof(PlatformSession)] = session;
         var identity = new ClaimsIdentity([
             new Claim(ClaimTypes.NameIdentifier, session.PrincipalId.ToString()),

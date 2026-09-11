@@ -68,12 +68,19 @@ app.Use(async (context, next) =>
 {
     context.Response.Headers.CacheControl = "no-store";
     context.Response.Headers.XContentTypeOptions = "nosniff";
-    context.Response.Headers.ContentSecurityPolicy = "default-src 'none'; frame-ancestors 'none'";
+    context.Response.Headers.ContentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'";
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
     var canonical = new Uri(options.Origin);
     if (!context.Request.IsHttps || !string.Equals(context.Request.Host.Value, canonical.Authority, StringComparison.OrdinalIgnoreCase))
     { context.Response.StatusCode = 400; return; }
     await next();
+});
+// The public SPA contains no account data. API authorization remains mandatory below.
+app.UseWhen(context => !context.Request.Path.StartsWithSegments("/api") &&
+    !context.Request.Path.StartsWithSegments("/health"), spa =>
+{
+    spa.UseDefaultFiles();
+    spa.UseStaticFiles();
 });
 app.UseAuthentication();
 app.UseRateLimiter();
