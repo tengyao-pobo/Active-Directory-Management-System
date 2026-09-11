@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 
-interface State { status?: string; expired?: boolean; failDetail?: boolean; drift?: boolean; searches: string[] }
+interface State { status?: string; expired?: boolean; failDetail?: boolean; drift?: boolean; locale?: 'en-US' | 'zh-TW'; searches: string[] }
 const asOf = '2026-09-11T13:00:00Z';
 function object(env: string, kind: string, suffix = 'Alpha') {
   return { id: `${env}-${kind}-${suffix}`, kind, name: `${env} ${kind} ${suffix}`, distinguishedName: `CN=${suffix},OU=People,DC=${env},DC=test`,
@@ -13,7 +13,7 @@ async function mock(page: Page, state: State) {
     const u = new URL(route.request().url()); const path = u.pathname;
     const reply = (body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     if (path.endsWith('/session/me')) return reply({ id: 'scoped-operator', displayName: 'Scoped operator' });
-    if (path.endsWith('/session/preferences')) return reply({ locale: 'en-US' });
+    if (path.endsWith('/session/preferences')) return reply({ locale: state.locale ?? 'en-US' });
     if (path === '/api/v1/environments') return reply({ items: ['east', 'west'].map(id => ({ id, name: `${id} environment`, canonicalDns: `${id}.test`, defaultLocale: 'en-US', version: 1 })) });
     if (path.endsWith('/access')) return reply({ permissions: [] }); // An OU-scoped reader has no All-resource capability.
     if (path.includes('/favorites/')) return reply({ saved: false });
@@ -55,6 +55,86 @@ async function openInventory(page: Page, body: unknown) {
   await page.goto('/#/device?environment=east&id=east-Computer-Alpha');
   await page.getByRole('tab', { name: 'Inventory', exact: true }).click();
 }
+
+async function openEnrollmentReadiness(page: Page, state: { status: number; body: unknown }, locale: 'en-US' | 'zh-TW' = 'en-US') {
+  await mock(page, { searches: [], locale });
+  await page.route('**/devices/**/inventory', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(inventorySnapshot) }));
+  await page.route('**/devices/**/enrollment-target', route => route.fulfill({ status: state.status, contentType: 'application/json', body: JSON.stringify(state.body) }));
+  await page.goto('/#/device?environment=east&id=east-Computer-Alpha');
+  await page.getByRole('tab', { name: locale === 'zh-TW' ? '盤點' : 'Inventory', exact: true }).click();
+}
+
+test('registration readiness is shown inside the platform and refreshed without retaining stale eligibility', async ({ page }, info) => {
+  const state = { status: 200, body: { status: 'Eligible', queriedAt: asOf } as unknown };
+  await openEnrollmentReadiness(page, state);
+  const panel = page.getByRole('region', { name: 'Agent registration readiness' });
+  await expect(panel).toContainText('The device mapping is ready for a registration proposal.');
+  await expect(panel).toContainText('does not issue an enrollment token');
+  await page.screenshot({ path: `test-results/screenshots/${info.project.name}-enrollment-readiness.png`, fullPage: true });
+  state.status = 503; state.body = { title: 'EnrollmentTargetUnavailable' };
+  let release!: () => void; const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/devices/**/enrollment-target', async route => {
+    await pending; await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify(state.body) });
+  });
+  await panel.getByRole('button', { name: 'Check registration readiness' }).click();
+  await expect(panel).toContainText('Checking registration readiness…');
+  await expect(panel.getByRole('button')).toBeDisabled();
+  await expect(panel).not.toContainText('The device mapping is ready'); release();
+  await expect(panel).toContainText('Registration readiness is unavailable.');
+  await expect(panel).not.toContainText('The device mapping is ready');
+  await expect(panel.getByRole('button')).toHaveCount(1);
+});
+
+test('registration readiness distinguishes mapping required and rechecks the current result', async ({ page }) => {
+  const state = { status: 200, body: { status: 'MappingRequired', queriedAt: asOf } };
+  await openEnrollmentReadiness(page, state);
+  const panel = page.getByRole('region', { name: 'Agent registration readiness' });
+  await expect(panel).toContainText('An active device mapping is required');
+  state.body = { status: 'Eligible', queriedAt: asOf };
+  await panel.getByRole('button', { name: 'Check registration readiness' }).click();
+  await expect(panel).toContainText('The device mapping is ready');
+  await expect(panel).not.toContainText('An active device mapping is required');
+});
+
+test('registration controls stay hidden when the current object is not authorized', async ({ page }) => {
+  await openEnrollmentReadiness(page, { status: 404, body: { title: 'NotFound' } });
+  await expect(page.getByRole('tabpanel')).toContainText('synthetic-client');
+  await expect(page.getByRole('region', { name: 'Agent registration readiness' })).toHaveCount(0);
+});
+
+test('malformed registration readiness is never presented as eligible', async ({ page }) => {
+  await openEnrollmentReadiness(page, { status: 200, body: { status: 'AlreadyRegistered', queriedAt: 'not-a-date' } });
+  const panel = page.getByRole('region', { name: 'Agent registration readiness' });
+  await expect(panel).toContainText('Registration readiness is unavailable.');
+  await expect(panel).not.toContainText('The device mapping is ready');
+});
+
+test('registration readiness follows the selected platform language', async ({ page }) => {
+  await openEnrollmentReadiness(page, { status: 200, body: { status: 'Eligible', queriedAt: asOf } }, 'zh-TW');
+  const panel = page.getByRole('region', { name: 'Agent 註冊準備狀態' });
+  await expect(panel).toContainText('設備對應已就緒，可供準備註冊申請。');
+  await expect(panel.getByRole('button', { name: '重新檢查註冊準備狀態' })).toBeVisible();
+});
+
+test('a late registration readiness response cannot mark a different device eligible', async ({ page }) => {
+  await mock(page, { searches: [] }); let release!: () => void; let waiting = false;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/devices/**/inventory', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(inventorySnapshot) }));
+  await page.route('**/devices/**/enrollment-target', async route => {
+    const old = route.request().url().includes('Alpha');
+    if (old) { waiting = true; await pending; }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ status: old ? 'Eligible' : 'MappingRequired', queriedAt: asOf }) }).catch(() => {});
+  });
+  await page.goto('/#/device?environment=east&id=east-Computer-Alpha');
+  await page.getByRole('tab', { name: 'Inventory', exact: true }).click(); await expect.poll(() => waiting).toBe(true);
+  await page.evaluate(() => { location.hash = '#/device?environment=east&id=east-Computer-Beta'; });
+  await expect(page.getByRole('heading', { name: 'east Computer Beta', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Inventory', exact: true }).click();
+  const panel = page.getByRole('region', { name: 'Agent registration readiness' });
+  await expect(panel).toContainText('An active device mapping is required'); release();
+  await expect(panel).not.toContainText('The device mapping is ready');
+  await expect(panel).toContainText('An active device mapping is required');
+});
 
 test('platform inventory displays typed sources and filters paginated software', async ({ page }, info) => {
   await openInventory(page, inventorySnapshot); const panel = page.getByRole('tabpanel');

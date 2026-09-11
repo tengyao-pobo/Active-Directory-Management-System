@@ -510,5 +510,13 @@
   "filters.currentAccess": "Each query uses your current permissions and the latest directory snapshot.",
   "filters.changed": "This saved filter changed elsewhere. Refresh the saved filter list before running its new definition.",
   "nav.filters": "Saved filters",
-  "filters.cancel": "Cancel"
+  "filters.cancel": "Cancel",
+  "enrollment.title": "Agent registration readiness",
+  "enrollment.eligible": "The device mapping is ready for a registration proposal.",
+  "enrollment.mappingRequired": "An active device mapping is required before a registration proposal can be prepared.",
+  "enrollment.readinessOnly": "This check does not issue an enrollment token or register the device. A registration proposal still requires a fresh check and approval.",
+  "enrollment.unavailable": "Registration readiness is unavailable. Try again later.",
+  "enrollment.queriedAt": "Checked: {time}",
+  "enrollment.refresh": "Check registration readiness",
+  "enrollment.checking": "Checking registration readiness…"
 }

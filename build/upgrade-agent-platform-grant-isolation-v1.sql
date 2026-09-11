@@ -1,5 +1,7 @@
 \set ON_ERROR_STOP on
 BEGIN;
+SELECT 1/pg_catalog.count(*) AS capability_isolation_v2_absent FROM (SELECT 1 WHERE
+ pg_catalog.to_regprocedure('agent_private.agent_capability_isolation_profile()') IS NULL) checked;
 -- Apply to an existing projection v2 store before installing platform grants.
 SELECT 1/pg_catalog.count(*) AS expected_roles_are_safe FROM (SELECT 1 WHERE
  :'agent_table_owner_role'<>:'agent_enrollment_definer_role' AND

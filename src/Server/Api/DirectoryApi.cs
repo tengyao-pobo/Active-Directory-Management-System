@@ -87,11 +87,13 @@ public static class DirectoryApi
 
     internal static async Task<IQueryable<DirectoryObjectRecord>> Scoped(ConsoleDbContext db, Guid env, Guid actor, string permission, Guid generation, CancellationToken ct)
     {
+        var ownerOnly = PermissionCatalog.IsOwnerOnly(permission);
         var grants = await (from assignment in db.Assignments
             join role in db.Roles on new { assignment.EnvironmentId, Id = assignment.RoleId } equals new { role.EnvironmentId, role.Id }
             join p in db.RolePermissions on new { role.EnvironmentId, RoleId = role.Id } equals new { p.EnvironmentId, p.RoleId }
             join scope in db.Scopes on new { assignment.EnvironmentId, Id = assignment.ScopeId } equals new { scope.EnvironmentId, scope.Id }
-            where assignment.EnvironmentId == env && assignment.PrincipalId == actor && p.Permission == permission
+            where assignment.EnvironmentId == env && assignment.PrincipalId == actor && p.Permission == permission &&
+                (!ownerOnly || role.BuiltInKind == BuiltInRoleKinds.Owner)
             select scope).ToListAsync(ct);
         var all = grants.Any(s => s.Kind == ScopeKind.All && s.Value is null);
         var departments = grants.Where(s => s.Kind == ScopeKind.Department && !string.IsNullOrEmpty(s.Value)).Select(s => s.Value!).ToArray();

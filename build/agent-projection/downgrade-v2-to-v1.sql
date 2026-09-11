@@ -1,5 +1,7 @@
 \set ON_ERROR_STOP on
 BEGIN;
+SELECT 1/pg_catalog.count(*) AS capability_isolation_v2_absent FROM (SELECT 1 WHERE
+ pg_catalog.to_regprocedure('agent_private.agent_capability_isolation_profile()') IS NULL) checked;
 
 -- The historical v1 audit cannot validate the platform-grant isolation capability.
 -- Preserve v1 artifacts and reject this downgrade before any mutation while it is installed.
