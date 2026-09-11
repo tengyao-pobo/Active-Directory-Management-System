@@ -342,6 +342,87 @@ public sealed class LdapDirectoryReaderTests
         MaxPages = 20,
     };
 
+    [Fact]
+    public async Task Target_read_binds_domain_and_both_source_checks_without_paging()
+    {
+        var id = Guid.NewGuid(); var transport = new FakeTransport { Targets = [Entry(id)] };
+        var target = await Reader(transport).ReadUserAsync(id, default);
+        Assert.Equal(id, target.Entry.ObjectId); Assert.Equal(DomainId, target.VerifiedDomainId);
+        Assert.Equal(FakeTransport.Source, target.Source); Assert.Equal(2, transport.IdentityCalls);
+        Assert.Equal(0, transport.PageCalls); Assert.False(target.Entry.ProtectionKnown);
+        Assert.True(target.ReadStartedAt <= target.ReadCompletedAt);
+    }
+    [Theory] [InlineData(0)] [InlineData(1)] [InlineData(2)] [InlineData(3)]
+    public async Task Any_source_identity_change_rejects_target(int field)
+    {
+        var original=FakeTransport.Source;
+        var changed=field switch { 0=>original with { DnsHostName="dc02.example.com" }, 1=>original with { ServiceDn="CN=Other" },
+            2=>original with { DsaObjectId=Guid.NewGuid() }, _=>original with { InvocationId=Guid.NewGuid() } };
+        var id=Guid.NewGuid(); var transport=new FakeTransport { Targets=[Entry(id)], Sources=new([original,changed]) };
+        var error=await Assert.ThrowsAsync<DirectoryReadException>(()=>Reader(transport).ReadUserAsync(id,default));
+        Assert.Equal(DirectoryReadErrorCode.DomainIdentityMismatch,error.Code);
+    }
+    [Fact]
+    public async Task Wrong_domain_or_missing_invocation_stops_before_target_search()
+    {
+        var id=Guid.NewGuid();
+        foreach(var transport in new[] { new FakeTransport { BaseObjectId=Guid.NewGuid() },
+            new FakeTransport { Sources=new([FakeTransport.Source with { InvocationId=Guid.Empty }]) } })
+        {
+            await Assert.ThrowsAsync<DirectoryReadException>(()=>Reader(transport).ReadUserAsync(id,default));
+            Assert.Equal(0,transport.TargetCalls);
+        }
+    }
+    [Theory] [InlineData(0)] [InlineData(2)] [InlineData(3)] [InlineData(4)]
+    public async Task Missing_duplicate_wrong_guid_or_kind_is_rejected(int scenario)
+    {
+        var id=Guid.NewGuid(); var entry=Entry(id);
+        DirectoryRawEntry[] entries=scenario switch { 0=>[], 2=>[entry,entry], 3=>[Entry(Guid.NewGuid())], _=>[Entry(id,"computer")] };
+        await Assert.ThrowsAsync<DirectoryReadException>(()=>Reader(new FakeTransport { Targets=entries }).ReadUserAsync(id,default));
+    }
+    [Fact]
+    public async Task Target_deadline_and_caller_cancellation_are_distinct()
+    {
+        var transport=new FakeTransport { TargetDelay=TimeSpan.FromSeconds(2) };
+        var reader=new LdapDirectoryReader(ValidOptions() with { TargetReadTimeout=TimeSpan.FromMilliseconds(10) },new FakeTransportFactory(transport));
+        var error=await Assert.ThrowsAsync<DirectoryReadException>(()=>reader.ReadUserAsync(Guid.NewGuid(),default));
+        Assert.Equal(DirectoryReadErrorCode.Timeout,error.Code);
+        using var cancellation=new CancellationTokenSource(); cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>Reader(new FakeTransport()).ReadUserAsync(Guid.NewGuid(),cancellation.Token));
+    }
+    [Fact]
+    public void Guid_query_is_binary_escaped_bounded_and_has_no_paging_or_arbitrary_attributes()
+    {
+        var id=Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");
+        var request=ProtocolsDirectoryTransport.UserRequest("DC=example,DC=com",id);
+        Assert.Equal("(&(objectCategory=person)(objectClass=user)(!(objectClass=computer))(objectGUID=\\33\\22\\11\\00\\55\\44\\77\\66\\88\\99\\aa\\bb\\cc\\dd\\ee\\ff))",request.Filter);
+        Assert.Equal(2,request.SizeLimit); Assert.Empty(request.Controls);
+        Assert.Equal(System.DirectoryServices.Protocols.SearchScope.Subtree,request.Scope);
+        Assert.DoesNotContain("unicodePwd",request.Attributes.Cast<string>());
+        Assert.Contains("userAccountControl",request.Attributes.Cast<string>());
+        Assert.NotEqual(ValidOptions().ComputeConfigurationHash(),(ValidOptions() with { TargetReadTimeout=TimeSpan.FromSeconds(10) }).ComputeConfigurationHash());
+    }
+
+    [Fact]
+    public async Task Out_of_naming_context_and_malformed_target_are_rejected()
+    {
+        var id=Guid.NewGuid(); var entry=Entry(id);
+        var dn="CN=Outside,DC=other,DC=com";
+        var attributes=new Dictionary<string,IReadOnlyList<object>>(entry.Attributes) { ["distinguishedName"]=[dn] };
+        await Assert.ThrowsAsync<DirectoryReadException>(()=>Reader(new FakeTransport { Targets=[entry with { DistinguishedName=dn,Attributes=attributes }] }).ReadUserAsync(id,default));
+        attributes=new Dictionary<string,IReadOnlyList<object>>(entry.Attributes) { ["uSNChanged"]=["-1"] };
+        await Assert.ThrowsAsync<DirectoryReadException>(()=>Reader(new FakeTransport { Targets=[entry with { Attributes=attributes }] }).ReadUserAsync(id,default));
+    }
+    [Fact]
+    public async Task Invalid_target_or_timeout_configuration_never_opens_transport()
+    {
+        var transport=new FakeTransport();
+        await Assert.ThrowsAsync<DirectoryReadException>(()=>Reader(transport).ReadUserAsync(Guid.Empty,default));
+        var reader=new LdapDirectoryReader(ValidOptions() with { TargetReadTimeout=TimeSpan.FromSeconds(61) },new FakeTransportFactory(transport));
+        await Assert.ThrowsAsync<DirectoryReadException>(()=>reader.ReadUserAsync(Guid.NewGuid(),default));
+        Assert.Equal(0,transport.RootDseCalls);
+    }
+
     private static DirectoryRawEntry Entry(Guid objectId, string objectClass = "user")
     {
         var sid = new byte[] { 1, 2, 0, 0, 0, 0, 0, 5, 21, 0, 0, 0, 232, 3, 0, 0 };
@@ -365,8 +446,17 @@ public sealed class LdapDirectoryReaderTests
         public IDirectoryTransport Create(DirectoryConnectorOptions options) => transport;
     }
 
-    private sealed class FakeTransport : IDirectoryTransport
+    private sealed class FakeTransport : IDirectoryTargetTransport
     {
+        public static readonly DirectorySourceIdentity Source = new("dc01.example.com", "CN=NTDS Settings,CN=DC01,CN=Configuration,DC=example,DC=com", Guid.NewGuid(), Guid.NewGuid());
+        public Queue<DirectorySourceIdentity> Sources { get; init; } = new([Source, Source]);
+        public IReadOnlyList<DirectoryRawEntry> Targets { get; init; } = [];
+        public int TargetCalls { get; private set; }
+        public int IdentityCalls { get; private set; }
+        public TimeSpan TargetDelay { get; init; }
+        public Task<DirectorySourceIdentity> ReadSourceIdentityAsync(CancellationToken ct) { IdentityCalls++; return Task.FromResult(Sources.Dequeue()); }
+        public async Task<IReadOnlyList<DirectoryRawEntry>> ReadUserAsync(string baseDn, Guid id, CancellationToken ct)
+        { TargetCalls++; if (TargetDelay > TimeSpan.Zero) await Task.Delay(TargetDelay, ct); return Targets; }
         public RootDseResult RootDse { get; init; } = new(["DC=example,DC=com"]);
 
         public Guid BaseObjectId { get; init; } = DomainId;

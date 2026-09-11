@@ -33,3 +33,5 @@ React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核�
 - [AD 部門提案預覽與限制](docs/deployment/ad-proposals.md)
 
 - [AD 證據模型與隔離驗證](docs/deployment/ad-evidence.md)
+
+- [單一 AD 目標重讀與判定服務接點](docs/deployment/ad-target-read.md)

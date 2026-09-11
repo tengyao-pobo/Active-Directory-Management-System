@@ -14,6 +14,12 @@ internal interface IDirectoryTransportFactory
     IDirectoryTransport Create(DirectoryConnectorOptions options);
 }
 
+internal interface IDirectoryTargetTransport : IDirectoryTransport
+{
+    Task<DirectorySourceIdentity> ReadSourceIdentityAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<DirectoryRawEntry>> ReadUserAsync(string baseDn, Guid objectId, CancellationToken cancellationToken);
+}
+
 internal sealed record RootDseResult(IReadOnlyList<string> NamingContexts);
 
 internal sealed record DirectoryPage(IReadOnlyList<DirectoryRawEntry> Entries, byte[] Cookie);

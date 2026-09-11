@@ -8,9 +8,10 @@ public sealed record DirectoryConnectorOptions
         Validate();
         var payload = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new
         {
-            Version = 1, Host = Host.ToLowerInvariant(), BaseDn, ExpectedDomainId,
+            Version = 2, Host = Host.ToLowerInvariant(), BaseDn, ExpectedDomainId,
             PageSize, MaxEntries, MaxPages, RequestTimeoutTicks = RequestTimeout.Ticks,
             SnapshotTimeoutTicks = SnapshotTimeout.Ticks,
+            TargetReadVersion = 1, TargetReadTimeoutTicks = TargetReadTimeout.Ticks,
             Transport = "LDAPS:636;Negotiate;NoReferrals;PlatformCertificateValidation"
         });
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload));
@@ -31,6 +32,7 @@ public sealed record DirectoryConnectorOptions
     public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     public TimeSpan SnapshotTimeout { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan TargetReadTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     internal void Validate()
     {
@@ -52,7 +54,8 @@ public sealed record DirectoryConnectorOptions
             || RequestTimeout > TimeSpan.FromMinutes(1)
             || SnapshotTimeout <= TimeSpan.Zero
             || SnapshotTimeout > TimeSpan.FromMinutes(5)
-            || SnapshotTimeout < RequestTimeout)
+            || SnapshotTimeout < RequestTimeout
+            || TargetReadTimeout <= TimeSpan.Zero || TargetReadTimeout > TimeSpan.FromMinutes(1))
         {
             throw new DirectoryReadException(DirectoryReadErrorCode.InvalidConfiguration);
         }
