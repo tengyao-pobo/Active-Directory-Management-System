@@ -2,6 +2,20 @@ namespace ItManagement.DirectoryConnector;
 
 public sealed record DirectoryConnectorOptions
 {
+    // Identity of the effective read configuration, not a signature or authorization token.
+    public string ComputeConfigurationHash()
+    {
+        Validate();
+        var payload = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            Version = 1, Host = Host.ToLowerInvariant(), BaseDn, ExpectedDomainId,
+            PageSize, MaxEntries, MaxPages, RequestTimeoutTicks = RequestTimeout.Ticks,
+            SnapshotTimeoutTicks = SnapshotTimeout.Ticks,
+            Transport = "LDAPS:636;Negotiate;NoReferrals;PlatformCertificateValidation"
+        });
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload));
+    }
+
     public required string Host { get; init; }
 
     public required string BaseDn { get; init; }

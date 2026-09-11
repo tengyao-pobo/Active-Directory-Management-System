@@ -22,6 +22,7 @@ public sealed class LdapDirectoryReader : IDirectoryReader
     public async Task<DirectorySnapshot> ReadSnapshotAsync(CancellationToken cancellationToken)
     {
         options.Validate();
+        var readStartedAt = DateTimeOffset.UtcNow;
         using var snapshotCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         snapshotCancellation.CancelAfter(options.SnapshotTimeout);
         var snapshotToken = snapshotCancellation.Token;
@@ -43,7 +44,12 @@ public sealed class LdapDirectoryReader : IDirectoryReader
                 options.Host,
                 options.BaseDn,
                 DateTimeOffset.UtcNow,
-                entries.AsReadOnly());
+                entries.AsReadOnly())
+            {
+                VerifiedDomainId = domainId,
+                ConfigurationHash = options.ComputeConfigurationHash(),
+                ReadStartedAt = readStartedAt
+            };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -154,12 +160,25 @@ public sealed class LdapDirectoryReader : IDirectoryReader
                 RequiredLong(entry, "uSNChanged"),
                 IsProtected: false,
                 ProtectionKnown: false,
-                DistinguishedName.GetParent(distinguishedName));
+                DistinguishedName.GetParent(distinguishedName))
+            {
+                Enabled = ReadEnabled(entry)
+            };
         }
         catch (Exception exception) when (exception is FormatException or InvalidCastException or OverflowException)
         {
             throw new DirectoryReadException(DirectoryReadErrorCode.InvalidResponse);
         }
+    }
+
+    private static bool? ReadEnabled(DirectoryRawEntry entry)
+    {
+        if (GetKind(entry) is not (DirectoryObjectKind.User or DirectoryObjectKind.Computer)) return null;
+        var values = Values(entry, "userAccountControl");
+        if (values.Count == 0) return null;
+        if (values.Count != 1 || values[0] is not string text ||
+            !uint.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var flags)) throw new FormatException();
+        return (flags & 0x0002) == 0;
     }
 
     private static DirectoryObjectKind GetKind(DirectoryRawEntry entry)

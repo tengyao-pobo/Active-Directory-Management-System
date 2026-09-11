@@ -263,6 +263,73 @@ public sealed class LdapDirectoryReaderTests
             ValidOptions() with { MaxEntries = maxEntries },
             new FakeTransportFactory(transport));
 
+    [Fact]
+    public async Task Snapshot_retains_verified_domain_configuration_and_full_read_window()
+    {
+        var transport = new FakeTransport { RootDseDelay = TimeSpan.FromMilliseconds(30) };
+        var before = DateTimeOffset.UtcNow;
+        var snapshot = await Reader(transport).ReadSnapshotAsync(CancellationToken.None);
+        Assert.Equal(DomainId, snapshot.VerifiedDomainId);
+        Assert.Equal(ValidOptions().ComputeConfigurationHash(), snapshot.ConfigurationHash);
+        Assert.InRange(snapshot.ReadStartedAt!.Value, before, snapshot.CapturedAt);
+        Assert.True(snapshot.CapturedAt - snapshot.ReadStartedAt >= TimeSpan.FromMilliseconds(20));
+    }
+
+    [Theory]
+    [InlineData("512", true)] [InlineData("514", false)] [InlineData("66048", true)] [InlineData("66050", false)]
+    public async Task Enabled_state_preserves_the_disable_flag(string flags, bool enabled)
+    {
+        var entry = Entry(Guid.NewGuid());
+        var attributes = new Dictionary<string, IReadOnlyList<object>>(entry.Attributes) { ["userAccountControl"] = [flags] };
+        var transport = new FakeTransport { Pages = new([new DirectoryPage([entry with { Attributes = attributes }], [])]) };
+        var row = Assert.Single((await Reader(transport).ReadSnapshotAsync(CancellationToken.None)).Entries);
+        Assert.Equal(enabled, row.Enabled); Assert.False(row.ProtectionKnown);
+    }
+
+    [Fact]
+    public async Task Missing_enabled_state_stays_unknown()
+    {
+        var transport = new FakeTransport { Pages = new([new DirectoryPage([Entry(Guid.NewGuid())], [])]) };
+        Assert.Null(Assert.Single((await Reader(transport).ReadSnapshotAsync(CancellationToken.None)).Entries).Enabled);
+    }
+
+    [Theory]
+    [InlineData("-1")] [InlineData("4294967296")] [InlineData("garbage")] [InlineData(" 512")]
+    public async Task Invalid_account_flags_reject_the_whole_snapshot(string flags)
+    {
+        var entry = Entry(Guid.NewGuid());
+        var attributes = new Dictionary<string, IReadOnlyList<object>>(entry.Attributes) { ["userAccountControl"] = [flags] };
+        var transport = new FakeTransport { Pages = new([new DirectoryPage([entry with { Attributes = attributes }], [])]) };
+        var error = await Assert.ThrowsAsync<DirectoryReadException>(() => Reader(transport).ReadSnapshotAsync(CancellationToken.None));
+        Assert.Equal(DirectoryReadErrorCode.InvalidResponse, error.Code);
+    }
+
+    [Fact]
+    public void Configuration_digest_changes_with_every_effective_setting()
+    {
+        var options = ValidOptions(); var hash = options.ComputeConfigurationHash();
+        Assert.Equal(hash, (options with { Host = options.Host.ToUpperInvariant() }).ComputeConfigurationHash());
+        foreach (var changed in new[] { options with { Host = "dc02.example.com" }, options with { BaseDn = "DC=other,DC=com" },
+            options with { ExpectedDomainId = Guid.NewGuid() }, options with { PageSize = 11 }, options with { MaxPages = 21 },
+            options with { MaxEntries = 101 }, options with { RequestTimeout = TimeSpan.FromSeconds(6) }, options with { SnapshotTimeout = TimeSpan.FromSeconds(31) } })
+            Assert.NotEqual(hash, changed.ComputeConfigurationHash());
+        Assert.Throws<DirectoryReadException>(() => (options with { Host = "invalid" }).ComputeConfigurationHash());
+    }
+
+    [Fact]
+    public async Task Multiple_account_flags_are_rejected_and_non_accounts_remain_unknown()
+    {
+        var entry = Entry(Guid.NewGuid());
+        var attributes = new Dictionary<string, IReadOnlyList<object>>(entry.Attributes) { ["userAccountControl"] = ["512", "514"] };
+        var transport = new FakeTransport { Pages = new([new DirectoryPage([entry with { Attributes = attributes }], [])]) };
+        var error = await Assert.ThrowsAsync<DirectoryReadException>(() => Reader(transport).ReadSnapshotAsync(CancellationToken.None));
+        Assert.Equal(DirectoryReadErrorCode.InvalidResponse, error.Code);
+        var group = Entry(Guid.NewGuid(), "group");
+        attributes = new Dictionary<string, IReadOnlyList<object>>(group.Attributes) { ["userAccountControl"] = ["512"] };
+        transport = new FakeTransport { Pages = new([new DirectoryPage([group with { Attributes = attributes }], [])]) };
+        Assert.Null(Assert.Single((await Reader(transport).ReadSnapshotAsync(CancellationToken.None)).Entries).Enabled);
+    }
+
     private static DirectoryConnectorOptions ValidOptions() => new()
     {
         Host = "dc01.example.com",

@@ -34,7 +34,7 @@ public static class DirectoryChangePlanner
             preview.Before with { ObservedAt = current.ObservedAt } == current;
     }
 
-    private static void Validate(DirectoryChangeEvidence item, DateTimeOffset now)
+    internal static void Validate(DirectoryChangeEvidence item, DateTimeOffset now)
     {
         if (item.EnvironmentId == Guid.Empty || item.DomainId == Guid.Empty || item.ObjectId == Guid.Empty || item.ObjectKind != "User" ||
             string.IsNullOrWhiteSpace(item.DistinguishedName) || item.DistinguishedName.Length > 4096 || item.UsnChanged < 0 ||

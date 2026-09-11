@@ -19,13 +19,23 @@ public sealed record DirectoryEntrySnapshot(
     long UsnChanged,
     bool IsProtected,
     bool ProtectionKnown,
-    string? ParentDn);
+    string? ParentDn)
+{
+    // Missing attribute is unknown, never implicitly enabled.
+    public bool? Enabled { get; init; }
+}
 
 public sealed record DirectorySnapshot(
     string SourceServer,
     string NamingContext,
     DateTimeOffset CapturedAt,
-    IReadOnlyList<DirectoryEntrySnapshot> Entries);
+    IReadOnlyList<DirectoryEntrySnapshot> Entries)
+{
+    public Guid? VerifiedDomainId { get; init; }
+    public string? ConfigurationHash { get; init; }
+    // CapturedAt is completion time; the oldest observation may date from ReadStartedAt.
+    public DateTimeOffset? ReadStartedAt { get; init; }
+}
 
 public interface IDirectoryReader
 {
