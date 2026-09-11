@@ -28,10 +28,19 @@ public sealed class AgentRunLoopTests
         using var cancellation = new CancellationTokenSource();
         var runTask = CreateRuntime(spool, transport).RunAsync(cancellation.Token);
 
-        await secondSend.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.DoesNotContain(await spool.ReadPendingAsync(), item => item.Sequence == queued.Sequence);
-        cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runTask);
+        try
+        {
+            await secondSend.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.DoesNotContain(await spool.ReadPendingAsync(), item => item.Sequence == queued.Sequence);
+        }
+        finally
+        {
+            // Even a failed assertion/slow CI runner must finish the writer before disposing its spool.
+            cancellation.Cancel();
+            try { await runTask; }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        }
+        Assert.True(runTask.IsCanceled);
     }
 
     [Fact]
