@@ -4,6 +4,7 @@ import { useI18n } from './i18n';
 import './directory.css';
 import DeviceTabs from './DeviceTabs';
 import DeviceUserPanel from './DeviceUserPanel';
+import DirectoryProposal from './DirectoryProposal';
 
 export type DirectoryKind = 'User' | 'Group' | 'Computer' | 'OrganizationalUnit';
 
@@ -300,7 +301,7 @@ function DirectoryViewContent({ kind, environmentId, initialSearch }: DirectoryV
                 })()}
                 {!detailLoading && detail?.kind === 'Computer' && <><a className="device-open-link" href={`#/device?environment=${encodeURIComponent(environmentId)}&id=${encodeURIComponent(detail.id)}`}>{t('device.open')}</a><DeviceTabs key={`${environmentId}:${detail.id}`} environmentId={environmentId} id={detail.id} ad={<DetailFields item={detail} asOf={formattedDate(detailAsOf)} t={t} />} /></>}
                 {!detailLoading && detail && detail.kind !== 'Computer' && <DetailFields item={detail} asOf={formattedDate(detailAsOf)} t={t} />}
-                {!detailLoading && detail?.kind === 'User' && <DeviceUserPanel key={`links:${environmentId}:${detail.id}`} environmentId={environmentId} id={detail.id} kind="User" />}
+                {!detailLoading && detail?.kind === 'User' && <><DirectoryProposal key={`proposal:${environmentId}:${detail.id}`} environmentId={environmentId} id={detail.id} /><DeviceUserPanel key={`links:${environmentId}:${detail.id}`} environmentId={environmentId} id={detail.id} kind="User" /></>}
               </aside>
             )}
           </div>

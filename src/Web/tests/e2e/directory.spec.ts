@@ -268,3 +268,54 @@ test('mismatched deep link does not fetch a device and late audit response is di
   await page.goto('/#/device?environment=west&id=other'); release?.();
   await expect(page.getByRole('alert')).toContainText('Select the environment'); await expect(page.getByText('old-audit-canary')).toHaveCount(0);
 });
+
+test('department proposal uses CSRF and never enables approval', async ({ page }, info) => {
+  await mock(page, { searches: [] });
+  const writes: string[] = [];
+  page.on('request', request => { if (request.method() === 'POST') writes.push(new URL(request.url()).pathname); });
+  await page.route('**/session/csrf', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ token: 'proposal-csrf' }) }));
+  await page.route('**/directory/users/*/proposal', async route => {
+    expect(route.request().headers()['x-csrf-token']).toBe('proposal-csrf');
+    expect(route.request().postDataJSON()).toEqual({ kind: 'SetUserDepartment', department: 'Finance' });
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ environmentId: 'east', target: object('east', 'User'), kind: 'SetUserDepartment', before: 'Operations', after: 'Finance', asOf: new Date().toISOString(), snapshotValidUntil: new Date(Date.now()+60000).toISOString(), approvalAvailable: false, executionAvailable: false, blockers: ['ProtectionClassificationUnavailable','ApprovalWorkflowUnavailable','DirectoryWritesNotConfigured'] }) });
+  });
+  await page.goto('/#/users'); await page.getByRole('button', { name: /east User Alpha/ }).click();
+  await page.getByLabel('Proposed department', { exact: true }).fill('Finance');
+  await page.getByRole('button', { name: 'Preview proposal', exact: true }).click();
+  const review=page.getByRole('region', {name:'Review proposal'});
+  await expect(review).toContainText('Operations'); await expect(review).toContainText('Finance'); await expect(review).toContainText('CN=Alpha');
+  await expect(page.getByRole('button',{name:'Approval unavailable',exact:true})).toBeDisabled();
+  await page.screenshot({path:`test-results/screenshots/${info.project.name}-proposal.png`,fullPage:true});
+  await page.getByLabel('Proposed department', {exact:true}).fill('Legal'); await expect(review).toHaveCount(0);
+  expect(writes).toEqual(['/api/v1/environments/east/directory/users/east-User-Alpha/proposal']);
+});
+
+test('proposal denial never leaves a comparison', async ({page}) => {
+  await mock(page,{searches:[]});
+  await page.route('**/session/csrf',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({token:'csrf'})}));
+  await page.route('**/directory/users/*/proposal',route=>route.fulfill({status:404,contentType:'application/json',body:'{}'}));
+  await page.goto('/#/users'); await page.getByRole('button',{name:/east User Alpha/}).click();
+  await page.getByLabel('Proposed department',{exact:true}).fill('Finance'); await page.getByRole('button',{name:'Preview proposal',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('Preview unavailable');
+  await expect(page.getByRole('region',{name:'Review proposal'})).toHaveCount(0);
+});
+
+test('expired and late proposals are discarded', async ({page}) => {
+  await mock(page,{searches:[]});
+  await page.route('**/session/csrf',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({token:'csrf'})}));
+  let release: (()=>void)|undefined;
+  let late=false;
+  await page.route('**/directory/users/*/proposal',async route=>{
+    if(late) await new Promise<void>(resolve=>{release=resolve;});
+    await route.fulfill({contentType:'application/json',body:JSON.stringify({environmentId:'east',target:object('east','User'),kind:'SetUserDepartment',before:'Operations',after:'late-secret-canary',asOf:new Date().toISOString(),snapshotValidUntil:new Date(Date.now()+(late?60000:-1000)).toISOString(),blockers:[]})});
+  });
+  await page.goto('/#/users'); await page.getByRole('button',{name:/east User Alpha/}).click();
+  await page.getByLabel('Proposed department',{exact:true}).fill('Finance'); await page.getByRole('button',{name:'Preview proposal',exact:true}).click();
+  await expect(page.getByText('The snapshot expired. Generate a new preview.')).toBeVisible();
+  late=true; await page.getByRole('button',{name:'Preview proposal',exact:true}).click();
+  await expect.poll(()=>Boolean(release)).toBe(true);
+  if (await page.getByRole('button',{name:'Open menu',exact:true}).isVisible()) await page.getByRole('button',{name:'Open menu',exact:true}).click();
+  await page.getByRole('button',{name:'Groups',exact:true}).click(); release!();
+  await expect(page.getByRole('heading',{name:'Groups',exact:true})).toBeVisible();
+  await expect(page.getByText('late-secret-canary')).toHaveCount(0);
+});
