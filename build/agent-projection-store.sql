@@ -328,6 +328,8 @@ EXCEPTION
 END;
 $function$;
 
+GRANT EXECUTE ON FUNCTION agent_private.platform_grant_role_is_unbound(name) TO :"agent_projection_definer_role";
+
 CREATE OR REPLACE FUNCTION agent_private.audit_projection_privileges(p_expected_environment_id uuid,p_expected_table_owner name,p_expected_function_owner name)
 RETURNS TABLE(is_valid boolean,diagnostic_code text,profile_version smallint)
 LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,agent_private,pg_temp AS $function$
@@ -355,6 +357,36 @@ expected_columns(relname,attname,privilege_type,is_grantable) AS(VALUES
   NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership,login WHERE membership.member=login.oid OR membership.roleid=login.oid) AND
   NOT EXISTS(SELECT 1 FROM pg_catalog.pg_database database,login WHERE database.datdba=login.oid) AND
   NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function,schema_info,login WHERE function.pronamespace=schema_info.oid AND function.proowner=login.oid) AND
+  agent_private.platform_grant_role_is_unbound(SESSION_USER::name) AND
+  agent_private.platform_grant_role_is_unbound(p_expected_function_owner) AND
+  agent_private.platform_grant_role_is_unbound(p_expected_table_owner) AND
+   (COALESCE((SELECT
+    helper.proowner=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=p_expected_table_owner) AND
+    helper.proowner=namespace.nspowner AND helper.prosecdef AND helper.prokind='f' AND
+    NOT helper.proretset AND helper.prorettype='boolean'::pg_catalog.regtype AND
+    helper.proargnames=ARRAY['p_role']::text[] AND
+    helper.proconfig=ARRAY['search_path=pg_catalog, agent_private, pg_temp']::text[] AND
+    NOT EXISTS(
+      SELECT 1 FROM pg_catalog.aclexplode(COALESCE(helper.proacl,pg_catalog.acldefault('f',helper.proowner))) acl
+      LEFT JOIN pg_catalog.pg_roles grantee ON grantee.oid=acl.grantee
+      WHERE acl.privilege_type<>'EXECUTE' OR grantee.oid IS NULL OR
+        (acl.grantee<>helper.proowner AND acl.is_grantable) OR
+        grantee.rolcanlogin OR grantee.rolsuper OR grantee.rolbypassrls OR grantee.rolcreatedb OR
+        grantee.rolcreaterole OR grantee.rolinherit OR grantee.rolreplication OR
+        EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members member WHERE member.member=grantee.oid OR member.roleid=grantee.oid) OR
+        acl.grantee NOT IN(
+          SELECT helper.proowner UNION SELECT audit.proowner FROM pg_catalog.pg_proc audit
+          WHERE audit.oid IN(pg_catalog.to_regprocedure('agent_private.audit_enrollment_privileges(name,name,text)'),
+                            pg_catalog.to_regprocedure('agent_private.audit_projection_privileges(uuid,name,name)')))) AND
+    NOT EXISTS(
+      SELECT 1 FROM(
+        SELECT helper.proowner AS oid UNION SELECT audit.proowner FROM pg_catalog.pg_proc audit
+        WHERE audit.oid IN(pg_catalog.to_regprocedure('agent_private.audit_enrollment_privileges(name,name,text)'),
+                          pg_catalog.to_regprocedure('agent_private.audit_projection_privileges(uuid,name,name)'))) expected
+      WHERE NOT EXISTS(SELECT 1 FROM pg_catalog.aclexplode(COALESCE(helper.proacl,pg_catalog.acldefault('f',helper.proowner))) acl
+                       WHERE acl.grantee=expected.oid AND acl.privilege_type='EXECUTE'))
+    FROM pg_catalog.pg_proc helper JOIN pg_catalog.pg_namespace namespace ON namespace.oid=helper.pronamespace
+    WHERE helper.oid=pg_catalog.to_regprocedure('agent_private.platform_grant_role_is_unbound(name)')),false)) AND
   NOT EXISTS(SELECT 1 FROM agent_private.agent_database_bindings binding WHERE binding.login_role=SESSION_USER::name) AND
   NOT EXISTS(SELECT 1 FROM agent_private.enrollment_database_bindings binding WHERE binding.login_role=SESSION_USER::name) AND
   (SELECT pg_catalog.count(*)=1 FROM agent_private.agent_projection_database_bindings binding WHERE binding.login_role=SESSION_USER::name AND binding.environment_id=p_expected_environment_id AND binding.purpose='ReadDeviceProjection') AND

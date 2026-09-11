@@ -1,6 +1,10 @@
 \set ON_ERROR_STOP on
 
 -- Roles are created separately by the DBA with externally managed credentials.
+BEGIN;
+SELECT 1 / pg_catalog.count(*) AS roles_have_no_platform_grant_binding FROM (SELECT 1 WHERE
+    agent_private.platform_grant_role_is_unbound(:'agent_definer_role'::name) AND
+    agent_private.platform_grant_role_is_unbound(:'agent_ingest_role'::name)) checked;
 SELECT 1 / pg_catalog.count(*) AS roles_are_distinct
 FROM (SELECT 1 WHERE :'agent_definer_role' <> :'agent_ingest_role') distinction;
 ALTER ROLE :"agent_definer_role" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;
@@ -30,3 +34,4 @@ WHERE binding.login_role = :'agent_ingest_role'::name
 
 -- Startup privilege audit must additionally confirm this login has no role memberships,
 -- direct table/sequence privileges, elevated attributes, or function-owner mismatch.
+COMMIT;

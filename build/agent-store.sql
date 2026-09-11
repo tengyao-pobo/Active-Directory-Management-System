@@ -647,6 +647,60 @@ ALTER FUNCTION agent_private.ingest_attested_envelope(bytea,integer,uuid,bigint,
 REVOKE ALL ON FUNCTION agent_private.ingest_attested_envelope(bytea,integer,uuid,bigint,bigint,uuid,bigint,bytea,text,text)
     FROM PUBLIC;
 
+-- Optional extension guard. The conditional query is prepared only when the extension exists.
+CREATE OR REPLACE FUNCTION agent_private.platform_grant_role_is_unbound(p_role name)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, agent_private, pg_temp
+AS $function$
+DECLARE v_unbound boolean;
+BEGIN
+    IF p_role IS NULL OR NOT (COALESCE((SELECT
+    helper.proowner=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=CURRENT_USER::name) AND
+    helper.proowner=namespace.nspowner AND helper.prosecdef AND helper.prokind='f' AND
+    NOT helper.proretset AND helper.prorettype='boolean'::pg_catalog.regtype AND
+    helper.proargnames=ARRAY['p_role']::text[] AND
+    helper.proconfig=ARRAY['search_path=pg_catalog, agent_private, pg_temp']::text[] AND
+    NOT EXISTS(
+      SELECT 1 FROM pg_catalog.aclexplode(COALESCE(helper.proacl,pg_catalog.acldefault('f',helper.proowner))) acl
+      LEFT JOIN pg_catalog.pg_roles grantee ON grantee.oid=acl.grantee
+      WHERE acl.privilege_type<>'EXECUTE' OR grantee.oid IS NULL OR
+        (acl.grantee<>helper.proowner AND acl.is_grantable) OR
+        grantee.rolcanlogin OR grantee.rolsuper OR grantee.rolbypassrls OR grantee.rolcreatedb OR
+        grantee.rolcreaterole OR grantee.rolinherit OR grantee.rolreplication OR
+        EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members member WHERE member.member=grantee.oid OR member.roleid=grantee.oid) OR
+        acl.grantee NOT IN(
+          SELECT helper.proowner UNION SELECT audit.proowner FROM pg_catalog.pg_proc audit
+          WHERE audit.oid IN(pg_catalog.to_regprocedure('agent_private.audit_enrollment_privileges(name,name,text)'),
+                            pg_catalog.to_regprocedure('agent_private.audit_projection_privileges(uuid,name,name)')))) AND
+    NOT EXISTS(
+      SELECT 1 FROM(
+        SELECT helper.proowner AS oid UNION SELECT audit.proowner FROM pg_catalog.pg_proc audit
+        WHERE audit.oid IN(pg_catalog.to_regprocedure('agent_private.audit_enrollment_privileges(name,name,text)'),
+                          pg_catalog.to_regprocedure('agent_private.audit_projection_privileges(uuid,name,name)'))) expected
+      WHERE NOT EXISTS(SELECT 1 FROM pg_catalog.aclexplode(COALESCE(helper.proacl,pg_catalog.acldefault('f',helper.proowner))) acl
+                       WHERE acl.grantee=expected.oid AND acl.privilege_type='EXECUTE'))
+    FROM pg_catalog.pg_proc helper JOIN pg_catalog.pg_namespace namespace ON namespace.oid=helper.pronamespace
+    WHERE helper.oid=pg_catalog.to_regprocedure('agent_private.platform_grant_role_is_unbound(name)')),false)) THEN
+        RETURN false;
+    END IF;
+    IF EXISTS(SELECT 1 FROM pg_catalog.pg_proc function
+        JOIN pg_catalog.pg_roles owner ON owner.oid=function.proowner
+        WHERE owner.rolname=p_role AND function.oid IN(
+            pg_catalog.to_regprocedure('agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamp with time zone,bytea,bytea)'),
+            pg_catalog.to_regprocedure('agent_private.audit_platform_grant_privileges(uuid,name,name)'))) THEN
+        RETURN false;
+    END IF;
+    IF pg_catalog.to_regclass('agent_private.platform_grant_database_bindings') IS NULL THEN
+        RETURN true;
+    END IF;
+    EXECUTE 'SELECT NOT EXISTS (SELECT 1 FROM agent_private.platform_grant_database_bindings WHERE login_role = $1)'
+        INTO v_unbound USING p_role;
+    RETURN v_unbound;
+END;
+$function$;
+ALTER FUNCTION agent_private.platform_grant_role_is_unbound(name) OWNER TO :"agent_definer_role";
+REVOKE ALL ON FUNCTION agent_private.platform_grant_role_is_unbound(name) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION agent_private.audit_ingest_privileges(expected_definer name)
 RETURNS TABLE (
     login_exists boolean,
@@ -677,7 +731,36 @@ AS $function$
         EXISTS (
             SELECT 1 FROM agent_private.agent_database_bindings binding
             WHERE binding.login_role = SESSION_USER::name
-              AND binding.purpose = 'Ingest'),
+              AND binding.purpose = 'Ingest')
+          AND agent_private.platform_grant_role_is_unbound(SESSION_USER::name)
+          AND agent_private.platform_grant_role_is_unbound(expected_definer)
+          AND (COALESCE((SELECT
+    helper.proowner=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=expected_definer) AND
+    helper.proowner=namespace.nspowner AND helper.prosecdef AND helper.prokind='f' AND
+    NOT helper.proretset AND helper.prorettype='boolean'::pg_catalog.regtype AND
+    helper.proargnames=ARRAY['p_role']::text[] AND
+    helper.proconfig=ARRAY['search_path=pg_catalog, agent_private, pg_temp']::text[] AND
+    NOT EXISTS(
+      SELECT 1 FROM pg_catalog.aclexplode(COALESCE(helper.proacl,pg_catalog.acldefault('f',helper.proowner))) acl
+      LEFT JOIN pg_catalog.pg_roles grantee ON grantee.oid=acl.grantee
+      WHERE acl.privilege_type<>'EXECUTE' OR grantee.oid IS NULL OR
+        (acl.grantee<>helper.proowner AND acl.is_grantable) OR
+        grantee.rolcanlogin OR grantee.rolsuper OR grantee.rolbypassrls OR grantee.rolcreatedb OR
+        grantee.rolcreaterole OR grantee.rolinherit OR grantee.rolreplication OR
+        EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members member WHERE member.member=grantee.oid OR member.roleid=grantee.oid) OR
+        acl.grantee NOT IN(
+          SELECT helper.proowner UNION SELECT audit.proowner FROM pg_catalog.pg_proc audit
+          WHERE audit.oid IN(pg_catalog.to_regprocedure('agent_private.audit_enrollment_privileges(name,name,text)'),
+                            pg_catalog.to_regprocedure('agent_private.audit_projection_privileges(uuid,name,name)')))) AND
+    NOT EXISTS(
+      SELECT 1 FROM(
+        SELECT helper.proowner AS oid UNION SELECT audit.proowner FROM pg_catalog.pg_proc audit
+        WHERE audit.oid IN(pg_catalog.to_regprocedure('agent_private.audit_enrollment_privileges(name,name,text)'),
+                          pg_catalog.to_regprocedure('agent_private.audit_projection_privileges(uuid,name,name)'))) expected
+      WHERE NOT EXISTS(SELECT 1 FROM pg_catalog.aclexplode(COALESCE(helper.proacl,pg_catalog.acldefault('f',helper.proowner))) acl
+                       WHERE acl.grantee=expected.oid AND acl.privilege_type='EXECUTE'))
+    FROM pg_catalog.pg_proc helper JOIN pg_catalog.pg_namespace namespace ON namespace.oid=helper.pronamespace
+    WHERE helper.oid=pg_catalog.to_regprocedure('agent_private.platform_grant_role_is_unbound(name)')),false)),
         EXISTS (
             SELECT 1
             FROM pg_catalog.pg_class object
