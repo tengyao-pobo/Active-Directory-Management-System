@@ -2,7 +2,6 @@ using ItManagement.Agent.Collectors;
 using ItManagement.Agent.Inventory;
 using ItManagement.Agent.Runtime;
 using ItManagement.Agent.Spool;
-using System.Collections.Concurrent;
 
 namespace ItManagement.Agent.Tests;
 
@@ -167,7 +166,7 @@ public sealed class AgentRunLoopTests
         using var directory = new TemporaryDirectory();
         await using var spool = await OfflineSpool.OpenAsync(directory.Path, 1);
         await EnqueueTestPayloadAsync(spool);
-        var timeProvider = new RecordingTimeProvider();
+        var timeProvider = new ManualTimeProvider(optionsTransportTimeout: TimeSpan.FromSeconds(1));
         var transport = new ScriptedTransport((_, _, _) => Task.FromResult(
             AgentTransportResult.Retryable(
                 useShortRetryAfter ? TimeSpan.FromMilliseconds(1) : null)));
@@ -177,9 +176,9 @@ public sealed class AgentRunLoopTests
             MaxRetryDelay = TimeSpan.FromMilliseconds(20),
             RetryJitterFraction = 0.5
         };
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(70));
+        using var cancellation = new CancellationTokenSource();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new AgentRunLoop(
+        var runTask = new AgentRunLoop(
             [new CountingCollector()],
             new CollectorRunner(),
             spool,
@@ -187,14 +186,12 @@ public sealed class AgentRunLoopTests
             "1.2.3",
             timeProvider,
             new FixedJitter(1),
-            options).RunAsync(cancellation.Token));
+            options).RunAsync(cancellation.Token);
 
-        var retryDelays = timeProvider.DueTimes.Where(delay => delay < options.TransportTimeout).ToArray();
-        Assert.NotEmpty(retryDelays);
-        Assert.All(retryDelays, delay => Assert.InRange(
-            delay,
-            TimeSpan.FromMilliseconds(10),
-            options.MaxRetryDelay));
+        var retryDelay = await timeProvider.RetryDelayScheduled.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(options.MaxRetryDelay, retryDelay);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runTask);
     }
 
     [Fact]
@@ -392,17 +389,12 @@ public sealed class AgentRunLoopTests
         public double NextUnitInterval() => value;
     }
 
-    private sealed class RecordingTimeProvider : TimeProvider
+    private sealed class ManualTimeProvider(TimeSpan optionsTransportTimeout) : TimeProvider
     {
-        public ConcurrentQueue<TimeSpan> DueTimes { get; } = new();
+        public TaskCompletionSource<TimeSpan> RetryDelayScheduled { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow();
-
-        public override long GetTimestamp() => TimeProvider.System.GetTimestamp();
-
-        public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
-
-        public override TimeZoneInfo LocalTimeZone => TimeProvider.System.LocalTimeZone;
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch;
 
         public override ITimer CreateTimer(
             TimerCallback callback,
@@ -410,8 +402,23 @@ public sealed class AgentRunLoopTests
             TimeSpan dueTime,
             TimeSpan period)
         {
-            DueTimes.Enqueue(dueTime);
-            return TimeProvider.System.CreateTimer(callback, state, dueTime, period);
+            if (dueTime < optionsTransportTimeout)
+            {
+                RetryDelayScheduled.TrySetResult(dueTime);
+            }
+
+            return new ManualTimer();
+        }
+
+        private sealed class ManualTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose()
+            {
+            }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
     }
 
