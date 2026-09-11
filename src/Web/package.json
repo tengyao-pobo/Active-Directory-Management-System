@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:enrollment-interop": "dotnet restore ../../tests/EnrollmentGrantInterop --locked-mode && dotnet build ../../tests/EnrollmentGrantInterop -c Release --no-restore && vitest run --config vitest.interop.config.ts",
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort"
   },
   "dependencies": { "react": "19.3.0", "react-dom": "19.3.0" },
