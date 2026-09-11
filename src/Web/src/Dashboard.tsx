@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ApiError, request } from './api';
 import { useI18n } from './i18n';
+import { deviceLifecycleStates } from './deviceLifecycle';
 
 interface Summary {
   counts: Record<string, number>; lifecycle: Record<string, number>;
@@ -28,7 +29,7 @@ export default function Dashboard({ environmentId }: { environmentId: string }) 
       <p>{t('dashboard.asOf', { date: date(data.asOf) })}</p>
       <div className="metric-grid">{['User', 'Group', 'Computer', 'OrganizationalUnit'].map(kind => <article className="metric-card" key={kind}><span>{t(`directory.title.${kind}`)}</span><strong>{data.counts[kind]}</strong></article>)}</div>
       <h3>{t('dashboard.lifecycle')}</h3>
-      <dl className="definition-grid">{['Unknown', 'Active', 'Spare', 'Repair', 'Retired'].map(state => <div key={state}><dt>{t(`asset.state.${state}`)}</dt><dd>{data.lifecycle[state]}</dd></div>)}</dl>
+      <dl className="definition-grid">{deviceLifecycleStates.map(state => <div key={state}><dt>{t(`asset.state.${state}`)}</dt><dd>{data.lifecycle[state] ?? 0}</dd></div>)}</dl>
       <p>{t('dashboard.queriedAt', { date: date(data.queriedAt) })}</p>
       <h3>{t('dashboard.repairs', { count: data.lifecycle.Repair })}</h3>
       <p>{t('dashboard.repairHint')}</p>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, request } from './api';
 import { useI18n } from './i18n';
+import { deviceLifecycleStates } from './deviceLifecycle';
 
 interface Asset { lifecycle: string; notes: string; version: number; updatedAt: string }
 interface AssetResponse { item: Asset | null; canEdit: boolean }
@@ -45,7 +46,7 @@ export default function DeviceAssetPanel({ environmentId, id }: { environmentId:
     {!data && !error && <p role="status">{t('directory.loadingDetails')}</p>}
     {data && <>
       <label>{t('asset.lifecycle')}<select aria-label={t('asset.lifecycle')} value={lifecycle} disabled={!data.canEdit || busy} onChange={e => { setLifecycle(e.target.value); setSaved(false); }}>
-        {['Unknown', 'Active', 'Spare', 'Repair', 'Retired'].map(state => <option key={state} value={state}>{t(`asset.state.${state}`)}</option>)}
+        {deviceLifecycleStates.map(state => <option key={state} value={state}>{t(`asset.state.${state}`)}</option>)}
       </select></label>
       <label>{t('asset.notes')}<textarea aria-label={t('asset.notes')} value={notes} maxLength={4000} rows={6} readOnly={!data.canEdit} disabled={busy} onChange={e => { setNotes(e.target.value); setSaved(false); }} /></label>
       {data.item && <p>{t('asset.version', { version: data.item.version })}</p>}

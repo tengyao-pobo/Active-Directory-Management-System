@@ -1,5 +1,11 @@
 namespace ItManagement.Core;
 
+public static class DeviceLifecycle
+{
+    public static IReadOnlyList<string> States { get; } = Array.AsReadOnly(new[]
+    { "Unknown", "Active", "Spare", "Repair", "ReplacementPlanned", "Retired", "Disposed", "Lost" });
+}
+
 // Id is the AD computer objectGUID within EnvironmentId. Metadata is never written to AD.
 public sealed class DeviceAsset
 {

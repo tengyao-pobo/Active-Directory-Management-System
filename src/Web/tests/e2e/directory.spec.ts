@@ -186,24 +186,27 @@ test('a late old global search response cannot replace a new query', async ({ pa
 
 test('computer asset saves with CSRF and version, then exposes conflict without overwriting', async ({ page }) => {
   await open(page, { searches: [] }, 'computers');
-  let version = 0; let notes = ''; let conflict = false;
+  let version = 0; let notes = ''; let lifecycle = 'Unknown'; let conflict = false;
   await page.route('**/session/csrf', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ token: 'test-csrf' }) }));
   await page.route('**/devices/**/asset', async route => {
     if (route.request().method() === 'PUT') {
       expect(route.request().headers()['x-csrf-token']).toBe('test-csrf');
       expect(route.request().headers()['if-match']).toBe(`"${version}"`);
       if (conflict) return route.fulfill({ status: 412 });
-      notes = route.request().postDataJSON().notes; version++;
+      notes = route.request().postDataJSON().notes; lifecycle = route.request().postDataJSON().lifecycle; version++;
     }
-    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ item: version ? { lifecycle: 'Active', notes, version, updatedAt: '2026-09-11T14:00:00Z' } : null, canEdit: true }) });
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ item: version ? { lifecycle, notes, version, updatedAt: '2026-09-11T14:00:00Z' } : null, canEdit: true }) });
   });
   await page.getByRole('button', { name: /east Computer Alpha/ }).click();
   await page.getByRole('tab', { name: 'Asset', exact: true }).click();
   await page.getByLabel('IT notes', { exact: true }).fill('maintenance <script>literal</script>');
-  await page.getByLabel('Lifecycle', { exact: true }).selectOption('Active');
+  await expect(page.getByRole('option', { name: 'Disposed', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('option', { name: 'Lost', exact: true })).toHaveCount(1);
+  await page.getByLabel('Lifecycle', { exact: true }).selectOption('ReplacementPlanned');
   await page.getByRole('button', { name: 'Save asset' }).click();
   await expect(page.getByText('Saved.', { exact: true })).toBeVisible();
   await expect(page.getByText('Version 1')).toBeVisible();
+  await expect(page.getByLabel('Lifecycle', { exact: true })).toHaveValue('ReplacementPlanned');
   conflict = true;
   await page.getByLabel('IT notes', { exact: true }).fill('unsaved draft');
   await page.getByRole('button', { name: 'Save asset' }).click();

@@ -38,6 +38,22 @@ public sealed class DeviceAssetTests(PostgresApiFixture fixture)
         Assert.Single(audits); Assert.DoesNotContain("private-note-canary", JsonSerializer.Serialize(audits));
         Assert.Equal("private-note-canary", (await db.DeviceAssets.SingleAsync(x => x.Id == id)).Notes);
     }
+    [Theory]
+    [InlineData("ReplacementPlanned")]
+    [InlineData("Disposed")]
+    [InlineData("Lost")]
+    public async Task Additional_lifecycle_states_roundtrip_and_appear_in_dashboard(string lifecycle)
+    {
+        var (data, id, _) = await Seed(); using var client = fixture.Client(data.ViewerToken);
+        Assert.Equal(HttpStatusCode.OK, (await Put(client, Path(data, id), lifecycle: lifecycle)).StatusCode);
+        var asset = await client.GetFromJsonAsync<JsonElement>(Path(data, id));
+        Assert.Equal(lifecycle, asset.GetProperty("item").GetProperty("lifecycle").GetString());
+        var summary = await client.GetFromJsonAsync<JsonElement>($"/api/v1/environments/{data.Environment.Id}/dashboard");
+        Assert.Equal(1, summary.GetProperty("lifecycle").GetProperty(lifecycle).GetInt32());
+        await using var db = Db();
+        Assert.Single(await db.Audit.Where(x => x.EnvironmentId == data.Environment.Id && x.Action == "Device.AssetUpdated").ToListAsync());
+        Assert.True(await db.DirectoryObjects.AnyAsync(x => x.EnvironmentId == data.Environment.Id && x.Id == id));
+    }
     [Fact]
     public async Task View_only_and_foreign_scope_cannot_write_and_revocation_is_rechecked()
     {
