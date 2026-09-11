@@ -64,6 +64,14 @@ export const getDirectoryObjects = (env: string, kind: DirectoryKind, search = '
   return api.get<DirectoryPage>(`${envPath(env)}/directory/objects?${query}`, signal);
 };
 export const getDirectoryObject = (env: string, id: string, signal?: AbortSignal) => api.get<{ item: DirectoryObject; asOf: string }>(`${envPath(env)}/directory/objects/${encodeURIComponent(id)}`, signal);
+export type FavoriteItem = Pick<DirectoryObject, 'id' | 'kind' | 'name' | 'distinguishedName' | 'samAccountName' | 'department'>;
+export interface FavoritesPage { items: FavoriteItem[]; nextCursor: string | null; generation: string; asOf: string }
+export const getFavorites = (env: string, cursor?: string, signal?: AbortSignal) => api.get<FavoritesPage>(`${envPath(env)}/favorites?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, signal);
+export const getFavorite = (env: string, id: string, signal?: AbortSignal) => api.get<{ saved: boolean }>(`${envPath(env)}/favorites/${encodeURIComponent(id)}`, signal);
+export async function setFavorite(env: string, id: string, saved: boolean, signal?: AbortSignal) {
+  const { token } = await api.get<{ token: string }>('/api/v1/session/csrf', signal);
+  return request<void>(`${envPath(env)}/favorites/${encodeURIComponent(id)}`, { method: saved ? 'PUT' : 'DELETE', headers: { 'X-CSRF-TOKEN': token }, signal });
+}
 export const getAccess = (env: string, signal?: AbortSignal) => api.get<{ permissions: string[] }>(`${envPath(env)}/access`, signal);
 export const getRbac = (env: string, signal?: AbortSignal) => api.get<Rbac>(`${envPath(env)}/rbac`, signal);
 export const getAudit = (env: string, cursor?: string, signal?: AbortSignal) => api.get<AuditPage>(`${envPath(env)}/audit?limit=30${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, signal);
