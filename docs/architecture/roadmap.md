@@ -4,7 +4,7 @@
 
 ## Phase 1–12
 
-目前已交付 Phase 4 的讀取/同步基礎與 typed preview 契約，以及 [Phase 5 目錄查詢與明細 UI](../deployment/phase5.md)。真實網域與受控 AD 寫入尚未驗收，因此下表 Phase 4 的完整進階條件仍未滿足；不得將 unavailable adapter 視為已完成 AD mutation。Phase 5 的完整 11 頁籤、關聯、IT notes/lifecycle 與變更預覽仍待後續實作。
+目前已交付唯讀 LDAP 同步、範圍化目錄與跨類型搜尋、資產備註／生命週期、人機關聯、Dashboard、設備明細與稽核、部門提案資訊預覽，以及 AD 證據／單一目標重讀接點。詳細全項目狀態見 [implementation-status.md](implementation-status.md)。真實 AD 寫入與網域驗收、完整 11 頁籤、Agent／Inventory／Helper／Reporting 與雲端整合尚未完成，不得將 unavailable adapter 視為完成。使用者已要求每階段驗證合併後自動接續全部項目，V2/V3 仍納入後續開發。
 
 | Phase | 實作交付 | 關鍵驗收 / 進下一階段條件 |
 |---|---|---|

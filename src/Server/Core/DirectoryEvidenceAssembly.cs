@@ -4,7 +4,7 @@ namespace ItManagement.Core;
 // A future host must obtain each input from independently trusted services, not deserialize client claims.
 public sealed record DirectoryEvidenceServer(string DnsHostName, string ServiceDn, Guid DsaObjectId, Guid InvocationId);
 public sealed record DirectoryEvidenceBinding(Guid EnvironmentId, Guid DomainId, Guid ObjectId,
-    Guid ActorId, string Permission, long PolicyVersion, string ConfigurationHash, DirectoryEvidenceServer Server, int SchemaVersion = 2);
+    Guid ActorId, string Permission, long PolicyVersion, string ConfigurationHash, DirectoryEvidenceServer Server, string ProtectionPolicyHash, int SchemaVersion = 3);
 public enum DirectoryObservationSource { Unknown, CachedProjection, DirectDirectoryRead }
 public enum DirectoryProtectionDecision { Unknown, Protected, Unprotected }
 public sealed record DirectoryObjectObservation(DirectoryEvidenceBinding Binding, DirectoryChangeEvidence Object,
@@ -12,7 +12,13 @@ public sealed record DirectoryObjectObservation(DirectoryEvidenceBinding Binding
 public sealed record DirectoryScopeObservation(DirectoryEvidenceBinding Binding, long UsnChanged, string DistinguishedName,
     bool Allowed, DateTimeOffset EvaluatedAt);
 public sealed record DirectoryProtectionObservation(DirectoryEvidenceBinding Binding, long UsnChanged, string DistinguishedName,
-    DirectoryProtectionDecision Decision, DateTimeOffset EvaluatedAt);
+    DirectoryProtectionDecision Decision, DateTimeOffset EvaluatedAt)
+{
+    public string? Reason { get; init; }
+    public string? FactsHash { get; init; }
+    public DateTimeOffset? FactsReadStartedAt { get; init; }
+    public DateTimeOffset? FactsReadCompletedAt { get; init; }
+}
 public enum DirectoryEvidenceFailure
 {
     None, InvalidBinding, BindingMismatch, SourceUnavailable, StaleObservation,
@@ -35,20 +41,26 @@ public sealed record DirectoryEvidenceAssemblyResult(DirectoryEvidenceReceipt? R
 
 public static class DirectoryEvidenceAssembler
 {
+    public static bool IsBindingValid(DirectoryEvidenceBinding expected, DirectoryChangeKind kind)
+    {
+        var permission = kind switch { DirectoryChangeKind.DisableUser => PermissionCatalog.UserDisable,
+            DirectoryChangeKind.SetUserDepartment => PermissionCatalog.UserEdit, _ => null };
+        if (expected.SchemaVersion != 3 || expected.EnvironmentId == Guid.Empty || expected.DomainId == Guid.Empty || expected.ObjectId == Guid.Empty ||
+            expected.ActorId == Guid.Empty || permission is null || expected.Permission != permission || expected.PolicyVersion < 1 ||
+            expected.ConfigurationHash is not { Length: 64 } hash || !hash.All(Uri.IsHexDigit) ||
+            expected.ProtectionPolicyHash is not { Length: 64 } policyHash || !policyHash.All(Uri.IsHexDigit) || expected.Server is null ||
+            expected.Server.DsaObjectId == Guid.Empty || expected.Server.InvocationId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(expected.Server.ServiceDn) || expected.Server.ServiceDn.Length > 4096 ||
+            expected.Server.DnsHostName is not { Length: > 0 and <= 253 } host || !host.Contains('.') || Uri.CheckHostName(host) != UriHostNameType.Dns)
+            return false;
+        return true;
+    }
     public static DirectoryEvidenceAssemblyResult Assemble(DirectoryEvidenceBinding expected, DirectoryChangeKind kind,
         DirectoryObjectObservation observation, DirectoryScopeObservation scope,
         DirectoryProtectionObservation protection, DateTimeOffset now)
     {
         DirectoryEvidenceAssemblyResult Reject(DirectoryEvidenceFailure failure) => new(null, failure);
-        var permission = kind switch { DirectoryChangeKind.DisableUser => PermissionCatalog.UserDisable,
-            DirectoryChangeKind.SetUserDepartment => PermissionCatalog.UserEdit, _ => null };
-        if (expected.SchemaVersion != 2 || expected.EnvironmentId == Guid.Empty || expected.DomainId == Guid.Empty || expected.ObjectId == Guid.Empty ||
-            expected.ActorId == Guid.Empty || permission is null || expected.Permission != permission || expected.PolicyVersion < 1 ||
-            expected.ConfigurationHash is not { Length: 64 } hash || !hash.All(Uri.IsHexDigit) || expected.Server is null ||
-            expected.Server.DsaObjectId == Guid.Empty || expected.Server.InvocationId == Guid.Empty ||
-            string.IsNullOrWhiteSpace(expected.Server.ServiceDn) || expected.Server.ServiceDn.Length > 4096 ||
-            expected.Server.DnsHostName is not { Length: > 0 and <= 253 } host || !host.Contains('.') || Uri.CheckHostName(host) != UriHostNameType.Dns)
-            return Reject(DirectoryEvidenceFailure.InvalidBinding);
+        if (!IsBindingValid(expected,kind)) return Reject(DirectoryEvidenceFailure.InvalidBinding);
         if (observation.Binding != expected || scope.Binding != expected || protection.Binding != expected)
             return Reject(DirectoryEvidenceFailure.BindingMismatch);
         if (observation.Source != DirectoryObservationSource.DirectDirectoryRead)
@@ -70,6 +82,10 @@ public static class DirectoryEvidenceAssembler
             return Reject(DirectoryEvidenceFailure.ProtectionUnknown);
         if (protection.Decision == DirectoryProtectionDecision.Protected || item.IsProtected)
             return Reject(DirectoryEvidenceFailure.ProtectedObject);
+        if (protection.FactsHash is not { Length: 64 } factsHash || !factsHash.All(Uri.IsHexDigit) ||
+            protection.FactsReadStartedAt is not { } factsStart || protection.FactsReadCompletedAt is not { } factsEnd ||
+            !Fresh(factsStart) || factsStart < observation.ReadCompletedAt || factsEnd < factsStart || factsEnd > protection.EvaluatedAt)
+            return Reject(DirectoryEvidenceFailure.ProtectionUnknown);
         // Ignore unverified positive flags on the raw object. Only the bound decisions supply these fields.
         var evidence = item with { ScopeKnown = true, ProtectionKnown = true, IsProtected = false,
             ObservedAt = observation.ReadStartedAt };

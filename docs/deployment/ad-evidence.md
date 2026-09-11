@@ -25,8 +25,8 @@ DirectoryEvidenceAssembler 接收伺服器端預期綁定、直接目錄讀取�
 
 無 migration 或權限授予；按既有流程重新發佈 Connector/Core 即可，回復前一版本可撤回。新的 UAC 非法回應將使同步失敗並保留不可用狀態，而不是提供可能錯誤的啟用資訊。
 
-單一目標重讀與保護分類服務接點已完成，詳見 [ad-target-read.md](ad-target-read.md)。目前接點尚未註冊為正式服務，保護分類預設仍為 Unknown。下一階段是可版本化保護政策及唯讀分類器，再建立獨立持久化計畫與雙人核准。真實 AD 寫入仍需受控驗收與明確授權。
+單一目標重讀與保護分類服務接點已完成，詳見 [ad-target-read.md](ad-target-read.md)。目前接點尚未註冊為正式服務，保護分類預設仍為 Unknown。可版本化保護政策與分類器已新增，詳見 [ad-protection-policy.md](ad-protection-policy.md)，正式 Facts provider 尚待接線，再建立獨立持久化計畫與雙人核准。真實 AD 寫入仍需受控驗收與明確授權。
 
-安全複核後的成功結果為 DirectoryEvidenceReceipt：保留 Binding、完整讀取觀察、範圍及保護判定、與正規化的 Evidence。建構子僅供 Core 組件內使用。未來計畫橋接必須使用完整收據，不能只取出 Evidence 丟失操作者與權限等綁定。收據仍不是可跨信任邊界驗證的 token。綁定 schema v2 已要求完整 DC DNS / Service DN / DSA GUID / Invocation ID，單一目標讀取會比對前後來源。因為 uSNChanged 是 DC 本機版本，不能省略這項綁定；這也不代表未來寫入具有原子性。
+安全複核後的成功結果為 DirectoryEvidenceReceipt：保留 Binding、完整讀取觀察、範圍及保護判定、與正規化的 Evidence。建構子僅供 Core 組件內使用。未來計畫橋接必須使用完整收據，不能只取出 Evidence 丟失操作者與權限等綁定。收據仍不是可跨信任邊界驗證的 token。綁定 schema v3 已加入保護政策 Hash，並要求完整 DC DNS / Service DN / DSA GUID / Invocation ID，單一目標讀取會比對前後來源。因為 uSNChanged 是 DC 本機版本，不能省略這項綁定；這也不代表未來寫入具有原子性。
 
 最新目標重讀階段本機後端驗證：184 項通過（Core 48、Connector 58、Security 5、Integration 73），建置無警告或錯誤。

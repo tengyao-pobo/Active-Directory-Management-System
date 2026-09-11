@@ -14,7 +14,7 @@ TargetReadTimeout 預設 30 秒，最大 60 秒。總期限取消後停止等待
 
 ## 服務與信任界線
 
-Core DirectoryEvidenceBinding 升級 schema v2，Server 是必要欄位，包含完整來源身分並隨每份判定及成功收據保留。旧 schema v1 不再接受。
+Core DirectoryEvidenceBinding 在此階段升級 schema v2（後續 [保護政策](ad-protection-policy.md) 已升為 v3 並加入政策 Hash），Server 是必要欄位，包含完整來源身分並隨每份判定及成功收據保留。旧 schema v1 不再接受。
 
 DirectoryTargetEvidenceService 比對預期網域、設定摘要、GUID、種類與來源，再把同一筆觀察傳給 IDirectoryScopeAssessor、IDirectoryProtectionAssessor，最後交由既有組裝器驗證。預期綁定必須由未來伺服器控制層從受信任設定和操作者身分建立，不能從瀏覽器接受或用觀察結果自動替换預期來源。
 

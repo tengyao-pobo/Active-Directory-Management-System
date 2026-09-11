@@ -9,6 +9,7 @@ public sealed class DirectoryTargetEvidenceService(IDirectoryTargetReader reader
 {
     public async Task<DirectoryEvidenceAssemblyResult> ReadAsync(DirectoryEvidenceBinding expected, DirectoryChangeKind kind, CancellationToken ct)
     {
+        if (!DirectoryEvidenceAssembler.IsBindingValid(expected,kind)) return new(null,DirectoryEvidenceFailure.InvalidBinding);
         var target = await reader.ReadUserAsync(expected.ObjectId, ct);
         var source = new DirectoryEvidenceServer(target.Source.DnsHostName, target.Source.ServiceDn, target.Source.DsaObjectId, target.Source.InvocationId);
         if (target.VerifiedDomainId != expected.DomainId || target.ConfigurationHash != expected.ConfigurationHash ||
