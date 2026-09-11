@@ -377,7 +377,7 @@ BEGIN
                    v_collector - ARRAY['Collector','Status','Quality','Source','ObservedAt','Data','ItemCount','ErrorCode'] <> '{}'::jsonb OR
                    pg_catalog.jsonb_typeof(v_collector->'Collector') <> 'string' OR
                    pg_catalog.length(v_collector->>'Collector') NOT BETWEEN 1 AND 256 OR
-                   v_collector->>'Collector' NOT IN ('basic-device','installed-software','hardware') OR
+                   v_collector->>'Collector' NOT IN ('basic-device','installed-software','hardware','bitlocker') OR
                    pg_catalog.jsonb_typeof(v_collector->'Source') <> 'string' OR
                    pg_catalog.length(v_collector->>'Source') NOT BETWEEN 1 AND 256 OR
                    pg_catalog.jsonb_typeof(v_collector->'Status') <> 'number' OR
@@ -395,6 +395,14 @@ BEGIN
 
                 IF (v_collector->>'Status')::integer <> 0 THEN
                     IF v_collector->'Data' <> 'null'::jsonb OR (v_collector->>'ItemCount')::integer <> 0 THEN
+                        RAISE EXCEPTION USING ERRCODE = '22023';
+                    END IF;
+                    IF v_collector->>'Collector' = 'bitlocker' AND (
+                        (v_collector->>'Quality')::integer <> 1 OR v_collector->>'Source' <> 'bitlocker' OR
+                        pg_catalog.jsonb_typeof(v_collector->'ErrorCode') <> 'string' OR
+                        ((v_collector->>'Status')::integer = 1 AND v_collector->>'ErrorCode' <> 'timeout') OR
+                        ((v_collector->>'Status')::integer = 2 AND v_collector->>'ErrorCode' NOT IN ('collector_failed','invalid_output')) OR
+                        ((v_collector->>'Status')::integer = 3 AND v_collector->>'ErrorCode' <> 'output_limit_exceeded')) THEN
                         RAISE EXCEPTION USING ERRCODE = '22023';
                     END IF;
                     CONTINUE;
@@ -460,6 +468,54 @@ BEGIN
                             RAISE EXCEPTION USING ERRCODE = '22023';
                         END IF;
                     END LOOP;
+                ELSIF v_collector->>'Collector' = 'bitlocker' THEN
+                    IF v_collector->>'Source' <> 'root\cimv2\Security\MicrosoftVolumeEncryption:Win32_EncryptableVolume' OR
+                       NOT (v_data ?& ARRAY['SchemaVersion','Volumes','IsTruncated','ErrorCode']) OR
+                       v_data - ARRAY['SchemaVersion','Volumes','IsTruncated','ErrorCode'] <> '{}'::jsonb OR
+                       pg_catalog.jsonb_typeof(v_data->'SchemaVersion') <> 'number' OR
+                       v_data->>'SchemaVersion' <> '1' OR
+                       pg_catalog.jsonb_typeof(v_data->'Volumes') <> 'array' OR
+                       pg_catalog.jsonb_array_length(v_data->'Volumes') > 128 OR
+                       (v_collector->>'ItemCount')::integer <> pg_catalog.jsonb_array_length(v_data->'Volumes') OR
+                       pg_catalog.jsonb_typeof(v_data->'IsTruncated') <> 'boolean' OR
+                       (v_collector->>'Quality')::integer = 2 THEN
+                        RAISE EXCEPTION USING ERRCODE = '22023';
+                    END IF;
+                    IF (v_collector->>'Quality')::integer = 0 THEN
+                        IF v_data->'ErrorCode' <> 'null'::jsonb THEN RAISE EXCEPTION USING ERRCODE = '22023'; END IF;
+                    ELSE
+                        IF pg_catalog.jsonb_array_length(v_data->'Volumes') <> 0 OR v_data->'IsTruncated' <> 'false'::jsonb OR
+                           pg_catalog.jsonb_typeof(v_data->'ErrorCode') <> 'string' OR
+                           ((v_collector->>'Quality')::integer = 3 AND v_data->>'ErrorCode' <> 'access_denied') OR
+                           ((v_collector->>'Quality')::integer = 1 AND v_data->>'ErrorCode' NOT IN ('query_timeout','query_unavailable','native_query_busy','invalid_output')) THEN
+                            RAISE EXCEPTION USING ERRCODE = '22023';
+                        END IF;
+                    END IF;
+                    FOR v_row IN SELECT value FROM pg_catalog.jsonb_array_elements(v_data->'Volumes') LOOP
+                        IF pg_catalog.jsonb_typeof(v_row) <> 'object' OR
+                           NOT (v_row ?& ARRAY['DeviceId','PersistentVolumeId','DriveLetter','VolumeType','ProtectionStatus','ConversionStatus','EncryptionMethod','IsVolumeInitializedForProtection']) OR
+                           v_row - ARRAY['DeviceId','PersistentVolumeId','DriveLetter','VolumeType','ProtectionStatus','ConversionStatus','EncryptionMethod','IsVolumeInitializedForProtection'] <> '{}'::jsonb OR
+                           pg_catalog.jsonb_typeof(v_row->'DeviceId') <> 'string' OR
+                           pg_catalog.length(pg_catalog.btrim(v_row->>'DeviceId')) = 0 OR
+                           pg_catalog.length(v_row->>'DeviceId') > 512 OR (v_row->>'DeviceId') ~ '[[:cntrl:]]' OR
+                           NOT (v_row->'PersistentVolumeId' = 'null'::jsonb OR
+                               (pg_catalog.jsonb_typeof(v_row->'PersistentVolumeId') = 'string' AND
+                                pg_catalog.length(v_row->>'PersistentVolumeId') <= 512 AND (v_row->>'PersistentVolumeId') !~ '[[:cntrl:]]')) OR
+                           NOT (v_row->'DriveLetter' = 'null'::jsonb OR
+                               (pg_catalog.jsonb_typeof(v_row->'DriveLetter') = 'string' AND (v_row->>'DriveLetter') ~ '^[A-Z]:$')) OR
+                           NOT (v_row->'IsVolumeInitializedForProtection' = 'null'::jsonb OR pg_catalog.jsonb_typeof(v_row->'IsVolumeInitializedForProtection') = 'boolean') OR
+                           EXISTS (SELECT 1 FROM pg_catalog.jsonb_each(v_row) property
+                               WHERE property.key IN ('VolumeType','ProtectionStatus','ConversionStatus','EncryptionMethod') AND
+                               NOT (property.value = 'null'::jsonb OR
+                                   (pg_catalog.jsonb_typeof(property.value) = 'number' AND (property.value #>> '{}') ~ '^[0-9]+$' AND
+                                    (property.value #>> '{}')::numeric <= 4294967295))) THEN
+                            RAISE EXCEPTION USING ERRCODE = '22023';
+                        END IF;
+                    END LOOP;
+                    IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(v_data->'Volumes') row
+                        GROUP BY pg_catalog.lower(row->>'DeviceId') HAVING count(*) > 1) THEN
+                        RAISE EXCEPTION USING ERRCODE = '22023';
+                    END IF;
                 ELSIF v_collector->>'Collector' = 'hardware' THEN
                     IF NOT (v_data ?& ARRAY['SchemaVersion','Sections']) OR
                        v_data - ARRAY['SchemaVersion','Sections'] <> '{}'::jsonb OR

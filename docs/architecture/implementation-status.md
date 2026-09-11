@@ -14,7 +14,7 @@
 | 14–20 | 14 P；15 A；16 A；17 P；18 P；19 P；20 P |
 | 21–27 | 21 P；22 P；23 P；24 P；25 P；26 P；27 P |
 | 28–38 | 28 A；29 P；30 P；31 P；32 P；33 P；34 A；35 P；36 P；37 P；38 P |
-| 39–47 | 39 A；40 A；41 P；42 A；43 A；44 A；45 A；46 A；47 A |
+| 39–47 | 39 P；40 A；41 P；42 A；43 A；44 A；45 A；46 A；47 A |
 | 48–55 | 48 P；49 P；50 A；51 A；52 A；53 A；54 P；55 A |
 | 56–63 | 56 A；57 A；58 A；59 A；60 A；61 A；62 A；63 A |
 | 64–70 | 64 P；65 I；66 A；67 A；68 I；69 P；70 A |
@@ -35,6 +35,7 @@
 - Agent runtime：固定盤點／心跳排程、精確收據與重送、Windows Service 宿主；預設未配置，正式 enrollment / mTLS 與伺服器持久化尚未啟用。
 - 設備政策：Health 權重／證據覆蓋率／Critical override、機齡來源與下限、七因素汰換引擎；原始盤點 adapter、policy 持久化、API 與畫面綁定仍待完成。
 - 硬體收集：固定唯讀 WMI 來源與逐來源錯誤／截斷資訊；SMART、安全姿態與 Windows 實際驗收仍待完成。
+- BitLocker 觀測：固定本機唯讀屬性、typed metadata、單一 native query、來源失效／不完整語義與接收端 exact schema；百分比、protector／TPM／escrow、正式 Windows 驗收及 Security 畫面仍待完成。沒有收集或保存回復金鑰。
 - Agent 接收資料庫：獨立 schema 與登入、憑證綁定映射、原子收據／心跳／快照歷史／投影與重送調和；尚未接上正式 enrollment、mTLS listener、Web 授權查詢與畫面。
 - Agent 註冊身分：schema 2 pending／enrolled 狀態、穩定 request ID、獨占 lease、精確完成與中斷恢復；伺服器 grant／CSR／CA／憑證領取及 listener 仍待完成。
 - Agent 註冊資料庫與格式驗證：一次性 grant 原子消耗、固定發證編號、租約調和、不可重用 epoch、不可變發證結果，以及 CSR／釘選憑證鏈的嚴格 profile。正式 CA 操作綁定、撤銷驗證、平台授權發行 UI、憑證領取與 mTLS listener 仍待完成，服務維持未啟用。
