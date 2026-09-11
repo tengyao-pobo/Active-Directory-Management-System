@@ -16,6 +16,8 @@ async function mock(page: Page, state: State) {
     if (path.endsWith('/session/preferences')) return reply({ locale: 'en-US' });
     if (path === '/api/v1/environments') return reply({ items: ['east', 'west'].map(id => ({ id, name: `${id} environment`, canonicalDns: `${id}.test`, defaultLocale: 'en-US', version: 1 })) });
     if (path.endsWith('/access')) return reply({ permissions: [] }); // An OU-scoped reader has no All-resource capability.
+    if (path.match(/\/devices\/.+\/user$/)) return reply({ user: null, version: 0, updatedAt: null, canEdit: false });
+    if (path.match(/\/users\/.+\/devices$/)) return reply({ items: [], nextCursor: null });
     const m = path.match(/\/environments\/(east|west)\/directory\/(status|objects)(?:\/(.+))?$/);
     if (!m) return reply({ title: 'UnexpectedMockRoute' }, 404);
     if (state.expired) return reply({ title: 'SessionInvalid' }, 401);
@@ -207,4 +209,28 @@ test('computer asset saves with CSRF and version, then exposes conflict without 
   await expect(page.getByRole('alert')).toContainText('Someone changed this record');
   await page.getByRole('button', { name: 'Reload and discard edits' }).click();
   await expect(page.getByLabel('IT notes', { exact: true })).toHaveValue('maintenance <script>literal</script>');
+});
+
+test('manual user assignment saves explicit target and reverse view shows computer', async ({ page }) => {
+  await open(page, { searches: [] }, 'computers');
+  let assigned = false; let version = 0;
+  await page.route('**/session/csrf', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ token: 'test-csrf' }) }));
+  await page.route('**/devices/**/user', async route => {
+    if (route.request().method() === 'PUT') { expect(route.request().headers()['x-csrf-token']).toBe('test-csrf'); expect(route.request().headers()['if-match']).toBe(`"${version}"`); assigned = route.request().postDataJSON().userId !== null; version++; return route.fulfill({ status: 204 }); }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ user: assigned ? { id: 'east-User-Alpha', name: 'east User Alpha' } : null, version, canEdit: true, updatedAt: version ? '2026-09-11T14:00:00Z' : null }) });
+  });
+  await page.route('**/users/**/devices', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: assigned ? [{ id: 'east-Computer-Alpha', name: 'east Computer Alpha', updatedAt: '2026-09-11T14:00:00Z' }] : [], nextCursor: null }) }));
+  await page.getByRole('button', { name: /east Computer Alpha/ }).click();
+  const panel = page.getByRole('region', { name: 'Person–computer association', exact: true });
+  await panel.getByLabel('Find a user', { exact: true }).fill('Alpha');
+  await panel.getByRole('button', { name: 'Search', exact: true }).click();
+  await panel.getByRole('button', { name: 'east User Alpha (alpha)', exact: true }).click();
+  await panel.getByRole('button', { name: 'Assign selected user' }).click();
+  await expect(panel).toContainText('Assigned user: east User Alpha');
+  await page.goto('/#/users'); await page.getByRole('button', { name: /east User Alpha/ }).click();
+  await expect(page.getByRole('region', { name: 'Person–computer association', exact: true })).toContainText('east Computer Alpha');
+  await page.goto('/#/computers'); await page.getByRole('button', { name: /east Computer Alpha/ }).click();
+  await page.getByRole('button', { name: 'Clear current assignment' }).click();
+  await expect(panel).toContainText('Unassigned');
+  expect(version).toBe(2);
 });
