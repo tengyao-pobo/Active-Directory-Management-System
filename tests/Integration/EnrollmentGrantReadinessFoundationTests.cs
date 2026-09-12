@@ -169,5 +169,6 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await using var state = new NpgsqlCommand("SELECT state='PendingHistoryAudit' AND generation=2 AND ready_at IS NULL AND ready_by IS NULL FROM enrollment_execution.profile4_readiness", owner);
         Assert.Equal(true, await state.ExecuteScalarAsync(cancellationToken));
         await VerifyReadinessAuditSplitAsync(owner, runtime, statusConnection, deliveryConnection, environment, cancellationToken);
+        await VerifyHistoryTransitionAsync(owner, admin, runtimeConnection, environment, cancellationToken);
     }
 }

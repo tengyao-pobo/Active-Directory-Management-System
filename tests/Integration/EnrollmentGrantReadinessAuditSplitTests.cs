@@ -66,7 +66,9 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             command.Parameters.AddWithValue("environment", environment);
             var pending = await Assert.ThrowsAsync<PostgresException>(async () => { await command.ExecuteNonQueryAsync(cancellationToken); });
             Assert.True(pending.SqlState == "42501", name + ": " + pending.SqlState);
-            Assert.DoesNotContain("permission denied for function", pending.MessageText, StringComparison.OrdinalIgnoreCase);
+            var expectedMessage = name is "claim_next" or "defer_claim" or "complete_claim" ? "Execution queue capability is unavailable."
+                : connection == runtime ? "Execution capability is unavailable." : "Enrollment delivery privilege audit failed.";
+            Assert.Equal(expectedMessage, pending.MessageText);
             await pendingTransaction.RollbackAsync(cancellationToken);
         }
         await using (var transaction = await owner.BeginTransactionAsync(cancellationToken))
