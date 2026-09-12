@@ -109,6 +109,7 @@ public sealed class EnrollmentTargetReaderTests(AgentEnrollmentTargetFixture fix
         Assert.True((await new EnrollmentStorePrivilegeAuditor(fixture.Issue, fixture.TableOwnerRole, fixture.EnrollmentDefinerRole, "Issue").AuditAsync(default)).IsValid);
         _ = await PostgresAgentInventoryProjectionReader.CreateAuditedAsync(fixture.Projection, fixture.EnvironmentId, fixture.TableOwnerRole, fixture.ProjectionDefinerRole);
         _ = await PostgresPlatformGrantRepository.CreateAuditedAsync(fixture.Platform, fixture.EnvironmentId, fixture.TableOwnerRole, fixture.PlatformDefinerRole, default);
+        _ = await PostgresPlatformGrantRevocationRepository.CreateAuditedAsync(fixture.Revoker, fixture.EnvironmentId, fixture.TableOwnerRole, fixture.PlatformDefinerRole, default);
         _ = await PostgresEnrollmentTargetReader.CreateAuditedAsync(fixture.Target, fixture.EnvironmentId, fixture.TableOwnerRole, fixture.TargetDefinerRole, default);
     }
 

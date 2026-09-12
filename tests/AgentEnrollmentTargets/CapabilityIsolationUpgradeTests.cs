@@ -49,6 +49,7 @@ public sealed class CapabilityIsolationUpgradeTests(AgentEnrollmentTargetFixture
     [InlineData("issue", false)] [InlineData("issue", true)]
     [InlineData("projection", false)] [InlineData("projection", true)]
     [InlineData("platform", false)] [InlineData("platform", true)]
+    [InlineData("platform-revoker", false)] [InlineData("platform-revoker", true)]
     public async Task ExistingProvisionersCannotReuseTargetRuntimeOrDefiner(string capability, bool definer)
     {
         var role = definer ? fixture.TargetDefinerRole : fixture.TargetRole;
@@ -60,13 +61,13 @@ public sealed class CapabilityIsolationUpgradeTests(AgentEnrollmentTargetFixture
 
     [Theory]
     [InlineData("ingest")] [InlineData("enroll")] [InlineData("issue")]
-    [InlineData("projection")] [InlineData("platform")]
+    [InlineData("projection")] [InlineData("platform")] [InlineData("revoker")]
     public async Task TargetProvisionerCannotReuseExistingRuntime(string capability)
     {
         var role = capability switch
         {
             "ingest" => fixture.IngestRole, "enroll" => fixture.EnrollRole,
-            "issue" => fixture.IssueRole, "projection" => fixture.ProjectionRole, _ => fixture.PlatformRole
+            "issue" => fixture.IssueRole, "projection" => fixture.ProjectionRole, "revoker" => fixture.RevokerRole, _ => fixture.PlatformRole
         };
         var replacements = fixture.TargetProvision(Database);
         SetRole(replacements, "agent_enrollment_target_role", role);
@@ -100,7 +101,8 @@ public sealed class CapabilityIsolationUpgradeTests(AgentEnrollmentTargetFixture
                 return ("provision-agent-projection.sql", replacements);
             default:
                 SetRole(replacements, "agent_platform_grant_definer_role", fixture.PlatformDefinerRole);
-                SetRole(replacements, "agent_platform_grant_role", role);
+                SetRole(replacements, "agent_platform_grant_role", capability == "platform-revoker" ? fixture.PlatformRole : role);
+                SetRole(replacements, "agent_platform_grant_revoker_role", capability == "platform-revoker" ? role : fixture.RevokerRole);
                 return ("provision-agent-platform-grants.sql", replacements);
         }
     }
@@ -137,5 +139,5 @@ public sealed class CapabilityIsolationUpgradeTests(AgentEnrollmentTargetFixture
            FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='agent_private' AND c.relkind='r')))
         """, new NpgsqlParameter("roles", new[] { fixture.TableOwnerRole, fixture.IngestRole, fixture.EnrollmentDefinerRole,
             fixture.EnrollRole, fixture.IssueRole, fixture.ProjectionDefinerRole, fixture.ProjectionRole,
-            fixture.PlatformDefinerRole, fixture.PlatformRole, fixture.TargetDefinerRole, fixture.TargetRole }));
+            fixture.PlatformDefinerRole, fixture.PlatformRole, fixture.RevokerRole, fixture.TargetDefinerRole, fixture.TargetRole }));
 }

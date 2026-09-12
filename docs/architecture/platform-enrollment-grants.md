@@ -26,6 +26,8 @@
 
 私鑰遺失後不得將舊 token 重新包裝給新公鑰。先撤銷舊 grant，再經新提案與獨立核准建立新操作。正式啟用前須完成 available grant 撤銷與結果讀回路徑；已消耗或已發證的身分須進入各自的憑證生命週期，不能假稱撤銷 grant 已撤銷憑證。
 
+固定狀態、不可變撤銷收據、獨立 revoker 登入與鎖順序已實作於[私有撤銷與讀回契約](platform-grant-revocation.md)。此能力尚未接上公開操作端點。
+
 ## 啟用前驗證
 
 需涵蓋授權／mapping 漂移、跨環境登入、並行 worker、每個 commit 中斷點、同一 receipt 恢復、token 不出現在 DB／log／API、錯誤金鑰、領取所有權、過期、現有 grant 衝突、遺失金鑰撤銷與 role／function／RLS 漂移。私有函式與 auditor 採精確 allowlist；新增能力不得放寬既有 Enroll、Issue、Ingest 或 Projection 登入的權限。

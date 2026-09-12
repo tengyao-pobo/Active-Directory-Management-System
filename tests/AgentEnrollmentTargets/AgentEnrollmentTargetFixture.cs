@@ -31,11 +31,14 @@ public sealed partial class AgentEnrollmentTargetFixture : IAsyncLifetime
     public string ProjectionRole => $"agp_pro_{_suffix}";
     public string PlatformDefinerRole => $"agp_gdf_{_suffix}";
     public string PlatformRole => $"agp_grt_{_suffix}";
+    public string RevokerRole => $"agp_rev_{_suffix}";
+    private string _revokerPassword = null!;
     public string TargetDefinerRole => $"agp_tdf_{_suffix}";
     public string TargetRole => $"agp_trg_{_suffix}";
     public Guid EnvironmentId { get; } = Guid.NewGuid();
     public NpgsqlDataSource Owner { get; private set; } = null!;
     public NpgsqlDataSource Platform { get; private set; } = null!;
+    public NpgsqlDataSource Revoker { get; private set; } = null!;
     public NpgsqlDataSource Ingest { get; private set; } = null!;
     public NpgsqlDataSource Enroll { get; private set; } = null!;
     public NpgsqlDataSource Issue { get; private set; } = null!;
@@ -58,7 +61,7 @@ public sealed partial class AgentEnrollmentTargetFixture : IAsyncLifetime
             }
             if (await Scalar<long>("SELECT count(*) FROM pg_catalog.pg_namespace WHERE nspname='agent_private'") != 0)
                 throw new InvalidOperationException("agent_private already exists; refusing to overwrite state.");
-            _ingestPassword = Secret(); _enrollPassword = Secret(); _issuePassword = Secret(); _projectionPassword = Secret(); _platformPassword = Secret(); _targetPassword = Secret();
+            _ingestPassword = Secret(); _enrollPassword = Secret(); _issuePassword = Secret(); _projectionPassword = Secret(); _platformPassword = Secret(); _targetPassword = Secret(); _revokerPassword = Secret();
             await Execute($"""
                 BEGIN;
                 CREATE ROLE {Id(TableOwnerRole)} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;
@@ -70,6 +73,7 @@ public sealed partial class AgentEnrollmentTargetFixture : IAsyncLifetime
                 CREATE ROLE {Id(ProjectionRole)} LOGIN PASSWORD {Lit(_projectionPassword)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;
                 CREATE ROLE {Id(PlatformDefinerRole)} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;
                 CREATE ROLE {Id(PlatformRole)} LOGIN PASSWORD {Lit(_platformPassword)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;
+                CREATE ROLE {Id(RevokerRole)} LOGIN PASSWORD {Lit(_revokerPassword)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;
                 CREATE ROLE {Id(TargetDefinerRole)} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;
                 CREATE ROLE {Id(TargetRole)} LOGIN PASSWORD {Lit(_targetPassword)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;
                 COMMIT;
@@ -84,14 +88,17 @@ public sealed partial class AgentEnrollmentTargetFixture : IAsyncLifetime
             await Script("provision-agent-projection.sql", ProjectionProvision(database));
             await Script("upgrade-agent-platform-grant-isolation-v1.sql", IsolationUpgrade());
             await Script("agent-platform-grants-store.sql", PlatformStore());
-            await Script("provision-agent-platform-grants.sql", PlatformProvision(database));
+            await Script("platform-v1-provision.sql", PlatformProvision(database));
             var preflight = await Assert.ThrowsAsync<InvalidOperationException>(() => Script("agent-enrollment-target-store.sql", TargetStore()));
             Assert.Equal(PostgresErrorCodes.DivisionByZero, Assert.IsType<PostgresException>(preflight.InnerException).SqlState);
             Assert.Equal(0, await Scalar<long>("SELECT count(*) FROM pg_catalog.pg_class object JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace WHERE namespace.nspname='agent_private' AND object.relname='enrollment_target_read_database_bindings'"));
             await Script("upgrade-agent-capability-isolation-v2.sql", CapabilityUpgrade());
+            await Script("upgrade-agent-platform-grants-v1-to-v2.sql", PlatformStore());
+            await Script("provision-agent-platform-grants.sql", PlatformProvision(database));
             await Script("agent-enrollment-target-store.sql", TargetStore());
             await Script("provision-agent-enrollment-target.sql", TargetProvision(database));
             Platform = DataSource(builder, PlatformRole, _platformPassword);
+            Revoker = DataSource(builder, RevokerRole, _revokerPassword);
             Ingest = DataSource(builder, IngestRole, _ingestPassword);
             Enroll = DataSource(builder, EnrollRole, _enrollPassword);
             Issue = DataSource(builder, IssueRole, _issuePassword);
@@ -115,7 +122,7 @@ public sealed partial class AgentEnrollmentTargetFixture : IAsyncLifetime
 
     public async Task Reset()
     {
-        await Execute("DELETE FROM agent_private.platform_grant_receipts; DELETE FROM agent_private.enrollment_results; DELETE FROM agent_private.enrollment_requests; DELETE FROM agent_private.enrollment_grants; DELETE FROM agent_private.certificate_bindings; DELETE FROM agent_private.registrations; DELETE FROM agent_private.agent_device_directory_bindings; DELETE FROM agent_private.devices;");
+        await Execute("DELETE FROM agent_private.platform_grant_revocation_receipts; DELETE FROM agent_private.platform_grant_receipts; DELETE FROM agent_private.enrollment_results; DELETE FROM agent_private.enrollment_requests; DELETE FROM agent_private.enrollment_grants; DELETE FROM agent_private.certificate_bindings; DELETE FROM agent_private.registrations; DELETE FROM agent_private.agent_device_directory_bindings; DELETE FROM agent_private.devices;");
     }
 
     public async Task<AdditionalPlatformEnvironment> AddPlatformEnvironment()
@@ -146,11 +153,14 @@ public sealed partial class AgentEnrollmentTargetFixture : IAsyncLifetime
     {
         var environmentId = Guid.NewGuid();
         var role = $"agp_alt_{Guid.NewGuid():N}"[..20];
+        var revokerRole = $"agp_arv_{Guid.NewGuid():N}"[..20];
         var password = Secret();
-        await Execute($"CREATE ROLE {Id(role)} LOGIN PASSWORD {Lit(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;");
+        var revokerPassword = Secret();
+        await Execute($"CREATE ROLE {Id(role)} LOGIN PASSWORD {Lit(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION; CREATE ROLE {Id(revokerRole)} LOGIN PASSWORD {Lit(revokerPassword)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;");
         var dataSource = DataSource(new NpgsqlConnectionStringBuilder(_connectionString), role, password);
         _additionalPlatformRoles.Add((role, dataSource));
-        return new(environmentId, role, dataSource);
+        _additionalPlatformRoles.Add((revokerRole, DataSource(new NpgsqlConnectionStringBuilder(_connectionString), revokerRole, revokerPassword)));
+        return new(environmentId, role, dataSource, revokerRole);
     }
 
     internal async Task ProvisionPlatformEnvironment(AdditionalPlatformEnvironment additional)
@@ -159,6 +169,9 @@ public sealed partial class AgentEnrollmentTargetFixture : IAsyncLifetime
         var replacements = PlatformProvision(database);
         replacements[":\"agent_platform_grant_role\""] = Id(additional.Role);
         replacements[":'agent_platform_grant_role'"] = Lit(additional.Role);
+        var revokerRole = additional.RevokerRole ?? throw new InvalidOperationException("MissingRevoker");
+        replacements[":\"agent_platform_grant_revoker_role\""] = Id(revokerRole);
+        replacements[":'agent_platform_grant_revoker_role'"] = Lit(revokerRole);
         replacements[":'environment_id'"] = Lit(additional.EnvironmentId.ToString());
         await Script("provision-agent-platform-grants.sql", replacements);
     }
@@ -173,14 +186,18 @@ public sealed partial class AgentEnrollmentTargetFixture : IAsyncLifetime
         try
         {
             foreach (var additional in _additionalPlatformRoles) await additional.DataSource.DisposeAsync();
-            try { if (Target is not null) await Target.DisposeAsync(); }
-            finally { try { if (Platform is not null) await Platform.DisposeAsync(); } finally { try { if (Projection is not null) await Projection.DisposeAsync(); } finally { try { if (Issue is not null) await Issue.DisposeAsync(); } finally { try { if (Enroll is not null) await Enroll.DisposeAsync(); } finally { if (Ingest is not null) await Ingest.DisposeAsync(); } } } } }
+            try { if (Revoker is not null) await Revoker.DisposeAsync(); }
+            finally
+            {
+                try { if (Target is not null) await Target.DisposeAsync(); }
+                finally { try { if (Platform is not null) await Platform.DisposeAsync(); } finally { try { if (Projection is not null) await Projection.DisposeAsync(); } finally { try { if (Issue is not null) await Issue.DisposeAsync(); } finally { try { if (Enroll is not null) await Enroll.DisposeAsync(); } finally { if (Ingest is not null) await Ingest.DisposeAsync(); } } } } }
+            }
             if (Owner is not null && _rolesCreated)
             {
                 if (await Scalar<long>("SELECT count(*) FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner WHERE nspname='agent_private' AND rolname=@owner", P("owner", TableOwnerRole)) == 1) await Execute("DROP SCHEMA agent_private CASCADE");
                 var database = new NpgsqlConnectionStringBuilder(_connectionString).Database!;
                 var additional = string.Concat(_additionalPlatformRoles.Select(value => $"REVOKE CONNECT ON DATABASE {Id(database)} FROM {Id(value.Role)}; DROP ROLE IF EXISTS {Id(value.Role)};"));
-                await Execute($"{additional} REVOKE CONNECT ON DATABASE {Id(database)} FROM {Id(IngestRole)},{Id(EnrollRole)},{Id(IssueRole)},{Id(ProjectionRole)},{Id(PlatformRole)},{Id(TargetRole)}; DROP ROLE IF EXISTS {Id(TargetRole)},{Id(TargetDefinerRole)},{Id(PlatformRole)},{Id(PlatformDefinerRole)},{Id(ProjectionRole)},{Id(ProjectionDefinerRole)},{Id(IssueRole)},{Id(EnrollRole)},{Id(EnrollmentDefinerRole)},{Id(IngestRole)},{Id(TableOwnerRole)};");
+                await Execute($"{additional} REVOKE CONNECT ON DATABASE {Id(database)} FROM {Id(IngestRole)},{Id(EnrollRole)},{Id(IssueRole)},{Id(ProjectionRole)},{Id(PlatformRole)},{Id(RevokerRole)},{Id(TargetRole)}; DROP ROLE IF EXISTS {Id(TargetRole)},{Id(TargetDefinerRole)},{Id(RevokerRole)},{Id(PlatformRole)},{Id(PlatformDefinerRole)},{Id(ProjectionRole)},{Id(ProjectionDefinerRole)},{Id(IssueRole)},{Id(EnrollRole)},{Id(EnrollmentDefinerRole)},{Id(IngestRole)},{Id(TableOwnerRole)};");
             }
         }
         finally { try { if (_lease is not null) await _lease.DisposeAsync(); } finally { if (Owner is not null) await Owner.DisposeAsync(); } }
@@ -188,8 +205,8 @@ public sealed partial class AgentEnrollmentTargetFixture : IAsyncLifetime
 
     internal Dictionary<string, string> ProjectionStore() => new() { [":\"agent_table_owner_role\""] = Id(TableOwnerRole), [":\"agent_projection_definer_role\""] = Id(ProjectionDefinerRole), [":'agent_table_owner_role'"] = Lit(TableOwnerRole), [":'agent_projection_definer_role'"] = Lit(ProjectionDefinerRole) };
     internal Dictionary<string, string> ProjectionProvision(string database) => new(ProjectionStore()) { [":\"agent_projection_role\""] = Id(ProjectionRole), [":'agent_projection_role'"] = Lit(ProjectionRole), [":'environment_id'"] = Lit(EnvironmentId.ToString()), [":DBNAME"] = Id(database) };
-    internal Dictionary<string, string> PlatformStore() => new() { [":\"agent_table_owner_role\""] = Id(TableOwnerRole), [":\"agent_platform_grant_definer_role\""] = Id(PlatformDefinerRole), [":'agent_table_owner_role'"] = Lit(TableOwnerRole), [":'agent_platform_grant_definer_role'"] = Lit(PlatformDefinerRole) };
-    internal Dictionary<string, string> PlatformProvision(string database) => new(PlatformStore()) { [":\"agent_platform_grant_role\""] = Id(PlatformRole), [":'agent_platform_grant_role'"] = Lit(PlatformRole), [":'environment_id'"] = Lit(EnvironmentId.ToString()), [":DBNAME"] = Id(database) };
+    internal Dictionary<string, string> PlatformStore() => new() { [":\"agent_table_owner_role\""] = Id(TableOwnerRole), [":\"agent_platform_grant_definer_role\""] = Id(PlatformDefinerRole), [":'agent_table_owner_role'"] = Lit(TableOwnerRole), [":'agent_platform_grant_definer_role'"] = Lit(PlatformDefinerRole), [":\"agent_platform_grant_role\""] = Id(PlatformRole), [":'agent_platform_grant_role'"] = Lit(PlatformRole) };
+    internal Dictionary<string, string> PlatformProvision(string database) => new(PlatformStore()) { [":\"agent_platform_grant_role\""] = Id(PlatformRole), [":'agent_platform_grant_role'"] = Lit(PlatformRole), [":\"agent_platform_grant_revoker_role\""] = Id(RevokerRole), [":'agent_platform_grant_revoker_role'"] = Lit(RevokerRole), [":'environment_id'"] = Lit(EnvironmentId.ToString()), [":DBNAME"] = Id(database) };
     internal Dictionary<string, string> IsolationUpgrade() => new()
     {
         [":\"agent_table_owner_role\""] = Id(TableOwnerRole),
@@ -284,4 +301,4 @@ public sealed partial class AgentEnrollmentTargetFixture : IAsyncLifetime
 }
 
 public sealed record TestMapping(Guid EnvironmentId, Guid DirectoryObjectId, Guid DeviceId, DateTimeOffset MappingCreatedAt);
-public sealed record AdditionalPlatformEnvironment(Guid EnvironmentId, string Role, NpgsqlDataSource DataSource);
+public sealed record AdditionalPlatformEnvironment(Guid EnvironmentId, string Role, NpgsqlDataSource DataSource, string? RevokerRole = null);
