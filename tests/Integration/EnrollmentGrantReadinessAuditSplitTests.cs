@@ -41,6 +41,51 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await Audit(runtime, "audit_execution_privileges", false);
         await Audit(status, "audit_delivery_privileges", false);
         await Audit(delivery, "audit_delivery_privileges", false);
+        // Enumerate effective privileges, including PUBLIC and memberships, rather than
+        // proving only that a handpicked wrapper list rejects Pending.
+        foreach (var (connection, expectedNames) in new[] {
+            (runtime, new[] { "audit_execution_privileges", "read_execution_record", "read_and_lock_plan_context",
+                "authorize_and_store_candidate", "record_execution_result", "quarantine_execution", "claim_next", "defer_claim", "complete_claim" }),
+            (status, new[] { "audit_delivery_privileges", "read_grant_status_receipt", "append_grant_status_observation" }),
+            (delivery, new[] { "audit_delivery_privileges", "read_grant_delivery", "acknowledge_grant_delivery" }) })
+        {
+            await using var surface = new NpgsqlCommand("""
+                SELECT p.proname::text
+                FROM pg_catalog.pg_proc p
+                WHERE p.pronamespace='enrollment_execution'::regnamespace
+                  AND pg_catalog.has_schema_privilege(p.pronamespace,'USAGE')
+                  AND pg_catalog.has_function_privilege(p.oid,'EXECUTE')
+                ORDER BY p.proname COLLATE "C",p.oid
+                """, connection);
+            var actualNames = new List<string>();
+            await using var reader = await surface.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) actualNames.Add(reader.GetString(0));
+            Assert.Equal(expectedNames.Order(StringComparer.Ordinal), actualNames);
+            await reader.DisposeAsync();
+            await using var directData = new NpgsqlCommand("""
+                SELECT c.relname::text
+                FROM pg_catalog.pg_class c
+                WHERE c.relnamespace='enrollment_execution'::regnamespace AND c.relkind IN ('r','p','v','m','f')
+                  AND (pg_catalog.has_table_privilege(c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                    OR pg_catalog.has_any_column_privilege(c.oid,'SELECT,INSERT,UPDATE,REFERENCES'))
+                ORDER BY c.relname COLLATE "C"
+                """, connection);
+            await using var dataReader = await directData.ExecuteReaderAsync(cancellationToken);
+            var directlyAccessible = new List<string>();
+            while (await dataReader.ReadAsync(cancellationToken)) directlyAccessible.Add(dataReader.GetString(0));
+            Assert.Empty(directlyAccessible);
+            await dataReader.DisposeAsync();
+            await using var sequences = new NpgsqlCommand("""
+                SELECT c.relname::text FROM pg_catalog.pg_class c
+                WHERE CASE WHEN c.relnamespace='enrollment_execution'::regnamespace AND c.relkind='S'
+                  THEN pg_catalog.has_sequence_privilege(c.oid,'USAGE,SELECT,UPDATE') ELSE false END
+                ORDER BY c.relname COLLATE "C"
+                """, connection);
+            await using var sequenceReader = await sequences.ExecuteReaderAsync(cancellationToken);
+            var accessibleSequences = new List<string>();
+            while (await sequenceReader.ReadAsync(cancellationToken)) accessibleSequences.Add(sequenceReader.GetString(0));
+            Assert.Empty(accessibleSequences);
+        }
         var denied = await Assert.ThrowsAsync<PostgresException>(() => Audit(runtime, "audit_execution_profile_structure", true));
         Assert.Equal("42501", denied.SqlState);
         foreach (var (connection, name) in new[] {
