@@ -2,6 +2,24 @@ namespace ItManagement.IntegrationTests;
 
 public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
 {
+    [Fact]
+    public async Task DeliveryGeneratedDefinerCatalogMatchesSource()
+    {
+        const string begin = "    -- BEGIN generated delivery definer catalog";
+        const string end = "    -- END generated delivery definer catalog";
+        var source = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "audit-enrollment-delivery-definer.sql"));
+        var query = source[source.IndexOf("WITH ", StringComparison.Ordinal)..].Trim().TrimEnd(';')
+            .Replace(":'expected_table_owner_role'", "pg_catalog.pg_get_userbyid(table_owner)", StringComparison.Ordinal)
+            .Replace(":'delivery_definer_role'", "pg_catalog.pg_get_userbyid(delivery_definer)", StringComparison.Ordinal);
+        var expected = begin + "\n    -- Source: audit-enrollment-delivery-definer.sql\n    ok := ok AND (\n" + query + "\n    );\n" + end;
+        var profile = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-execution-profile.sql"));
+        Assert.Equal(1, profile.Split(begin, StringSplitOptions.None).Length - 1);
+        Assert.Equal(1, profile.Split(end, StringSplitOptions.None).Length - 1);
+        var start = profile.IndexOf(begin, StringComparison.Ordinal);
+        var finish = profile.IndexOf(end, StringComparison.Ordinal) + end.Length;
+        Assert.Equal(expected.Replace("\r\n", "\n"), profile[start..finish].Replace("\r\n", "\n"));
+    }
+
     private static async Task<string> DeliveryDefinerCatalogProbeAsync(CancellationToken cancellationToken)
     {
         var query = (await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "audit-enrollment-delivery-definer.sql"), cancellationToken)).Trim().TrimEnd(';');
@@ -45,6 +63,24 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         })
         {
             sql += "SAVEPOINT definer_catalog_case;\n" + mutation.Sql + "\n" + Verify(query, false, mutation.Label);
+            foreach (var role in new[] { "status_runtime_role", "delivery_runtime_role" })
+            {
+                sql += $"SET LOCAL SESSION AUTHORIZATION :\"{role}\";\n";
+                sql += $$"""
+                    DO $composed_definer_probe$
+                    DECLARE row_count integer; rejected boolean;
+                    BEGIN
+                      SELECT count(*),bool_and(result.is_valid IS FALSE AND result.diagnostic_code='ProfileDrift' AND result.profile_version=4)
+                        INTO row_count,rejected FROM enrollment_execution.audit_delivery_privileges(
+                          current_setting('app.catalog_expected_environment_id')::uuid) result;
+                      IF row_count<>1 OR rejected IS DISTINCT FROM true THEN
+                        RAISE EXCEPTION 'Composed definer catalog accepted: {{mutation.Label}}';
+                      END IF;
+                    END $composed_definer_probe$;
+
+                    """;
+                sql += "RESET SESSION AUTHORIZATION;\n";
+            }
             sql += "ROLLBACK TO SAVEPOINT definer_catalog_case;\nRELEASE SAVEPOINT definer_catalog_case;\n";
         }
         return sql;

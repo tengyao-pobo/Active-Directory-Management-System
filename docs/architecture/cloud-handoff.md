@@ -76,6 +76,10 @@ The reproduced temp-Roles bypass is repaired by a shared, versioned `owner-mappi
 
 ACL commit `7e608f0` passed PR CI 34700586683, while push CI 34700585036 failed only `ParallelCandidatesConvergeOnPersistedWinner` (expected 2 calls, actual 1). The test store now captures its initial record before releasing the barrier, and its issuer counter is atomic. All 22 executor tests and ten consecutive race-test repetitions pass. Production executor behavior is unchanged by that test correction. Latest changes still require their own CI. Delivery remains inactive; the next bounded step composes the exact definer ACL slice, followed by complete data/trigger attestation and real production-wrapper LOGIN coverage.
 
+## Local composed definer catalog checkpoint — inactive
+
+The exact definer ACL query is now generated into the real internal base immediately after API binding identity, before runtime privilege checks. Its separate generated marker preserves the narrower structural fixture's honest scope; the generator checks both groups atomically and a new source-equality test pins substitutions. Every definer drift case also calls the real audit under both runtime identities and requires exactly one false/ProfileDrift/version4 result. All eight upgrade/generated checks pass (both collations, absent/pair, rollback-to-v3), and the expanded delivery/API guard suite passes all 200 tests. Daybreak found no bounded composition blocker. The external gate and consumer inactivity are unchanged. Next: complete status/journal table constraints, indexes and trigger attachment inventories before installer/consumer activation.
+
 ## Earlier cloud recheck record
 
 The initial cloud commit `cfe74ec` was not built or tested and must not be treated as completed delivery attestation. Daybreak Blue subsequently blocked that delta: the external audit queried owner-only application tables through a runtime forbidden from reading them, used throwing regprocedure casts for missing wrappers, and prematurely accepted the unfinished profile4 body in consumers with version3-only downstream checks.
