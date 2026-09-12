@@ -209,9 +209,21 @@ public sealed partial class AgentPlatformGrantFixture : IAsyncLifetime
         await Script("provision-agent-platform-grants.sql", replacements);
     }
 
+    internal async Task<(string Role, NpgsqlDataSource DataSource)> CreateStatusLogin()
+    {
+        var role = $"agp_status_{Guid.NewGuid():N}"[..24];
+        var password = Secret();
+        await Execute($"CREATE ROLE {Id(role)} LOGIN PASSWORD {Lit(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION");
+        var source = DataSource(new NpgsqlConnectionStringBuilder(_connectionString), role, password);
+        _additionalPlatformRoles.Add((role, source));
+        return (role, source);
+    }
+
     public async Task Execute(string sql, params NpgsqlParameter[] parameters) { await using var command = Owner.CreateCommand(sql); command.Parameters.AddRange(parameters); await command.ExecuteNonQueryAsync(); }
     public async Task<T> Scalar<T>(string sql, params NpgsqlParameter[] parameters) { await using var command = Owner.CreateCommand(sql); command.Parameters.AddRange(parameters); return (T)(await command.ExecuteScalarAsync())!; }
     public Task DisposeAsync() => Cleanup();
+
+    internal NpgsqlConnectionStringBuilder OwnerConnectionSettings() => new(_connectionString);
 
     private async Task RemoveAdditionalPlatformRoles()
     {
@@ -346,7 +358,32 @@ public sealed partial class AgentPlatformGrantFixture : IAsyncLifetime
                 : $"{file} failed with database error {error.SqlState}.", error);
         }
     }
-    private static async Task<string> Render(string file, Dictionary<string, string> replacements) { var lines = await File.ReadAllLinesAsync(Path.Combine(AppContext.BaseDirectory, file)); var sql = string.Join('\n', lines.Where(line => !line.StartsWith('\\'))); foreach (var replacement in replacements.OrderByDescending(value => value.Key.Length)) sql = sql.Replace(replacement.Key, replacement.Value, StringComparison.Ordinal); return sql; }
+    private static async Task<string> Render(string file, Dictionary<string, string> replacements)
+    {
+        var sql = await ReadScript(file, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        foreach (var replacement in replacements.OrderByDescending(value => value.Key.Length))
+            sql = sql.Replace(replacement.Key, replacement.Value, StringComparison.Ordinal);
+        return sql;
+    }
+
+    private static async Task<string> ReadScript(string file, HashSet<string> active)
+    {
+        if (Path.GetFileName(file) != file || !active.Add(file))
+            throw new InvalidOperationException("InvalidOrRecursiveSqlInclude");
+        try
+        {
+            var lines = await File.ReadAllLinesAsync(Path.Combine(AppContext.BaseDirectory, file));
+            var rendered = new List<string>();
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("\\ir ", StringComparison.Ordinal))
+                    rendered.Add(await ReadScript(line[4..].Trim().Trim('\'', '"'), active));
+                else if (!line.StartsWith('\\')) rendered.Add(line);
+            }
+            return string.Join('\n', rendered);
+        }
+        finally { active.Remove(file); }
+    }
     private static NpgsqlDataSource DataSource(NpgsqlConnectionStringBuilder source, string role, string password) => NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(source.ConnectionString) { Username = role, Password = password, Pooling = false }.ConnectionString);
     private static NpgsqlParameter P(string name, object value) => new(name, value);
     private static string Secret() => Convert.ToHexString(RandomNumberGenerator.GetBytes(24));

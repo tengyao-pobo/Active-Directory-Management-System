@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Npgsql;
 
 namespace ItManagement.AgentPlatformGrants;
@@ -22,7 +23,7 @@ public sealed class PostgresPlatformGrantRevocationRepository
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedTableOwner);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedFunctionOwner);
         await using var command = dataSource.CreateCommand(
-            "SELECT audit.is_valid,audit.diagnostic_code,audit.profile_version,NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,smallint,timestamptz)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,smallint,timestamptz,bytea)'::pg_catalog.regprocedure,'EXECUTE') FROM agent_private.audit_platform_grant_privileges(@environment_id,@table_owner::name,@function_owner::name) audit");
+            "SELECT audit.is_valid,audit.diagnostic_code,audit.profile_version,NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,smallint,timestamptz)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,smallint,timestamptz,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND CASE WHEN audit.profile_version=4 THEN NOT pg_catalog.has_function_privilege(SESSION_USER,pg_catalog.to_regprocedure('agent_private.read_initial_enrollment_grant_status(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'),'EXECUTE') AND NOT pg_catalog.has_function_privilege(SESSION_USER,pg_catalog.to_regprocedure('agent_private.read_initial_enrollment_grant_status(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,smallint,timestamptz)'),'EXECUTE') WHEN audit.profile_version=3 THEN true ELSE false END FROM agent_private.audit_platform_grant_privileges(@environment_id,@table_owner::name,@function_owner::name) audit");
         command.Parameters.AddWithValue("environment_id", expectedEnvironmentId);
         command.Parameters.AddWithValue("table_owner", expectedTableOwner);
         command.Parameters.AddWithValue("function_owner", expectedFunctionOwner);
@@ -33,11 +34,13 @@ public sealed class PostgresPlatformGrantRevocationRepository
         var diagnostic = PostgresPlatformGrantRepository.ParseDiagnostic(reader.GetString(1));
         var version = reader.GetInt16(2);
         var hasExactRevocationCapability = reader.GetBoolean(3);
-        if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !valid || version != 3 ||
+        if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !valid || !AcceptsAuditProfile(version) ||
             diagnostic != PlatformGrantDiagnostic.None || !hasExactRevocationCapability)
             throw new InvalidOperationException("PlatformGrantPrivilegeAuditFailed");
         return new(dataSource, expectedEnvironmentId);
     }
+
+    internal static bool AcceptsAuditProfile(short version) => version is 3 or 4;
 
     public async Task<PlatformGrantReadResult> ReadAsync(PlatformGrantReceipt receipt,
         CancellationToken cancellationToken)
@@ -50,12 +53,9 @@ public sealed class PostgresPlatformGrantRevocationRepository
                 ? "SELECT state,diagnostic_code,environment_id,operation_id,grant_id,directory_object_id,device_id,mapping_created_at,token_sha256,authorization_digest,created_at,expires_at,issue_contract_version,mint_permit_not_after,observed_at,state_changed_at FROM agent_private.read_initial_enrollment_grant(@expected_environment_id,@operation_id,@grant_id,@directory_object_id,@device_id,@mapping_created_at,@token_sha256,@authorization_digest,@created_at,@expires_at)"
                 : "SELECT state,diagnostic_code,environment_id,operation_id,grant_id,directory_object_id,device_id,mapping_created_at,token_sha256,authorization_digest,created_at,expires_at,issue_contract_version,mint_permit_not_after,observed_at,state_changed_at FROM agent_private.read_initial_enrollment_grant(@expected_environment_id,@operation_id,@grant_id,@directory_object_id,@device_id,@mapping_created_at,@token_sha256,@authorization_digest,@created_at,@expires_at,@issue_contract_version,@mint_permit_not_after)";
             await using var command = _dataSource.CreateCommand(sql);
-            AddIssueReceipt(command, receipt);
+            AddIssueReceipt(command, receipt, _environmentId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) return UnknownRead();
-            var row = ReadStateRow(reader);
-            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) return UnknownRead();
-            return NormalizeRead(row, receipt);
+            return await ReadResponseAsync(reader, receipt, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (NpgsqlException) { return UnknownRead(PlatformGrantDiagnostic.ConnectionUnavailable); }
@@ -78,7 +78,7 @@ public sealed class PostgresPlatformGrantRevocationRepository
                 ? "SELECT outcome,diagnostic_code,environment_id,revocation_operation_id,issue_operation_id,grant_id,directory_object_id,device_id,mapping_created_at,token_sha256,issue_authorization_digest,issue_created_at,issue_expires_at,issue_contract_version,issue_mint_permit_not_after,revoke_authorization_digest,disposition,completed_at,effective_revoked_at FROM agent_private.revoke_initial_enrollment_grant(@expected_environment_id,@revocation_operation_id,@operation_id,@grant_id,@directory_object_id,@device_id,@mapping_created_at,@token_sha256,@authorization_digest,@created_at,@expires_at,@revoke_authorization_digest)"
                 : "SELECT outcome,diagnostic_code,environment_id,revocation_operation_id,issue_operation_id,grant_id,directory_object_id,device_id,mapping_created_at,token_sha256,issue_authorization_digest,issue_created_at,issue_expires_at,issue_contract_version,issue_mint_permit_not_after,revoke_authorization_digest,disposition,completed_at,effective_revoked_at FROM agent_private.revoke_initial_enrollment_grant(@expected_environment_id,@revocation_operation_id,@operation_id,@grant_id,@directory_object_id,@device_id,@mapping_created_at,@token_sha256,@authorization_digest,@created_at,@expires_at,@issue_contract_version,@mint_permit_not_after,@revoke_authorization_digest)";
             await using var command = _dataSource.CreateCommand(sql);
-            AddIssueReceipt(command, authorization.IssueReceipt);
+            AddIssueReceipt(command, authorization.IssueReceipt, _environmentId);
             command.Parameters.AddWithValue("revocation_operation_id", revocationOperationId);
             command.Parameters.AddWithValue("revoke_authorization_digest", authorization.GetDigest());
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -95,9 +95,10 @@ public sealed class PostgresPlatformGrantRevocationRepository
         catch (OverflowException) { return UnknownRevoke(); }
     }
 
-    private void AddIssueReceipt(NpgsqlCommand command, PlatformGrantReceipt receipt)
+    internal static void AddIssueReceipt(NpgsqlCommand command, PlatformGrantReceipt receipt,
+        Guid expectedEnvironmentId)
     {
-        command.Parameters.AddWithValue("expected_environment_id", _environmentId);
+        command.Parameters.AddWithValue("expected_environment_id", expectedEnvironmentId);
         command.Parameters.AddWithValue("operation_id", receipt.OperationId);
         command.Parameters.AddWithValue("grant_id", receipt.GrantId);
         command.Parameters.AddWithValue("directory_object_id", receipt.DirectoryObjectId);
@@ -114,12 +115,21 @@ public sealed class PostgresPlatformGrantRevocationRepository
         }
     }
 
-    private static PlatformGrantStateDatabaseResult ReadStateRow(NpgsqlDataReader reader) => new(
+    internal static async Task<PlatformGrantReadResult> ReadResponseAsync(DbDataReader reader,
+        PlatformGrantReceipt receipt, CancellationToken cancellationToken)
+    {
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) return UnknownRead();
+        var row = ReadStateRow(reader);
+        if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) return UnknownRead();
+        return NormalizeRead(row, receipt);
+    }
+
+    internal static PlatformGrantStateDatabaseResult ReadStateRow(DbDataReader reader) => new(
         Text(reader, 0), Text(reader, 1), GuidValue(reader, 2), GuidValue(reader, 3), GuidValue(reader, 4),
         GuidValue(reader, 5), GuidValue(reader, 6), Time(reader, 7), Bytes(reader, 8), Bytes(reader, 9),
         Time(reader, 10), Time(reader, 11), Time(reader, 14), Time(reader, 15), Short(reader, 12), Time(reader, 13));
 
-    private static PlatformGrantRevocationDatabaseResult ReadRevocationRow(NpgsqlDataReader reader) => new(
+    private static PlatformGrantRevocationDatabaseResult ReadRevocationRow(DbDataReader reader) => new(
         Text(reader, 0), Text(reader, 1), GuidValue(reader, 2), GuidValue(reader, 3), GuidValue(reader, 4),
         GuidValue(reader, 5), GuidValue(reader, 6), GuidValue(reader, 7), Time(reader, 8), Bytes(reader, 9),
         Bytes(reader, 10), Time(reader, 11), Time(reader, 12), Bytes(reader, 15), Text(reader, 16),
@@ -272,15 +282,15 @@ public sealed class PostgresPlatformGrantRevocationRepository
         _ => null
     };
 
-    private static PlatformGrantReadResult UnknownRead(PlatformGrantDiagnostic diagnostic = PlatformGrantDiagnostic.ResponseUnavailable) =>
+    internal static PlatformGrantReadResult UnknownRead(PlatformGrantDiagnostic diagnostic = PlatformGrantDiagnostic.ResponseUnavailable) =>
         new(PlatformGrantEffectiveState.Unknown, diagnostic, null, null);
     private static PlatformGrantRevocationResult UnknownRevoke(PlatformGrantDiagnostic diagnostic = PlatformGrantDiagnostic.ResponseUnavailable) =>
         new(PlatformGrantRevocationOutcome.Unknown, diagnostic, null);
-    private static string? Text(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
-    private static Guid? GuidValue(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
-    private static DateTimeOffset? Time(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<DateTimeOffset>(ordinal);
-    private static byte[]? Bytes(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<byte[]>(ordinal);
-    private static short? Short(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetInt16(ordinal);
+    private static string? Text(DbDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    private static Guid? GuidValue(DbDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
+    private static DateTimeOffset? Time(DbDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<DateTimeOffset>(ordinal);
+    private static byte[]? Bytes(DbDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<byte[]>(ordinal);
+    private static short? Short(DbDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetInt16(ordinal);
 }
 
 internal sealed record PlatformGrantStateDatabaseResult(string? State, string? Diagnostic, Guid? EnvironmentId,

@@ -25,6 +25,9 @@
     <None Include="..\..\build\upgrade-agent-capability-isolation-v2.sql" Link="upgrade-agent-capability-isolation-v2.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\upgrade-agent-platform-grants-v1-to-v2.sql" Link="upgrade-agent-platform-grants-v1-to-v2.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\upgrade-agent-platform-grants-v2-to-v3.sql" Link="upgrade-agent-platform-grants-v2-to-v3.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\upgrade-agent-platform-grants-v3-to-v4.sql" Link="upgrade-agent-platform-grants-v3-to-v4.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\agent-platform-grants-v4-functions.sql" Link="agent-platform-grants-v4-functions.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\provision-agent-platform-grant-status-reader.sql" Link="provision-agent-platform-grant-status-reader.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\downgrade-agent-platform-grants-v2-to-v1.sql" Link="downgrade-agent-platform-grants-v2-to-v1.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\agent-platform-grants\v1\agent-platform-grants-store.sql" Link="v1-agent-platform-grants-store.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\agent-platform-grants\v1\provision-agent-platform-grants.sql" Link="v1-provision-agent-platform-grants.sql" CopyToOutputDirectory="PreserveNewest" />

@@ -2,7 +2,7 @@
 
 平台設備頁仍是註冊申請、核准與結果的操作入口。這個獨立後端程式負責 Worker 的設定、資料庫契約驗證及資源生命週期；不需要操作人員改用 RSAT。
 
-目前唯一可執行的功能是 `--verify`：驗證全部環境設定、建立每環境兩個用途專用連線池、核對 public execution profile v3 與 private issue profile v3，再釋放全部連線池。它不認領工作、不發行 grant、不交付密文，也不改變 API readiness。無參數、`--process` 或任何其他參數皆以代碼 2 結束；不存在可啟用正式處理的 `Enabled` 設定。
+目前唯一可執行的功能是 `--verify`：驗證全部環境設定、建立每環境兩個用途專用連線池、核對 public execution profile v3 與 private issue profile v3／v4，再釋放全部連線池。它不認領工作、不發行 grant、不交付密文，也不改變 API readiness。無參數、`--process` 或任何其他參數皆以代碼 2 結束；不存在可啟用正式處理的 `Enabled` 設定。
 
 ## 設定來源
 
