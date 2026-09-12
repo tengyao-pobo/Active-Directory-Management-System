@@ -153,6 +153,7 @@ public static partial class EnrollmentGrantPlanApi
                 await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1) + Random.Shared.Next(25)), ct);
             }
             catch (Exception error) when (IsSerialization(error)) { return Results.Problem(statusCode: 409, title: "ConcurrentChange"); }
+            catch (Exception error) when (!ct.IsCancellationRequested && IsPublicationUnavailable(error)) { return ExecutionUnavailable(); }
             catch (PostgresException error) when (error.SqlState == "42501") { return Results.NotFound(); }
         }
     }
@@ -239,4 +240,10 @@ public static partial class EnrollmentGrantPlanApi
         new(value.Id, value.EnvironmentId, value.PlanId, value.DirectoryObjectId, "Queued", value.QueuedAt, value.AuthorizationNotAfter, now);
     private static IResult ExecutionChanged() => Results.Problem(statusCode: 409, title: "EnrollmentGrantExecutionChanged");
     private static IResult ExecutionUnavailable() => Results.Problem(statusCode: 503, title: "EnrollmentGrantExecutionUnavailable");
+    private static bool IsPublicationUnavailable(Exception error)
+    {
+        for (Exception? current = error; current is not null; current = current.InnerException)
+            if (current is PostgresException { SqlState: "55000", MessageText: "Enrollment grant publication is unavailable." }) return true;
+        return false;
+    }
 }
