@@ -2,7 +2,7 @@
 
 本增量實作平台排隊交易與私有發行期限契約。背景 worker、單次許可持久化、密文保存與交付尚未接上；正式組合的 readiness 固定為不可用，不會建立新的佇列。最終操作流程在既有設備頁面完成申請、核准、執行與查看結果；底層用途隔離不增加外部工具切換。
 
-後續已新增獨立 execution library 與封閉 journal schema，詳見[背景恢復基礎](platform-grant-worker.md)。這些程式尚未與正式 public-store repository、worker host 或交付介面組合。
+後續已新增獨立 execution library 與封閉 journal schema，詳見[背景恢復基礎](platform-grant-worker.md)，以及[用途專用 PostgreSQL repository](platform-grant-public-store.md)。worker host 與交付介面尚未組合。
 
 ## 執行交易
 

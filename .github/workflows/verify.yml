@@ -64,6 +64,13 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: global.json
+      - name: Ensure psql for deployment integration tests
+        run: |
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --yes postgresql-client
+          fi
+          psql --version
       - run: dotnet restore ITManagement.slnx --locked-mode
       - run: dotnet build ITManagement.slnx -c Release --no-restore
       - name: Migrate isolated CI database

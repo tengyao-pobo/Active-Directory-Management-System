@@ -72,6 +72,8 @@ bootstrap-owner 以隱藏 console input（或 stdin）取得密碼，不經 comm
 
 也可依序 `dotnet restore --locked-mode`、`dotnet build -c Release --no-restore`、`dotnet test -m:1 -c Release --no-build`。資料庫測試專案會修改共用角色／schema catalog，因此依專案循序執行；單一案例內的並行請求與交易競爭測試仍保留。整合測試若缺 DB connection 會失敗，不能靜默 skip 冒充驗證完成。tests 用真 PostgreSQL，不用 EF InMemory 替代交易/RLS。
 
+隔離資料庫若使用不同的用途角色，可設定 `CONSOLE_TEST_PLAN_LOCK_OWNER` 與 `CONSOLE_TEST_EXECUTION_DEFINER`；預設分別為 `console_enrollment_plan_locker`、`console_execution_definer`。執行用途的 psql 測試可用 `CONSOLE_TEST_PSQL` 指定 executable。平台 execution 與 Agent private 的正式部署必須分庫；Agent 測試 fixtures 可透過各自的 `AGENT_*_TEST_DB` 指向另外的 loopback `console_test` 或 `console_ci`，仍保持專案循序執行。
+
 測試資料都是新 UUID 與合成帳號。因 Audit/SecurityEvents append-only，測試故意保留這些記錄；只有重建整個明確隔離的 test DB 才清除，禁止對正式資料庫執行測試或 cleanup。
 
 本機 PostgreSQL 只聽 `127.0.0.1:55432`；資料位於 `.local/pgdata`。停止開發資料庫可執行 `.tools/postgresql/pgsql/bin/pg_ctl -D .local/pgdata stop`；此操作限本專案建立的 instance。API 此輪未安裝為持續運行服務。
