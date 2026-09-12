@@ -12,6 +12,7 @@ try {
     & (Join-Path $PSScriptRoot 'update-enrollment-delivery-history.ps1') -Check
     & (Join-Path $PSScriptRoot 'update-enrollment-profile4-manifest.ps1') -Check
     & (Join-Path $PSScriptRoot 'update-enrollment-profile4-function-contracts.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-audit-split.ps1') -Check
     & $dotnet restore ITManagement.slnx --locked-mode
     if ($LASTEXITCODE -ne 0) { throw 'Restore failed' }
     & $dotnet build ITManagement.slnx -c $Configuration --no-restore

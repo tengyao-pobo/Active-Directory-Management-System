@@ -22,6 +22,8 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         var worker = "cdu_worker_" + suffix;
         var delivery = "cdu_delivery_" + suffix;
         var historyOwner = "cdh_owner_" + suffix;
+        var statusRuntime = "cdh_status_" + suffix;
+        var deliveryRuntime = "cdh_reader_" + suffix;
         var password = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         var admin = new NpgsqlConnectionStringBuilder(owner.ConnectionString) { Database = "postgres", Pooling = false };
@@ -40,7 +42,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await db.Database.MigrateAsync(deadline.Token);
         await db.Database.OpenConnectionAsync(deadline.Token);
         // Every resource name/password is generated from fixed prefixes and hexadecimal bytes.
-        var roles = new List<(string Name, bool Login)> { (api, true), (worker, true), (historyOwner, true), (locker, false), (executor, false), (queue, false), (delivery, false) };
+        var roles = new List<(string Name, bool Login)> { (api, true), (worker, true), (historyOwner, true), (statusRuntime, true), (deliveryRuntime, true), (locker, false), (executor, false), (queue, false), (delivery, false) };
         foreach (var (name, login) in roles)
         {
             var authentication = login ? "LOGIN PASSWORD '" + password + "'" : "NOLOGIN";
@@ -58,6 +60,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             ["runtime_role"] = api, ["enrollment_plan_lock_owner_role"] = locker,
             ["execution_runtime_role"] = worker, ["execution_definer_role"] = executor,
             ["execution_queue_definer_role"] = queue, ["delivery_definer_role"] = delivery,
+            ["status_runtime_role"] = statusRuntime, ["delivery_runtime_role"] = deliveryRuntime,
             ["expected_table_owner_role"] = owner.Username!, ["expected_environment_id"] = environment.Id.ToString(), ["DBNAME"] = database
         };
         foreach (var path in new[] { "provision-runtime.sql", "enrollment-execution/v3/provision-enrollment-execution.sql" })
@@ -79,6 +82,8 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             Assert.True(installed.ExitCode == 0, installed.Error);
         }
         finally { File.Delete(candidatePath); }
+        var pair = await RunScript(owner, "provision-enrollment-delivery.sql", variables, deadline.Token);
+        Assert.True(pair.ExitCode == 0, pair.Error);
         await using (var limit = new NpgsqlCommand($"ALTER ROLE {historyOwner} CONNECTION LIMIT 1 VALID UNTIL '{DateTimeOffset.UtcNow.AddMinutes(15):O}'", (NpgsqlConnection)db.Database.GetDbConnection()))
             await limit.ExecuteNonQueryAsync(deadline.Token);
         await using (var transfer = await db.Database.BeginTransactionAsync(deadline.Token))
@@ -159,6 +164,9 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await reader.DisposeAsync();
         await VerifyHistoryVisibilityAsync(ownerLogin, (NpgsqlConnection)db.Database.GetDbConnection(), historyOwner, cleanup.CreatedRoles, deadline.Token);
         await VerifyReadinessFoundationAsync(ownerLogin, (NpgsqlConnection)db.Database.GetDbConnection(),
-            new NpgsqlConnectionStringBuilder(owner.ConnectionString) { Username = worker, Password = password, Pooling = false }.ConnectionString, deadline.Token);
+            new NpgsqlConnectionStringBuilder(owner.ConnectionString) { Username = worker, Password = password, Pooling = false }.ConnectionString,
+            new NpgsqlConnectionStringBuilder(owner.ConnectionString) { Username = statusRuntime, Password = password, Pooling = false }.ConnectionString,
+            new NpgsqlConnectionStringBuilder(owner.ConnectionString) { Username = deliveryRuntime, Password = password, Pooling = false }.ConnectionString,
+            environment.Id, deadline.Token);
     }
 }

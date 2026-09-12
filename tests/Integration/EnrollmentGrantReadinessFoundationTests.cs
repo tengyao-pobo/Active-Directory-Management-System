@@ -5,7 +5,7 @@ namespace ItManagement.IntegrationTests;
 public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
 {
     private static async Task VerifyReadinessFoundationAsync(NpgsqlConnection owner, NpgsqlConnection admin,
-        string runtimeConnection, CancellationToken cancellationToken)
+        string runtimeConnection, string statusConnection, string deliveryConnection, Guid environment, CancellationToken cancellationToken)
     {
         async Task Execute(NpgsqlConnection connection, string sql)
         {
@@ -168,5 +168,6 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await IsReady(false);
         await using var state = new NpgsqlCommand("SELECT state='PendingHistoryAudit' AND generation=2 AND ready_at IS NULL AND ready_by IS NULL FROM enrollment_execution.profile4_readiness", owner);
         Assert.Equal(true, await state.ExecuteScalarAsync(cancellationToken));
+        await VerifyReadinessAuditSplitAsync(owner, runtime, statusConnection, deliveryConnection, environment, cancellationToken);
     }
 }
