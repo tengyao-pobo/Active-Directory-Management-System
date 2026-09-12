@@ -8,7 +8,7 @@ namespace ItManagement.IntegrationTests;
 public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
 {
     [Fact]
-    public async Task DeliveryHistoryOwnerLoginCanAuditCompleteCandidate()
+    public async Task DeliveryHistoryOwnerLoginAuditsAndCleansUpTemporaryVisibility()
     {
         var owner = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CONSOLE_TEST_DB")!);
         Assert.Contains(owner.Host, new[] { "localhost", "127.0.0.1", "::1" });
@@ -156,5 +156,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         Assert.Equal("None", reader.GetString(1));
         Assert.Equal((short)4, reader.GetInt16(2));
         Assert.False(await reader.ReadAsync(deadline.Token));
+        await reader.DisposeAsync();
+        await VerifyHistoryVisibilityAsync(ownerLogin, (NpgsqlConnection)db.Database.GetDbConnection(), historyOwner, cleanup.CreatedRoles, deadline.Token);
     }
 }

@@ -46,6 +46,7 @@
     <None Include="..\..\build\audit-enrollment-delivery-permits.sql" Link="audit-enrollment-delivery-permits.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-delivery-results.sql" Link="audit-enrollment-delivery-results.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-delivery-history-rows.sql" Link="audit-enrollment-delivery-history-rows.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-delivery-history.sql" Link="audit-enrollment-delivery-history.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-delivery-status.sql" Link="audit-enrollment-delivery-status.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-delivery-definer.sql" Link="audit-enrollment-delivery-definer.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\enrollment-delivery-identity.sql" Link="enrollment-delivery-identity.sql" CopyToOutputDirectory="PreserveNewest" />
