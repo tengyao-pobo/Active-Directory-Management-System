@@ -555,11 +555,11 @@ BEGIN
         AND p.prokind='f' AND p.prorettype='boolean'::regtype
         AND p.proisstrict=(p.proname='has_environment_membership') AND NOT p.proleakproof
         AND p.pronargs=2 AND p.proargtypes='2950 2950'::oidvector
-        AND p.proargnames=CASE p.proname WHEN 'has_environment_membership' THEN ARRAY['p_environment_id','p_principal_id']
+        AND p.proargnames IS NOT DISTINCT FROM CASE p.proname WHEN 'has_environment_membership' THEN ARRAY['p_environment_id','p_principal_id']
           ELSE ARRAY['p_environment','p_principal'] END
         AND p.proallargtypes IS NULL AND p.proargmodes IS NULL AND p.pronargdefaults=0 AND p.provariadic=0
         AND p.prosupport=0 AND p.probin IS NULL AND p.prosqlbody IS NULL AND p.proargdefaults IS NULL
-        AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=off']
+        AND p.proconfig IS NOT DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp','row_security=off']
         AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
           pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
           =CASE p.proname WHEN 'has_environment_membership' THEN 'c9529f8fad835c8125509e539be576a576a94e7d03660e67023392b7e951ae4c'
@@ -847,8 +847,8 @@ BEGIN
           ('enrollment_execution.scope_uuid(pg_catalog.text)',table_owner,'plpgsql','i',false,false,'a7dd6ec2c76752765dd101c860b90d7b27db09de8865db291e555ca1ae96e72b',1,'25',NULL::oid[],ARRAY['p_value']::text[],NULL::"char"[],2950::oid,false),
           ('enrollment_execution.has_computer_permission(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text)',table_owner,'sql','s',false,false,'c3fb51c2382305ee8d2da5b40221261edd9978c0a3c3d3eab0ac86929221d4a2',5,'2950 2950 2950 2950 25',NULL::oid[],ARRAY['p_environment','p_principal','p_directory','p_generation','p_permission']::text[],NULL::"char"[],16::oid,false),
           ('enrollment_execution.reject_history_mutation()',table_owner,'plpgsql','v',false,false,'e35b27ac9bb227452ced5ccc67f6a40faec5d609a324b3d1a1d7f455486b8edd',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
-          ('enrollment_execution.validate_journal()',table_owner,'plpgsql','v',false,false,'7645db08f557045f5cbd8654fdb514ee480de1e1e62fe0db293a1dcc07ed611e',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
-          ('enrollment_execution.validate_execution_stop()',table_owner,'plpgsql','v',false,false,'ae1fe7dbafa00dd9723331deb6b9206eb6cf6b331fcc0337ecc538ea7a682531',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
+          ('enrollment_execution.validate_journal()',table_owner,'plpgsql','v',false,false,'abbd382feeb041caef7c2e3c65e9ecb7788d9d2957f90d3372ed5a26146a350a',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
+          ('enrollment_execution.validate_execution_stop()',table_owner,'plpgsql','v',false,false,'4ad5be7fac42bcf38185493246160f21b20f9f2c697b25d2fd1ab56c759d8b47',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
           ('enrollment_execution.lock_execution_stop_boundary()',table_owner,'plpgsql','v',false,false,'927270395474475368a9c838ce22c09e0be8b6a749d03848ab1cd4c8e6e61918',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false)),
         actual AS (SELECT expected.*,function_row.*,language_row.lanname
           FROM expected LEFT JOIN pg_catalog.pg_proc function_row ON function_row.oid=pg_catalog.to_regprocedure(expected.signature)
@@ -904,6 +904,7 @@ BEGIN
         ('public','DeviceTagAssignments','tag_assignments','r','dd406c6c90bc4ad9cb66f14eb686cf93'),
         ('enrollment_execution','issue_results','results','r','16061f7fe3d1e9c443f8c14c547153db'),
         ('enrollment_execution','mint_permits','permits','r','5fe22733f49093eedfbf3801bc66cdf5'),
+        ('enrollment_execution','execution_stops','stops','r','5fe22733f49093eedfbf3801bc66cdf5'),
         ('enrollment_execution','sealed_envelopes','envelopes','*','5fe22733f49093eedfbf3801bc66cdf5'),
         ('enrollment_execution','delivery_acks','acks','*','52b42cd1fccdb1036665767ed5daa164'),
         ('enrollment_execution','status_observations','status','*','2c6961144391bc85dbfa6ef17383a52b')),

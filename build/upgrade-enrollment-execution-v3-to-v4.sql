@@ -110,6 +110,7 @@ DROP FUNCTION enrollment_execution.execution_store_profile();
 
 \ir enrollment-execution-functions.sql
 \ir enrollment-execution-queue.sql
+\ir enrollment-delivery-journal.sql
 \ir enrollment-execution-profile.sql
 \ir enrollment-delivery-profile.sql
 
@@ -136,13 +137,15 @@ GRANT SELECT("Id","OperatorId","Enabled"),UPDATE("DisplayName") ON public."Princ
 GRANT SELECT("EnvironmentId","PrincipalId","Active"),UPDATE("Active") ON public."Memberships" TO :"delivery_definer_role";
 GRANT SELECT("IdHash","PrincipalId","CreatedAt","LastSeenAt","ExpiresAt","StepUpAt","RevokedAt")
  ON public."Sessions" TO :"delivery_definer_role";
-GRANT SELECT("EnvironmentId","Id","RequesterId","DirectoryObjectId","PlanHash"),UPDATE("PlanHash")
+GRANT SELECT("EnvironmentId","Id","RequesterId","DirectoryObjectId","PlanHash","QueuedAt","AuthorizationNotAfter","RecipientKeyFingerprint","ServerDeviceId","MappingCreatedAt"),UPDATE("PlanHash")
  ON public."EnrollmentGrantOperations" TO :"delivery_definer_role";
 GRANT SELECT ON public."Roles",public."RolePermissions",public."Assignments",public."Scopes",public."DeviceTagAssignments"
  TO :"delivery_definer_role";
 GRANT SELECT ON enrollment_execution.issue_results,enrollment_execution.mint_permits TO :"delivery_definer_role";
+GRANT SELECT ON enrollment_execution.execution_stops TO :"delivery_definer_role";
 GRANT SELECT,DELETE ON enrollment_execution.sealed_envelopes TO :"delivery_definer_role";
 GRANT SELECT,INSERT ON enrollment_execution.delivery_acks,enrollment_execution.status_observations TO :"delivery_definer_role";
+GRANT EXECUTE ON FUNCTION public.has_environment_membership(uuid,uuid),public.directory_database_access(uuid,uuid) TO :"delivery_definer_role";
 REVOKE CREATE ON SCHEMA public,enrollment_execution FROM :"delivery_definer_role";
 
 CREATE FUNCTION enrollment_execution.execution_store_profile() RETURNS smallint

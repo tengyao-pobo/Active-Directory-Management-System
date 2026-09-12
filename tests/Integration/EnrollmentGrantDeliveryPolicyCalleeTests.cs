@@ -14,6 +14,9 @@ public sealed partial class EnrollmentGrantPlanTests
     [InlineData("missing")]
     [InlineData("config")]
     [InlineData("strict")]
+    [InlineData("membership-reset")]
+    [InlineData("access-reset")]
+    [InlineData("unnamed-arguments")]
     public async Task DeliveryPolicyCalleeCatalogRejectsExecutableDrift(string fault)
     {
         await using var connection = new NpgsqlConnection(Environment.GetEnvironmentVariable("CONSOLE_TEST_DB")!);
@@ -52,6 +55,23 @@ public sealed partial class EnrollmentGrantPlanTests
             "missing" => "DROP FUNCTION public.directory_database_access(uuid,uuid) CASCADE",
             "config" => "ALTER FUNCTION public.directory_database_access(uuid,uuid) SET row_security=on",
             "strict" => "ALTER FUNCTION public.has_environment_membership(uuid,uuid) CALLED ON NULL INPUT",
+            "membership-reset" => "ALTER FUNCTION public.has_environment_membership(uuid,uuid) RESET ALL",
+            "access-reset" => "ALTER FUNCTION public.directory_database_access(uuid,uuid) RESET ALL",
+            "unnamed-arguments" => """
+                DO $argument_names$
+                DECLARE definition text; original text; previous_setting text:=current_setting('check_function_bodies');
+                BEGIN
+                  SELECT pg_catalog.pg_get_functiondef(p.oid),p.prosrc INTO STRICT definition,original
+                    FROM pg_catalog.pg_proc p WHERE p.oid='public.directory_database_access(uuid,uuid)'::regprocedure;
+                  IF strpos(definition,'p_environment uuid, p_principal uuid')=0 THEN RAISE EXCEPTION 'Missing expected argument names.'; END IF;
+                  EXECUTE 'DROP FUNCTION public.directory_database_access(uuid,uuid) CASCADE';
+                  PERFORM set_config('check_function_bodies','off',true);
+                  EXECUTE replace(definition,'p_environment uuid, p_principal uuid','uuid, uuid');
+                  PERFORM set_config('check_function_bodies',previous_setting,true);
+                  IF NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p WHERE p.oid='public.directory_database_access(uuid,uuid)'::regprocedure
+                    AND p.prosrc=original AND p.proargnames IS NULL) THEN RAISE EXCEPTION 'Argument probe changed the body or retained names.'; END IF;
+                END $argument_names$;
+                """,
             _ => throw new ArgumentOutOfRangeException(nameof(fault))
         });
         Assert.Equal(fault == "none", await Valid());

@@ -30,8 +30,8 @@ $functions = @(
     @('scope_uuid',$authority,'table_owner','plpgsql IMMUTABLE SECURITY INVOKER SET search_path=pg_catalog,pg_temp','plpgsql','i',$false,$false),
     @('has_computer_permission',$authority,'table_owner','sql STABLE SECURITY INVOKER SET search_path=pg_catalog,pg_temp','sql','s',$false,$false),
     @('reject_history_mutation',$journal,'table_owner','plpgsql SET search_path=pg_catalog,pg_temp','plpgsql','v',$false,$false),
-    @('validate_journal',$journal,'table_owner','plpgsql SET search_path=pg_catalog,pg_temp','plpgsql','v',$false,$false),
-    @('validate_execution_stop',$stops,'table_owner','plpgsql SET search_path=pg_catalog,pg_temp','plpgsql','v',$false,$false),
+    @('validate_journal','enrollment-delivery-journal.sql','table_owner',$invoker,'plpgsql','v',$false,$false),
+    @('validate_execution_stop','enrollment-delivery-journal.sql','table_owner',$invoker,'plpgsql','v',$false,$false),
     @('lock_execution_stop_boundary',$stops,'table_owner','plpgsql SET search_path=pg_catalog,pg_temp','plpgsql','v',$false,$false)
 )
 $types = @{ uuid=2950; text=25; smallint=21; bigint=20; timestamptz=1184; bytea=17; boolean=16; trigger=2279 }

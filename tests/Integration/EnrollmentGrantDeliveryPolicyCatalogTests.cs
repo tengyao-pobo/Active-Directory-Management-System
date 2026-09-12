@@ -57,6 +57,8 @@ public sealed partial class EnrollmentGrantPlanTests
     [InlineData("permissive")]
     [InlineData("moved-policy")]
     [InlineData("extra-policy")]
+    [InlineData("missing-stop-policy")]
+    [InlineData("widened-stop-policy")]
     [InlineData("rls")]
     [InlineData("force-rls")]
     [InlineData("disabled-trigger")]
@@ -126,6 +128,8 @@ public sealed partial class EnrollmentGrantPlanTests
             "permissive" => $"DROP POLICY enrollment_delivery_operations_limit ON public.\"EnrollmentGrantOperations\"; CREATE POLICY enrollment_delivery_operations_limit ON public.\"EnrollmentGrantOperations\" AS PERMISSIVE TO {QuoteIdentifier(definer)} USING(true)",
             "moved-policy" => $"DROP POLICY enrollment_delivery_operations_limit ON public.\"EnrollmentGrantOperations\"; CREATE POLICY enrollment_delivery_operations_limit ON public.\"Outbox\" AS RESTRICTIVE TO {QuoteIdentifier(definer)} USING(true)",
             "extra-policy" => $"CREATE POLICY enrollment_delivery_extra ON public.\"Outbox\" TO {QuoteIdentifier(definer)} USING(true)",
+            "missing-stop-policy" => "DROP POLICY enrollment_delivery_stops_allow ON enrollment_execution.execution_stops",
+            "widened-stop-policy" => "ALTER POLICY enrollment_delivery_stops_limit ON enrollment_execution.execution_stops USING(true)",
             "rls" => "ALTER TABLE public.\"Principals\" DISABLE ROW LEVEL SECURITY",
             "force-rls" => "ALTER TABLE public.\"Principals\" NO FORCE ROW LEVEL SECURITY",
             "disabled-trigger" => "ALTER TABLE public.\"Environments\" DISABLE TRIGGER enrollment_delivery_environment_guard",
