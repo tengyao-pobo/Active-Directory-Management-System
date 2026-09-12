@@ -17,6 +17,7 @@ try {
     & (Join-Path $PSScriptRoot 'update-enrollment-profile4-audit-split.ps1') -Check
     & (Join-Path $PSScriptRoot 'update-enrollment-profile4-publication.ps1') -Check
     & (Join-Path $PSScriptRoot 'update-enrollment-profile4-history-transition.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-api-functions.ps1') -Check
     & $dotnet restore ITManagement.slnx --locked-mode
     if ($LASTEXITCODE -ne 0) { throw 'Restore failed' }
     & $dotnet build ITManagement.slnx -c $Configuration --no-restore

@@ -124,5 +124,6 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await InsertRejected("23514", "Enrollment grant operation requires a queued plan.");
         await VerifyPublicationRejectsUnboundLoginAsync(owner, admin, executionConnection, environment, cancellationToken);
         await VerifyPublicationCommitBoundaryAsync(owner, admin, api, environment, cancellationToken);
+        await VerifyProfile4ApiFunctionRootsAsync(owner, api, cancellationToken);
     }
 }
