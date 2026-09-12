@@ -14,7 +14,8 @@ $groups = @(
     @{ Name='delivery definer catalog'; Files=@('audit-enrollment-delivery-definer.sql') },
     @{ Name='delivery status structure catalog'; Files=@('audit-enrollment-delivery-status.sql') },
     @{ Name='delivery stop structure catalog'; Files=@('audit-enrollment-delivery-stops.sql') },
-    @{ Name='delivery envelope structure catalog'; Files=@('audit-enrollment-delivery-envelopes.sql') }
+    @{ Name='delivery envelope structure catalog'; Files=@('audit-enrollment-delivery-envelopes.sql') },
+    @{ Name='delivery ack structure catalog'; Files=@('audit-enrollment-delivery-acks.sql') }
 )
 foreach ($group in $groups) {
     $begin = '    -- BEGIN generated ' + $group.Name

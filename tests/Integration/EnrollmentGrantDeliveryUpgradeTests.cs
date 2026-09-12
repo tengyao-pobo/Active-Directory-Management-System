@@ -128,6 +128,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
                     pairScript += "\n" + DeliveryStatusCatalogProbe();
                     pairScript += "\n" + DeliveryStopCatalogProbe();
                     pairScript += "\n" + DeliveryEnvelopeCatalogProbe();
+                    pairScript += "\n" + DeliveryAckCatalogProbe();
                 }
                 script = script.Replace(include, include + "\n\\ir enrollment-delivery-identity.sql", StringComparison.Ordinal)
                     .Replace(begin, begin + """
