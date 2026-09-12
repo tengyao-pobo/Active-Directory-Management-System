@@ -27,39 +27,13 @@ public sealed class PlatformGrantIsolationUpgradeTests(AgentPlatformGrantFixture
     }
 
     [Fact]
-    public async Task CompletedUpgradeIsIdempotentAndKeepsRuntimeAcl()
+    public async Task LegacyIsolationUpgradeCannotReplaceVersion2Audits()
     {
         var before = await Fingerprint();
-        await fixture.Script("upgrade-agent-platform-grant-isolation-v1.sql", fixture.IsolationUpgrade());
+        await AssertRejected(() => fixture.Script("upgrade-agent-platform-grant-isolation-v1.sql", fixture.IsolationUpgrade()));
         Assert.Equal(before, await Fingerprint());
         Assert.Equal((short)1, await fixture.Scalar<short>("SELECT agent_private.platform_grant_isolation_profile()"));
-    }
-
-    [Fact]
-    public async Task UnsafeOwnerFailsBeforeAnyAuditReplacement()
-    {
-        var before = await Fingerprint();
-        await fixture.Execute($"ALTER ROLE \"{fixture.ProjectionDefinerRole}\" INHERIT");
-        try
-        {
-            await AssertRejected(() => fixture.Script("upgrade-agent-platform-grant-isolation-v1.sql", fixture.IsolationUpgrade()));
-            Assert.Equal(before, await Fingerprint());
-        }
-        finally { await fixture.Execute($"ALTER ROLE \"{fixture.ProjectionDefinerRole}\" NOINHERIT"); }
-    }
-
-    [Fact]
-    public async Task UnexpectedHelperGranteeFailsPostflightAndRollsBackAuditChanges()
-    {
-        // This grant is confined to the isolated synthetic database and always restored.
-        await fixture.Execute($"GRANT EXECUTE ON FUNCTION agent_private.platform_grant_role_is_unbound(name) TO \"{fixture.PlatformRole}\"");
-        var before = await Fingerprint();
-        try
-        {
-            await AssertRejected(() => fixture.Script("upgrade-agent-platform-grant-isolation-v1.sql", fixture.IsolationUpgrade()));
-            Assert.Equal(before, await Fingerprint());
-        }
-        finally { await fixture.Execute($"REVOKE EXECUTE ON FUNCTION agent_private.platform_grant_role_is_unbound(name) FROM \"{fixture.PlatformRole}\""); }
+        Assert.Equal((short)2, await fixture.Scalar<short>("SELECT agent_private.agent_capability_isolation_profile()"));
     }
 
     [Fact]

@@ -14,6 +14,61 @@ SELECT 1/pg_catalog.count(*) AS source_profile_is_known FROM (SELECT 1 WHERE
   FROM pg_catalog.pg_proc marker JOIN pg_catalog.pg_namespace namespace ON namespace.oid=marker.pronamespace
   WHERE marker.oid=pg_catalog.to_regprocedure('agent_private.agent_capability_isolation_profile()')),false)) checked;
 
+-- Preserve a completed lifecycle-v2 platform audit on idempotent capability upgrades.
+-- A partial lifecycle shape is rejected before any registry or audit mutation.
+CREATE TEMP TABLE pg_temp.platform_grant_lifecycle_source(
+ profile_version smallint PRIMARY KEY,
+ audit_definition text NOT NULL
+) ON COMMIT DROP;
+WITH audit AS(
+ SELECT function.*,owner.rolname AS owner_name,pg_catalog.md5(pg_catalog.btrim(function.prosrc,E' \t\r\n')) AS body_hash
+ FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_roles owner ON owner.oid=function.proowner
+ WHERE function.oid=pg_catalog.to_regprocedure('agent_private.audit_platform_grant_privileges(uuid,name,name)')),
+ lifecycle AS(
+ SELECT CASE
+  WHEN audit.body_hash='d2a58ca2b13cfb5c813a21219de07aec' AND
+   pg_catalog.to_regclass('agent_private.platform_grant_revocation_receipts') IS NOT NULL AND
+   pg_catalog.to_regprocedure('agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)') IS NOT NULL AND
+   pg_catalog.to_regprocedure('agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)') IS NOT NULL
+  THEN 2::smallint
+  WHEN audit.body_hash IN('e8ebc587facbd65f76db469b007a7935','e98e01a5978b092ed5f6599a97a0f243') AND
+   pg_catalog.to_regclass('agent_private.platform_grant_revocation_receipts') IS NULL AND
+   pg_catalog.to_regprocedure('agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)') IS NULL AND
+   pg_catalog.to_regprocedure('agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)') IS NULL
+  THEN 1::smallint END AS profile_version,
+  pg_catalog.pg_get_functiondef(audit.oid) AS audit_definition,audit.*
+ FROM audit)
+INSERT INTO pg_temp.platform_grant_lifecycle_source(profile_version,audit_definition)
+SELECT lifecycle.profile_version,lifecycle.audit_definition FROM lifecycle
+WHERE lifecycle.profile_version IS NOT NULL AND lifecycle.owner_name=:'agent_platform_grant_definer_role' AND
+ lifecycle.prosecdef AND lifecycle.prokind='f' AND lifecycle.proretset AND lifecycle.provolatile='v' AND lifecycle.proparallel='u' AND
+ lifecycle.prolang=(SELECT oid FROM pg_catalog.pg_language WHERE lanname='sql') AND lifecycle.proargnames=ARRAY['p_expected_environment_id','p_expected_table_owner','p_expected_function_owner','is_valid','diagnostic_code','profile_version']::text[] AND
+ lifecycle.proconfig=ARRAY['search_path=pg_catalog, agent_private, pg_temp']::text[] AND
+ pg_catalog.pg_get_function_result(lifecycle.oid)='TABLE(is_valid boolean, diagnostic_code text, profile_version smallint)' AND
+ (lifecycle.profile_version=1 OR (
+  (SELECT object.relowner=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=:'agent_table_owner_role') AND object.relrowsecurity AND object.relforcerowsecurity FROM pg_catalog.pg_class object WHERE object.oid=pg_catalog.to_regclass('agent_private.platform_grant_revocation_receipts')) AND
+  (SELECT pg_catalog.count(*)=4 AND pg_catalog.bool_and(function.proowner=lifecycle.proowner AND function.prosecdef AND function.provolatile='v' AND function.proparallel='u' AND function.proconfig=ARRAY['search_path=pg_catalog, agent_private, pg_temp']::text[]) FROM pg_catalog.pg_proc function WHERE function.oid=ANY(ARRAY[
+   'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,
+   pg_catalog.to_regprocedure('agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'),
+   pg_catalog.to_regprocedure('agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)'),
+   'agent_private.audit_platform_grant_privileges(uuid,name,name)'::pg_catalog.regprocedure]::oid[])) AND
+  (SELECT pg_catalog.count(*)=8 FROM pg_catalog.pg_policy policy JOIN pg_catalog.pg_class object ON object.oid=policy.polrelid JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace WHERE namespace.nspname='agent_private' AND object.relname IN('platform_grant_database_bindings','platform_grant_receipts','platform_grant_revocation_receipts')) AND
+  (SELECT pg_catalog.count(*)=1 FROM pg_catalog.pg_constraint constraint_info WHERE constraint_info.conrelid='agent_private.platform_grant_database_bindings'::pg_catalog.regclass AND constraint_info.contype='c' AND pg_catalog.pg_get_constraintdef(constraint_info.oid) LIKE '%IssueInitialGrant%' AND pg_catalog.pg_get_constraintdef(constraint_info.oid) LIKE '%RevokeInitialGrant%') AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function,LATERAL pg_catalog.aclexplode(COALESCE(function.proacl,pg_catalog.acldefault('f',function.proowner))) acl LEFT JOIN agent_private.platform_grant_database_bindings binding ON binding.login_role=(SELECT rolname FROM pg_catalog.pg_roles WHERE oid=acl.grantee) WHERE function.oid=ANY(ARRAY[
+   'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,
+   pg_catalog.to_regprocedure('agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'),
+   pg_catalog.to_regprocedure('agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)'),
+   'agent_private.audit_platform_grant_privileges(uuid,name,name)'::pg_catalog.regprocedure]::oid[]) AND
+   (acl.privilege_type<>'EXECUTE' OR (acl.grantee=function.proowner AND acl.is_grantable) OR (acl.grantee<>function.proowner AND (acl.is_grantable OR binding.login_role IS NULL OR NOT (function.oid='agent_private.audit_platform_grant_privileges(uuid,name,name)'::pg_catalog.regprocedure OR (binding.purpose='IssueInitialGrant' AND function.oid='agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,bytea,bytea)'::pg_catalog.regprocedure) OR (binding.purpose='RevokeInitialGrant' AND function.oid IN(pg_catalog.to_regprocedure('agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'),pg_catalog.to_regprocedure('agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)'))))))) AND
+  (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc function,LATERAL pg_catalog.aclexplode(COALESCE(function.proacl,pg_catalog.acldefault('f',function.proowner))) acl WHERE function.oid=ANY(ARRAY[
+   'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,
+   pg_catalog.to_regprocedure('agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'),
+   pg_catalog.to_regprocedure('agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)'),
+   'agent_private.audit_platform_grant_privileges(uuid,name,name)'::pg_catalog.regprocedure]::oid[]) AND acl.privilege_type='EXECUTE')=
+   4+(SELECT COALESCE(pg_catalog.sum(CASE purpose WHEN 'IssueInitialGrant' THEN 2 WHEN 'RevokeInitialGrant' THEN 3 ELSE 1000 END),0) FROM agent_private.platform_grant_database_bindings)
+  )));
+SELECT 1/pg_catalog.count(*) AS exact_platform_grant_lifecycle_source FROM pg_temp.platform_grant_lifecycle_source;
+
 -- Derive every existing capability identity from authoritative bindings and exact function owners.
 WITH candidates(role_name,capability,role_kind) AS(
  SELECT login_role,'Ingest','Runtime' FROM agent_private.agent_database_bindings
@@ -720,12 +775,19 @@ WITH login AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=SES
   NOT EXISTS(SELECT 1 FROM expected_policies expected,function_owner WHERE NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy policy JOIN pg_catalog.pg_class object ON object.oid=policy.polrelid JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace WHERE namespace.nspname='agent_private' AND object.relname=expected.relname AND policy.polname=expected.polname AND policy.polcmd=expected.polcmd AND policy.polpermissive AND policy.polroles=ARRAY[function_owner.oid]::oid[] AND pg_catalog.pg_get_expr(policy.polqual,policy.polrelid) IS NOT DISTINCT FROM expected.qual AND pg_catalog.pg_get_expr(policy.polwithcheck,policy.polrelid) IS NOT DISTINCT FROM expected.withcheck)) AND
   NOT EXISTS(SELECT 1 FROM expected_owner_policies expected,table_owner WHERE NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy policy JOIN pg_catalog.pg_class object ON object.oid=policy.polrelid JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace WHERE namespace.nspname='agent_private' AND object.relname=expected.relname AND policy.polname='definer_all' AND policy.polcmd='*' AND policy.polpermissive AND policy.polroles=ARRAY[table_owner.oid]::oid[] AND pg_catalog.pg_get_expr(policy.polqual,policy.polrelid)='true' AND pg_catalog.pg_get_expr(policy.polwithcheck,policy.polrelid)='true')) AND
   (SELECT pg_catalog.count(*)=5 FROM pg_catalog.pg_policy policy JOIN pg_catalog.pg_class object ON object.oid=policy.polrelid,schema_info WHERE object.relnamespace=schema_info.oid AND object.relname IN('platform_grant_database_bindings','platform_grant_receipts')) AND
-  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy policy JOIN pg_catalog.pg_class object ON object.oid=policy.polrelid JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace,function_owner WHERE namespace.nspname='agent_private' AND function_owner.oid=ANY(policy.polroles) AND policy.polname LIKE 'platform_grant_definer_%' AND NOT EXISTS(SELECT 1 FROM expected_policies expected WHERE expected.relname=object.relname AND expected.polname=policy.polname AND expected.polcmd=policy.polcmd)) AND
+  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy policy JOIN pg_catalog.pg_class object ON object.oid=policy.polrelid JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace,function_owner WHERE namespace.nspname='agent_private' AND object.relname IN(SELECT expected.relname FROM expected_policies expected) AND (function_owner.oid=ANY(policy.polroles) OR 0=ANY(policy.polroles)) AND NOT EXISTS(SELECT 1 FROM expected_policies expected WHERE expected.relname=object.relname AND expected.polname=policy.polname AND expected.polcmd=policy.polcmd AND policy.polpermissive AND policy.polroles=ARRAY[function_owner.oid]::oid[] AND pg_catalog.pg_get_expr(policy.polqual,policy.polrelid) IS NOT DISTINCT FROM expected.qual AND pg_catalog.pg_get_expr(policy.polwithcheck,policy.polrelid) IS NOT DISTINCT FROM expected.withcheck)) AND
   (SELECT pg_catalog.count(*)=8 AND pg_catalog.bool_and(object.relrowsecurity AND object.relforcerowsecurity) FROM pg_catalog.pg_class object,schema_info WHERE object.relnamespace=schema_info.oid AND object.relkind='r' AND object.relname=ANY(ARRAY['devices','registrations','enrollment_grants','enrollment_requests','agent_device_directory_bindings','agent_projection_database_bindings','platform_grant_database_bindings','platform_grant_receipts'])) AS valid)
 SELECT valid,'None'::text,1::smallint FROM checks WHERE valid
 UNION ALL SELECT false,'PrivilegeAuditFailed',1::smallint FROM checks WHERE NOT valid;$function$;
 ALTER FUNCTION agent_private.audit_platform_grant_privileges(uuid,name,name) OWNER TO :"agent_platform_grant_definer_role";
 REVOKE ALL ON FUNCTION agent_private.audit_platform_grant_privileges(uuid,name,name) FROM PUBLIC;
+DO $restore_platform_grant_lifecycle_v2$
+DECLARE v_definition text;
+BEGIN
+ SELECT source.audit_definition INTO v_definition FROM pg_temp.platform_grant_lifecycle_source source WHERE source.profile_version=2;
+ IF FOUND THEN EXECUTE v_definition;END IF;
+END
+$restore_platform_grant_lifecycle_v2$;
 
 SELECT 1/pg_catalog.count(*) AS capability_registry_postflight FROM (
 WITH candidates(role_name,capability,role_kind) AS(
@@ -748,7 +810,9 @@ SELECT 1 WHERE
  (SELECT pg_catalog.count(*)=1 FROM pg_catalog.pg_policy policy WHERE policy.polrelid='agent_private.agent_capability_roles'::pg_catalog.regclass AND policy.polname='definer_all' AND policy.polcmd='*' AND policy.polpermissive AND policy.polroles=ARRAY[(SELECT relowner FROM pg_catalog.pg_class WHERE oid=policy.polrelid)]::oid[] AND pg_catalog.pg_get_expr(policy.polqual,policy.polrelid)='true' AND pg_catalog.pg_get_expr(policy.polwithcheck,policy.polrelid)='true') AND
  NOT EXISTS(SELECT 1 FROM agent_private.agent_capability_roles reservation LEFT JOIN pg_catalog.pg_roles role ON role.rolname=reservation.role_name WHERE role.oid IS NULL OR (reservation.role_kind='Runtime' AND (NOT role.rolcanlogin OR role.rolsuper OR role.rolbypassrls OR role.rolcreatedb OR role.rolcreaterole OR role.rolinherit OR role.rolreplication)) OR (reservation.role_kind='Definer' AND (role.rolcanlogin OR role.rolsuper OR role.rolbypassrls OR role.rolcreatedb OR role.rolcreaterole OR role.rolinherit OR role.rolreplication)) OR EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members member WHERE member.member=role.oid OR member.roleid=role.oid)) AND
  NOT EXISTS(SELECT 1 FROM agent_private.agent_capability_roles reservation WHERE NOT agent_private.agent_role_has_capability(reservation.role_name,reservation.capability,reservation.role_kind)) AND
- (SELECT pg_catalog.count(*)=4 AND pg_catalog.bool_and(function.prosecdef AND pg_catalog.strpos(function.prosrc,'agent_role_has_capability')>0) FROM pg_catalog.pg_proc function WHERE function.oid=ANY(ARRAY[pg_catalog.to_regprocedure('agent_private.audit_ingest_privileges(name)'),pg_catalog.to_regprocedure('agent_private.audit_enrollment_privileges(name,name,text)'),pg_catalog.to_regprocedure('agent_private.audit_projection_privileges(uuid,name,name)'),pg_catalog.to_regprocedure('agent_private.audit_platform_grant_privileges(uuid,name,name)')]::oid[]))) checked;
+ (SELECT pg_catalog.count(*)=4 AND pg_catalog.bool_and(function.prosecdef AND pg_catalog.strpos(function.prosrc,'agent_role_has_capability')>0) FROM pg_catalog.pg_proc function WHERE function.oid=ANY(ARRAY[pg_catalog.to_regprocedure('agent_private.audit_ingest_privileges(name)'),pg_catalog.to_regprocedure('agent_private.audit_enrollment_privileges(name,name,text)'),pg_catalog.to_regprocedure('agent_private.audit_projection_privileges(uuid,name,name)'),pg_catalog.to_regprocedure('agent_private.audit_platform_grant_privileges(uuid,name,name)')]::oid[])) AND
+ (SELECT pg_catalog.md5(pg_catalog.btrim(function.prosrc,E' \t\r\n'))=CASE source.profile_version WHEN 1 THEN 'e98e01a5978b092ed5f6599a97a0f243' WHEN 2 THEN 'd2a58ca2b13cfb5c813a21219de07aec' END FROM pg_catalog.pg_proc function CROSS JOIN pg_temp.platform_grant_lifecycle_source source WHERE function.oid=pg_catalog.to_regprocedure('agent_private.audit_platform_grant_privileges(uuid,name,name)')) AND
+ (SELECT CASE source.profile_version WHEN 1 THEN pg_catalog.to_regclass('agent_private.platform_grant_revocation_receipts') IS NULL AND pg_catalog.to_regprocedure('agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)') IS NULL AND pg_catalog.to_regprocedure('agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)') IS NULL ELSE pg_catalog.to_regclass('agent_private.platform_grant_revocation_receipts') IS NOT NULL AND pg_catalog.to_regprocedure('agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)') IS NOT NULL AND pg_catalog.to_regprocedure('agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)') IS NOT NULL END FROM pg_temp.platform_grant_lifecycle_source source)) checked;
 CREATE OR REPLACE FUNCTION agent_private.agent_capability_isolation_profile()
 RETURNS smallint LANGUAGE sql SECURITY INVOKER SET search_path=pg_catalog,agent_private,pg_temp AS 'SELECT 2::smallint';
 ALTER FUNCTION agent_private.agent_capability_isolation_profile() OWNER TO :"agent_table_owner_role";

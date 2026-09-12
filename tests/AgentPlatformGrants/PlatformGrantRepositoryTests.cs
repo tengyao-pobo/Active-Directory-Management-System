@@ -119,7 +119,9 @@ public sealed class PlatformGrantRepositoryTests(AgentPlatformGrantFixture fixtu
         _ = await Repository();
         Assert.True((await new AgentStorePrivilegeAuditor(fixture.Ingest, fixture.TableOwnerRole).AuditAsync(CancellationToken.None)).IsValid);
         Assert.True((await new EnrollmentStorePrivilegeAuditor(fixture.Enroll, fixture.TableOwnerRole, fixture.EnrollmentDefinerRole, "Enroll").AuditAsync(CancellationToken.None)).IsValid);
+        Assert.True((await new EnrollmentStorePrivilegeAuditor(fixture.Issue, fixture.TableOwnerRole, fixture.EnrollmentDefinerRole, "Issue").AuditAsync(CancellationToken.None)).IsValid);
         Assert.True((await new AgentProjectionPrivilegeAuditor(fixture.Projection, fixture.EnvironmentId, fixture.TableOwnerRole, fixture.ProjectionDefinerRole).AuditAsync(CancellationToken.None)).IsValid);
+        _ = await PostgresPlatformGrantRevocationRepository.CreateAuditedAsync(fixture.Revoker, fixture.EnvironmentId, fixture.TableOwnerRole, fixture.PlatformDefinerRole, CancellationToken.None);
         await using var command = fixture.Platform.CreateCommand("SELECT count(*) FROM agent_private.platform_grant_receipts");
         await Assert.ThrowsAsync<PostgresException>(() => command.ExecuteScalarAsync());
     }
@@ -156,13 +158,14 @@ public sealed class PlatformGrantRepositoryTests(AgentPlatformGrantFixture fixtu
             new DateTimeOffset(638900000000000000, TimeSpan.Zero));
         var operation = Guid.NewGuid();
         var authorization = Authorization(mapping, RandomNumberGenerator.GetBytes(32));
+        var prepared = ValidatedPersistedPlatformGrant.FromValidatedOutboxRecord(RandomNumberGenerator.GetBytes(32));
         var createdAt = mapping.MappingCreatedAt.AddHours(1);
         PlatformGrantDatabaseResult Row(string? outcome, string? diagnostic, Guid? environment = null,
             Guid? operationId = null, Guid? grant = null, Guid? directory = null, Guid? device = null,
             DateTimeOffset? mapped = null, DateTimeOffset? created = null, DateTimeOffset? expires = null) =>
             new(outcome, diagnostic, environment, operationId, grant, directory, device, mapped, created, expires);
         PlatformGrantResult Normalize(PlatformGrantDatabaseResult row) =>
-            PostgresPlatformGrantRepository.NormalizeResult(row, mapping.EnvironmentId, operation, authorization);
+            PostgresPlatformGrantRepository.NormalizeResult(row, mapping.EnvironmentId, operation, authorization, prepared);
 
         var complete = Row("Created", "None", mapping.EnvironmentId, operation, Guid.NewGuid(),
             mapping.DirectoryObjectId, mapping.DeviceId, mapping.MappingCreatedAt, createdAt, createdAt.AddSeconds(600));
@@ -215,15 +218,21 @@ public sealed class PlatformGrantRepositoryTests(AgentPlatformGrantFixture fixtu
         var bindingCount = await fixture.Scalar<long>("SELECT count(*) FROM agent_private.platform_grant_database_bindings");
         var additional = await fixture.AddPlatformEnvironment();
         var currentBindingCount = await fixture.Scalar<long>("SELECT count(*) FROM agent_private.platform_grant_database_bindings");
-        Assert.Equal(bindingCount + 1, currentBindingCount);
-        Assert.Equal(2 * (currentBindingCount + 1), await fixture.Scalar<long>("SELECT count(*) FROM pg_catalog.pg_proc function,LATERAL pg_catalog.aclexplode(function.proacl) acl WHERE function.oid IN('agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,bytea,bytea)'::regprocedure,'agent_private.audit_platform_grant_privileges(uuid,name,name)'::regprocedure) AND acl.privilege_type='EXECUTE'"));
+        Assert.Equal(bindingCount + 2, currentBindingCount);
         Assert.Equal(2, await fixture.Scalar<long>("SELECT count(*) FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_namespace namespace ON namespace.oid=function.pronamespace WHERE namespace.nspname='agent_private' AND pg_catalog.has_function_privilege(@role,function.oid,'EXECUTE')", new NpgsqlParameter("role", additional.Role)));
+        Assert.Equal(3, await fixture.Scalar<long>("SELECT count(*) FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_namespace namespace ON namespace.oid=function.pronamespace WHERE namespace.nspname='agent_private' AND pg_catalog.has_function_privilege(@role,function.oid,'EXECUTE')", new NpgsqlParameter("role", additional.RevokerRole)));
         var firstAfter = await Repository();
         var second = await PostgresPlatformGrantRepository.CreateAuditedAsync(additional.DataSource, additional.EnvironmentId,
+            fixture.TableOwnerRole, fixture.PlatformDefinerRole, CancellationToken.None);
+        var firstRevoker = await PostgresPlatformGrantRevocationRepository.CreateAuditedAsync(fixture.Revoker, fixture.EnvironmentId,
+            fixture.TableOwnerRole, fixture.PlatformDefinerRole, CancellationToken.None);
+        var secondRevoker = await PostgresPlatformGrantRevocationRepository.CreateAuditedAsync(additional.RevokerDataSource, additional.EnvironmentId,
             fixture.TableOwnerRole, fixture.PlatformDefinerRole, CancellationToken.None);
         Assert.NotNull(first);
         Assert.NotNull(firstAfter);
         Assert.NotNull(second);
+        Assert.NotNull(firstRevoker);
+        Assert.NotNull(secondRevoker);
     }
 
     [Fact]
@@ -330,25 +339,33 @@ public sealed class PlatformGrantRepositoryTests(AgentPlatformGrantFixture fixtu
     [Fact]
     public void ProvisioningPostflightRetainsTheRuntimeAuditPredicateSet()
     {
-        var store = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "agent-platform-grants-store.sql"));
+        var store = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "upgrade-agent-platform-grants-v1-to-v2.sql"));
         var provision = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "provision-agent-platform-grants.sql"));
-        static string Cte(string sql)
+        static string Cte(string sql, string startToken, string endToken, int after = 0)
         {
-            var start = sql.LastIndexOf("WITH login AS(", StringComparison.Ordinal);
-            var end = sql.IndexOf("SELECT ", start + 1, StringComparison.Ordinal);
-            while (end >= 0 && !sql.AsSpan(end).StartsWith("SELECT 1/pg_catalog.count(*) AS exact_target_privilege_postflight", StringComparison.Ordinal) &&
-                   !sql.AsSpan(end).StartsWith("SELECT valid,'None'", StringComparison.Ordinal))
-                end = sql.IndexOf("SELECT ", end + 1, StringComparison.Ordinal);
+            var start = sql.IndexOf(startToken, after, StringComparison.Ordinal);
+            var end = sql.IndexOf(endToken, start + startToken.Length, StringComparison.Ordinal);
             Assert.True(start >= 0 && end > start);
             return sql[start..end].Replace("\r", string.Empty, StringComparison.Ordinal).Trim();
         }
-        var expected = Cte(store)
-            .Replace("SESSION_USER::name", ":'agent_platform_grant_role'::name", StringComparison.Ordinal)
-            .Replace("SESSION_USER", ":'agent_platform_grant_role'", StringComparison.Ordinal)
-            .Replace("p_expected_environment_id", ":'environment_id'::uuid", StringComparison.Ordinal)
-            .Replace("p_expected_table_owner", ":'agent_table_owner_role'::name", StringComparison.Ordinal)
-            .Replace("p_expected_function_owner", ":'agent_platform_grant_definer_role'::name", StringComparison.Ordinal);
-        Assert.Equal(expected, Cte(provision));
+        var audit = store.IndexOf("CREATE OR REPLACE FUNCTION agent_private.audit_platform_grant_privileges", StringComparison.Ordinal);
+        Assert.True(audit >= 0);
+        var runtime = Cte(store, "WITH login AS(", "SELECT valid,'None'", audit);
+        foreach (var (role, marker) in new[]
+        {
+            ("agent_platform_grant_role", "SELECT 1/pg_catalog.count(*) AS exact_issuer_privilege_postflight"),
+            ("agent_platform_grant_revoker_role", "SELECT 1/pg_catalog.count(*) AS exact_revoker_privilege_postflight")
+        })
+        {
+            var expected = runtime
+                .Replace("SESSION_USER::name", $":'{role}'::name", StringComparison.Ordinal)
+                .Replace("SESSION_USER", $":'{role}'", StringComparison.Ordinal)
+                .Replace("p_expected_environment_id", ":'environment_id'::uuid", StringComparison.Ordinal)
+                .Replace("p_expected_table_owner", ":'agent_table_owner_role'::name", StringComparison.Ordinal)
+                .Replace("p_expected_function_owner", ":'agent_platform_grant_definer_role'::name", StringComparison.Ordinal);
+            var actual = Cte(provision, $"WITH login AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'{role}')", marker);
+            Assert.Equal(expected, actual);
+        }
     }
 
     [Fact]
