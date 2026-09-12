@@ -87,6 +87,8 @@ public sealed class EnrollmentWorkerLoop
                 EnrollmentWorkProcessOutcome outcome;
                 try
                 {
+                    // A released permit can win the race with a queued waiter's cancellation.
+                    lanesCancellation.Token.ThrowIfCancellationRequested();
                     outcome = await environment.ProcessOnceAsync(lanesCancellation.Token).ConfigureAwait(false);
                 }
                 finally
