@@ -13,6 +13,16 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         await Execute(owner, await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-profile4-readiness.sql"), cancellationToken));
+        var readySource = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-profile4-ready.sql"), cancellationToken);
+        await Execute(owner, readySource);
+        var manifest = System.Text.RegularExpressions.Regex.Match(readySource, "expected_manifest constant bytea := decode\\('([0-9a-f]{64})','hex'\\);").Groups[1].Value;
+        Assert.Equal(64, manifest.Length);
+        async Task IsReady(bool expected)
+        {
+            await using var command = new NpgsqlCommand("SELECT enrollment_execution.profile4_ready()", owner);
+            Assert.Equal(expected, await command.ExecuteScalarAsync(cancellationToken));
+        }
+        await IsReady(false);
         const string insert = "INSERT INTO enrollment_execution.profile4_readiness VALUES (true,4,1,'11111111-1111-1111-1111-111111111111',decode(repeat('ab',32),'hex'),'PendingHistoryAudit',statement_timestamp(),NULL,NULL)";
         foreach (var (before, after) in new[] {
             ("true,4,1", "false,4,1"), ("true,4,1", "true,3,1"), ("true,4,1", "true,4,0"),
@@ -25,7 +35,8 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             Assert.Equal("23514", failure.SqlState);
             await transaction.RollbackAsync(cancellationToken);
         }
-        await Execute(owner, insert);
+        await Execute(owner, insert.Replace("repeat('ab',32)", "'" + manifest + "'", StringComparison.Ordinal));
+        await IsReady(false);
         async Task<string> Snapshot()
         {
             await using var command = new NpgsqlCommand("SELECT row_to_json(r)::text FROM enrollment_execution.profile4_readiness r", owner);
@@ -63,7 +74,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await runtime.OpenAsync(cancellationToken);
         foreach (var sql in new[] { "SELECT * FROM enrollment_execution.profile4_readiness", ready, insert,
             "DELETE FROM enrollment_execution.profile4_readiness", "TRUNCATE enrollment_execution.profile4_readiness",
-            "SELECT enrollment_execution.guard_profile4_readiness()" })
+            "SELECT enrollment_execution.guard_profile4_readiness()", "SELECT enrollment_execution.profile4_ready()" })
         {
             var denied = await Assert.ThrowsAsync<PostgresException>(() => Execute(runtime, sql));
             Assert.Equal("42501", denied.SqlState);
@@ -104,6 +115,13 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         Assert.Equal(pending, await Snapshot());
         await using (var locks = new NpgsqlCommand("SELECT NOT EXISTS(SELECT 1 FROM pg_catalog.pg_locks WHERE pid=pg_catalog.pg_backend_pid() AND locktype='advisory' AND classid=1162235478 AND objid=1 AND objsubid=2)", owner))
             Assert.Equal(true, await locks.ExecuteScalarAsync(cancellationToken));
+        await using (var transaction = await owner.BeginTransactionAsync(cancellationToken))
+        {
+            await Execute(owner, "DO $visibility$ BEGIN " + ready + "; IF enrollment_execution.profile4_ready() IS DISTINCT FROM true THEN RAISE EXCEPTION 'Ready update is not visible inside the same owner DO'; END IF; END $visibility$;");
+            await transaction.RollbackAsync(cancellationToken);
+        }
+        await IsReady(false);
+        Assert.Equal(pending, await Snapshot());
         // This directly tests the trusted-owner transition primitive, NOT history attestation.
         await using (var transaction = await owner.BeginTransactionAsync(cancellationToken))
         {
@@ -111,7 +129,29 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             await Execute(owner, ready);
             await transaction.CommitAsync(cancellationToken);
         }
+        await IsReady(true);
         var active = await Snapshot();
+        // Test-admin-equivalent owner drift is rollback-only; the predicate is not a catalog attestation.
+        foreach (var mutation in new[] {
+            "UPDATE enrollment_execution.profile4_readiness SET attestation_manifest_sha256=decode(repeat('cd',32),'hex')",
+            "UPDATE enrollment_execution.profile4_readiness SET ready_by='another_owner'",
+            "DELETE FROM enrollment_execution.profile4_readiness" })
+        {
+            await using var transaction = await owner.BeginTransactionAsync(cancellationToken);
+            await Execute(owner, "ALTER TABLE enrollment_execution.profile4_readiness DISABLE TRIGGER profile4_readiness_transition");
+            await Execute(owner, mutation);
+            await IsReady(false);
+            await transaction.RollbackAsync(cancellationToken);
+            await IsReady(true);
+            Assert.Equal(active, await Snapshot());
+        }
+        await using (var transaction = await owner.BeginTransactionAsync(cancellationToken))
+        {
+            await Execute(owner, "ALTER TABLE enrollment_execution.profile4_readiness ENABLE ROW LEVEL SECURITY");
+            await IsReady(false);
+            await transaction.RollbackAsync(cancellationToken);
+        }
+        await IsReady(true);
         await Reject(owner, ready);
         const string close = "UPDATE enrollment_execution.profile4_readiness SET state='PendingHistoryAudit',generation=2,installation_nonce='22222222-2222-2222-2222-222222222222',pending_at=statement_timestamp(),ready_at=NULL,ready_by=NULL";
         await Reject(owner, close.Replace("generation=2", "generation=3", StringComparison.Ordinal));
@@ -123,6 +163,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             await Execute(owner, close);
             await transaction.CommitAsync(cancellationToken);
         }
+        await IsReady(false);
         await using var state = new NpgsqlCommand("SELECT state='PendingHistoryAudit' AND generation=2 AND ready_at IS NULL AND ready_by IS NULL FROM enrollment_execution.profile4_readiness", owner);
         Assert.Equal(true, await state.ExecuteScalarAsync(cancellationToken));
     }
