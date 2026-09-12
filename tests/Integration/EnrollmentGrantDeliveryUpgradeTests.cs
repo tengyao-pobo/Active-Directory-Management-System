@@ -9,11 +9,13 @@ namespace ItManagement.IntegrationTests;
 public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
 {
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(true, true)]
-    public async Task DeliveryUpgradePreservesV3AfterRollback(bool canonicalCollation, bool composeIdentity)
+    [InlineData(false, 0)]
+    [InlineData(true, 0)]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    [InlineData(false, 2)]
+    [InlineData(true, 2)]
+    public async Task DeliveryUpgradePreservesV3AfterRollback(bool canonicalCollation, int composition)
     {
         var owner = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CONSOLE_TEST_DB")!);
         Assert.Contains(owner.Host, new[] { "localhost", "127.0.0.1", "::1" });
@@ -26,6 +28,8 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         var queue = "cdu_queue_" + suffix;
         var worker = "cdu_worker_" + suffix;
         var delivery = "cdu_delivery_" + suffix;
+        var statusRuntime = "cdu_status_" + suffix;
+        var deliveryRuntime = "cdu_reader_" + suffix;
         var password = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         var admin = new NpgsqlConnectionStringBuilder(owner.ConnectionString) { Database = "postgres", Pooling = false };
@@ -44,7 +48,9 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await db.Database.MigrateAsync(deadline.Token);
         await db.Database.OpenConnectionAsync(deadline.Token);
         // Every resource name/password is generated from fixed prefixes and hexadecimal bytes.
-        foreach (var (name, login) in new[] { (api, true), (worker, true), (locker, false), (executor, false), (queue, false), (delivery, false) })
+        var roles = new List<(string Name, bool Login)> { (api, true), (worker, true), (locker, false), (executor, false), (queue, false), (delivery, false) };
+        if (composition == 2) roles.AddRange([(statusRuntime, true), (deliveryRuntime, true)]);
+        foreach (var (name, login) in roles)
         {
             var authentication = login ? "LOGIN PASSWORD '" + password + "'" : "NOLOGIN";
             await using var createRole = new NpgsqlCommand(
@@ -61,6 +67,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             ["runtime_role"] = api, ["enrollment_plan_lock_owner_role"] = locker,
             ["execution_runtime_role"] = worker, ["execution_definer_role"] = executor,
             ["execution_queue_definer_role"] = queue, ["delivery_definer_role"] = delivery,
+            ["status_runtime_role"] = statusRuntime, ["delivery_runtime_role"] = deliveryRuntime,
             ["expected_table_owner_role"] = owner.Username!, ["expected_environment_id"] = environment.Id.ToString(), ["DBNAME"] = database
         };
         foreach (var path in new[] { "provision-runtime.sql", "enrollment-execution/v3/provision-enrollment-execution.sql" })
@@ -71,7 +78,9 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         var bindings = await Snapshot(false);
         var reservations = await Snapshot(true);
         var auditIdentity = await AuditIdentity();
-        if (composeIdentity)
+        var pairPrivileges = composition == 2 ? await PairPrivileges() : null;
+        if (composition == 2) Assert.Empty(pairPrivileges!);
+        if (composition > 0)
         {
             // Compose the exact staged sources only in this disposable database. Even a
             // successful postflight ends with ROLLBACK; the real upgrade remains uncomposed.
@@ -85,6 +94,16 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
                 const string commit = "COMMIT;";
                 foreach (var marker in new[] { include, begin, postflight, commit })
                     Assert.Equal(1, script.Split(marker, StringSplitOptions.None).Length - 1);
+                var pairScript = "";
+                if (composition == 2)
+                {
+                    pairScript = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "provision-enrollment-delivery.sql"), deadline.Token);
+                    foreach (var marker in new[] { begin, commit })
+                        Assert.Equal(1, pairScript.Split(marker, StringSplitOptions.None).Length - 1);
+                    // Preserve the real pair installer's preflight, grants and postflight;
+                    // its transaction is owned by the surrounding rollback-only candidate.
+                    pairScript = pairScript.Replace(begin, "", StringComparison.Ordinal).Replace(commit, "", StringComparison.Ordinal);
+                }
                 script = script.Replace(include, include + "\n\\ir enrollment-delivery-identity.sql", StringComparison.Ordinal)
                     .Replace(begin, begin + """
 
@@ -103,7 +122,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
                     END $verify_preserved_audit$;
 
                     """ + postflight, StringComparison.Ordinal)
-                    .Replace(commit, "ROLLBACK;", StringComparison.Ordinal);
+                    .Replace(commit, pairScript + "\nROLLBACK;", StringComparison.Ordinal);
                 await File.WriteAllTextAsync(path, script, deadline.Token);
                 var candidate = await RunScript(owner, path, variables, deadline.Token);
                 Assert.True(candidate.ExitCode == 0, candidate.Error);
@@ -120,6 +139,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         Assert.Equal(bindings, await Snapshot(false));
         Assert.Equal(reservations, await Snapshot(true));
         Assert.Equal(auditIdentity, await AuditIdentity());
+        if (composition == 2) Assert.Equal(pairPrivileges, await PairPrivileges());
         Assert.True(await db.Database.SqlQueryRaw<bool>("""
             SELECT pg_catalog.to_regprocedure('enrollment_execution.audit_delivery_privileges(uuid)') IS NULL
               AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy WHERE polname LIKE 'enrollment_delivery_%') AS "Value"
@@ -133,6 +153,14 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             SELECT jsonb_build_object('oid',oid,'owner',proowner,'acl',proacl,'body',prosrc)::text AS "Value"
             FROM pg_catalog.pg_proc WHERE oid='enrollment_execution.audit_execution_privileges(uuid)'::regprocedure
             """).SingleAsync(deadline.Token);
+
+        async Task<string[]> PairPrivileges() => await db.Database.SqlQuery<string>($"""
+            SELECT jsonb_build_object('class',acl.classid,'object',acl.objid,'subobject',acl.objsubid,
+              'type',acl.deptype,'role',acl.refobjid)::text AS "Value"
+            FROM pg_catalog.pg_shdepend acl JOIN pg_catalog.pg_roles role ON role.oid=acl.refobjid
+            WHERE acl.refclassid='pg_catalog.pg_authid'::regclass AND role.rolname IN({statusRuntime},{deliveryRuntime})
+            ORDER BY acl.classid,acl.objid,acl.objsubid,acl.deptype,acl.refobjid
+            """).ToArrayAsync(deadline.Token);
 
         async Task<string[]> Snapshot(bool reservationRows) => await db.Database.SqlQueryRaw<string>(reservationRows
             ? "SELECT row_to_json(snapshot)::text AS \"Value\" FROM enrollment_execution.role_reservations snapshot ORDER BY row_to_json(snapshot)::text COLLATE \"C\""

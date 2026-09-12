@@ -34,6 +34,8 @@ The permanent upgrade test now covers both the uncomposed rejection and a succes
 
 All 162 delivery integration tests pass after this composition repair. The scope fixture's extraction endpoint was updated to the immediately following worker-guard DROP because the audit DROP no longer exists; its extracted SQL scope is unchanged. Exact published-head CI is still required for this increment.
 
+The next test-only increment adds the real delivery-pair provision body after the candidate upgrade postflight. Only its uniquely counted BEGIN/COMMIT statements are removed so the outer transaction owns rollback; its real preflight, bindings, grants and postflight remain intact. Both generated LOGIN roles start with empty ownership/ACL dependency sets, and those sets remain empty after rollback. All six targeted upgrade cases pass across default/C collation, including uncomposed rejection, identity composition and complete runtime-pair composition. Daybreak accepts the bounded fixture. The preceding 162-case suite predates these two added cases; no new full-suite count is claimed here.
+
 ## Cloud recheck checkpoint — not merge-ready
 
 The initial cloud commit `cfe74ec` was not built or tested and must not be treated as completed delivery attestation. Daybreak Blue subsequently blocked that delta: the external audit queried owner-only application tables through a runtime forbidden from reading them, used throwing regprocedure casts for missing wrappers, and prematurely accepted the unfinished profile4 body in consumers with version3-only downstream checks.
