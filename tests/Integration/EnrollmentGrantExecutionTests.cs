@@ -330,7 +330,14 @@ public sealed partial class EnrollmentGrantPlanTests
         await using var db = Db();
         var migrator = db.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
         var error = await Assert.ThrowsAnyAsync<Exception>(() => migrator.MigrateAsync("20260911214940_EnrollmentGrantPlans"));
-        Assert.Contains("execution history prevents downgrade", error.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("reviewed forward migration", error.ToString(), StringComparison.OrdinalIgnoreCase);
+        // The new journal is forward-only. Exercise the earlier execution-history guard independently
+        // so a newer migration cannot accidentally hide a regression in the original data protection.
+        var migrations = db.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrationsAssembly>();
+        var executionMigration = migrations.CreateMigration(migrations.Migrations["20260912003114_EnrollmentGrantOperations"], db.Database.ProviderName!);
+        var guard = executionMigration.DownOperations.OfType<Microsoft.EntityFrameworkCore.Migrations.Operations.SqlOperation>().First().Sql;
+        var historyError = await Assert.ThrowsAsync<Npgsql.PostgresException>(() => db.Database.ExecuteSqlRawAsync(guard));
+        Assert.Contains("execution history prevents downgrade", historyError.MessageText, StringComparison.OrdinalIgnoreCase);
         await using var verify = Db();
         Assert.True(await verify.EnrollmentGrantRecipientReservations.AnyAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));
         Assert.True(await verify.EnrollmentGrantOperations.AnyAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));

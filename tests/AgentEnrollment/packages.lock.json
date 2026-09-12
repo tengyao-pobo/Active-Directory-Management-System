@@ -131,6 +131,7 @@
       "agentenrollment": {
         "type": "Project",
         "dependencies": {
+          "Core": "[1.0.0, )",
           "Npgsql": "[10.0.3, )"
         }
       },
@@ -140,6 +141,9 @@
           "Agent": "[1.0.0, )",
           "Npgsql": "[10.0.3, )"
         }
+      },
+      "core": {
+        "type": "Project"
       }
     }
   }

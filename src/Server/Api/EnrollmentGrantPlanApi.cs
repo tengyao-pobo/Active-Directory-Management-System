@@ -528,64 +528,13 @@ public static partial class EnrollmentGrantPlanApi
         ValidResolved(result, payload.EnvironmentId, payload.DirectoryObjectId, now) && result.DeviceId == payload.ServerDeviceId &&
         result.MappingCreatedAt == payload.MappingCreatedAt;
 
-    private static bool TryValidateStored(ChangePlan plan, EnrollmentGrantRecipientReservation reservation, out EnrollmentGrantPlanPayload payload)
-    {
-        payload = null!;
-        try { payload = JsonSerializer.Deserialize<EnrollmentGrantPlanPayload>(plan.ImmutablePlanJson, StrictJson)!; }
-        catch (JsonException) { return false; }
-        if (payload is null || payload.SchemaVersion != EnrollmentGrantPlanContract.SchemaVersion || payload.Action != EnrollmentGrantPlanContract.Action ||
-            plan.Action != payload.Action || payload.EnvironmentId != plan.EnvironmentId || payload.EnvironmentId != reservation.EnvironmentId ||
-            payload.RequesterId != plan.RequesterId || payload.RequesterId != reservation.RequesterId || payload.RequestId != reservation.RequestId ||
-            payload.DirectoryObjectId == Guid.Empty || payload.ServerDeviceId == Guid.Empty || payload.OperationId == Guid.Empty || payload.RequestId == Guid.Empty ||
-            payload.DirectoryGeneration == Guid.Empty || payload.EnvironmentVersion <= 0 || plan.PolicyVersion != payload.EnvironmentVersion ||
-            plan.State is not (ChangePlanState.PendingApproval or ChangePlanState.Approved or ChangePlanState.Rejected or ChangePlanState.Expired or ChangePlanState.Queued) ||
-            plan.Items.Count != 1 || plan.Items.Single().EnvironmentId != plan.EnvironmentId || plan.Items.Single().PlanId != plan.Id ||
-            plan.Items.Single().TargetId != plan.EnvironmentId.ToString() || plan.Items.Single().ExpectedVersion != payload.EnvironmentVersion ||
-            payload.GrantTtlSeconds != EnrollmentGrantPlanContract.GrantTtlSeconds || plan.Reason != payload.Reason ||
-            payload.RecipientSpki is null || payload.RecipientKeyFingerprint is null || payload.Reason is null ||
-            payload.Reason.Length is < 5 or > 512 || payload.Reason.Any(char.IsControl) || payload.MappingCreatedAt.Offset != TimeSpan.Zero ||
-            payload.MappingCreatedAt.Ticks % 10 != 0 || reservation.PlanId != plan.Id || reservation.Fingerprint.Length != 32 || reservation.RequestDigest.Length != 32)
-            return false;
-        if (reservation.CreatedAt.Offset != TimeSpan.Zero || reservation.CreatedAt.Ticks % 10 != 0 ||
-            plan.ExpiresAt.Offset != TimeSpan.Zero || plan.ExpiresAt.Ticks % 10 != 0 ||
-            plan.ExpiresAt != reservation.CreatedAt.AddSeconds(EnrollmentGrantPlanContract.GrantTtlSeconds)) return false;
-        try
-        {
-            var spki = DecodeCanonicalBase64Url(payload.RecipientSpki);
-            var key = EnrollmentGrantRecipientKey.Validate(spki);
-            if (!FixedEquals(key.GetFingerprintSha256(), reservation.Fingerprint) ||
-                payload.RecipientKeyFingerprint != WebEncoders.Base64UrlEncode(reservation.Fingerprint) ||
-                payload.RecipientSpki != WebEncoders.Base64UrlEncode(key.GetSubjectPublicKeyInfo())) return false;
-        }
-        catch (Exception error) when (error is FormatException or SealedEnrollmentGrantException) { return false; }
-        var digest = ComputeRequestDigest(payload.EnvironmentId, payload.RequesterId, payload.RequestId, payload.DirectoryObjectId,
-            payload.ServerDeviceId, payload.MappingCreatedAt, payload.EnvironmentVersion, payload.DirectoryGeneration, payload.RecipientSpki, payload.Reason);
-        return FixedEquals(digest, reservation.RequestDigest);
-    }
+    private static bool TryValidateStored(ChangePlan plan, EnrollmentGrantRecipientReservation reservation, out EnrollmentGrantPlanPayload payload) =>
+        ItManagement.AgentEnrollment.Plans.EnrollmentGrantPlanValidation.TryValidateStored(plan, reservation, out payload);
 
     private static byte[] ComputeRequestDigest(Guid env, Guid requester, Guid request, Guid directory, Guid device,
-        DateTimeOffset mappingCreatedAt, long environmentVersion, Guid generation, string spki, string reason)
-    {
-        using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(stream))
-        {
-            writer.WriteStartObject();
-            writer.WriteString("action", EnrollmentGrantPlanContract.Action);
-            writer.WriteString("directoryObjectId", directory);
-            writer.WriteNumber("environmentVersion", environmentVersion);
-            writer.WriteString("environmentId", env);
-            writer.WriteString("mappingCreatedAt", Canonical(mappingCreatedAt));
-            writer.WriteString("reason", reason);
-            writer.WriteString("recipientSpki", spki);
-            writer.WriteString("requesterId", requester);
-            writer.WriteString("requestId", request);
-            writer.WriteString("serverDeviceId", device);
-            writer.WriteString("directoryGeneration", generation);
-            writer.WriteNumber("schemaVersion", EnrollmentGrantPlanContract.SchemaVersion);
-            writer.WriteEndObject();
-        }
-        return SHA256.HashData(stream.ToArray());
-    }
+        DateTimeOffset mappingCreatedAt, long environmentVersion, Guid generation, string spki, string reason) =>
+        ItManagement.AgentEnrollment.Plans.EnrollmentGrantPlanValidation.ComputeRequestDigest(env, requester, request, directory,
+            device, mappingCreatedAt, environmentVersion, generation, spki, reason);
 
     private static EnrollmentGrantPlanDto ToDto(ChangePlan plan, EnrollmentGrantPlanPayload payload, DateTimeOffset now, bool canApprove, bool canRequest) =>
         new(plan.Id, plan.EnvironmentId, payload.DirectoryObjectId, plan.RequesterId, payload.RequestId,

@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../Server/Core/Core.csproj" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
     <InternalsVisibleTo Include="AgentEnrollment.Tests" />
   </ItemGroup>
