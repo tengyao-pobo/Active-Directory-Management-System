@@ -22,7 +22,7 @@ public sealed class PostgresPlatformGrantRevocationRepository
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedTableOwner);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedFunctionOwner);
         await using var command = dataSource.CreateCommand(
-            "SELECT audit.is_valid,audit.diagnostic_code,audit.profile_version,NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)'::pg_catalog.regprocedure,'EXECUTE') FROM agent_private.audit_platform_grant_privileges(@environment_id,@table_owner::name,@function_owner::name) audit");
+            "SELECT audit.is_valid,audit.diagnostic_code,audit.profile_version,NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,smallint,timestamptz)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,smallint,timestamptz,bytea)'::pg_catalog.regprocedure,'EXECUTE') FROM agent_private.audit_platform_grant_privileges(@environment_id,@table_owner::name,@function_owner::name) audit");
         command.Parameters.AddWithValue("environment_id", expectedEnvironmentId);
         command.Parameters.AddWithValue("table_owner", expectedTableOwner);
         command.Parameters.AddWithValue("function_owner", expectedFunctionOwner);
@@ -33,7 +33,7 @@ public sealed class PostgresPlatformGrantRevocationRepository
         var diagnostic = PostgresPlatformGrantRepository.ParseDiagnostic(reader.GetString(1));
         var version = reader.GetInt16(2);
         var hasExactRevocationCapability = reader.GetBoolean(3);
-        if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !valid || version != 2 ||
+        if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !valid || version != 3 ||
             diagnostic != PlatformGrantDiagnostic.None || !hasExactRevocationCapability)
             throw new InvalidOperationException("PlatformGrantPrivilegeAuditFailed");
         return new(dataSource, expectedEnvironmentId);
@@ -46,8 +46,10 @@ public sealed class PostgresPlatformGrantRevocationRepository
         if (receipt.EnvironmentId != _environmentId) return UnknownRead(PlatformGrantDiagnostic.OperationConflict);
         try
         {
-            await using var command = _dataSource.CreateCommand(
-                "SELECT state,diagnostic_code,environment_id,operation_id,grant_id,directory_object_id,device_id,mapping_created_at,token_sha256,authorization_digest,created_at,expires_at,observed_at,state_changed_at FROM agent_private.read_initial_enrollment_grant(@expected_environment_id,@operation_id,@grant_id,@directory_object_id,@device_id,@mapping_created_at,@token_sha256,@authorization_digest,@created_at,@expires_at)");
+            var sql = receipt.IssueContractVersion == 1
+                ? "SELECT state,diagnostic_code,environment_id,operation_id,grant_id,directory_object_id,device_id,mapping_created_at,token_sha256,authorization_digest,created_at,expires_at,issue_contract_version,mint_permit_not_after,observed_at,state_changed_at FROM agent_private.read_initial_enrollment_grant(@expected_environment_id,@operation_id,@grant_id,@directory_object_id,@device_id,@mapping_created_at,@token_sha256,@authorization_digest,@created_at,@expires_at)"
+                : "SELECT state,diagnostic_code,environment_id,operation_id,grant_id,directory_object_id,device_id,mapping_created_at,token_sha256,authorization_digest,created_at,expires_at,issue_contract_version,mint_permit_not_after,observed_at,state_changed_at FROM agent_private.read_initial_enrollment_grant(@expected_environment_id,@operation_id,@grant_id,@directory_object_id,@device_id,@mapping_created_at,@token_sha256,@authorization_digest,@created_at,@expires_at,@issue_contract_version,@mint_permit_not_after)";
+            await using var command = _dataSource.CreateCommand(sql);
             AddIssueReceipt(command, receipt);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) return UnknownRead();
@@ -71,8 +73,11 @@ public sealed class PostgresPlatformGrantRevocationRepository
             return UnknownRevoke(PlatformGrantDiagnostic.OperationConflict);
         try
         {
-            await using var command = _dataSource.CreateCommand(
-                "SELECT outcome,diagnostic_code,environment_id,revocation_operation_id,issue_operation_id,grant_id,directory_object_id,device_id,mapping_created_at,token_sha256,issue_authorization_digest,issue_created_at,issue_expires_at,revoke_authorization_digest,disposition,completed_at,effective_revoked_at FROM agent_private.revoke_initial_enrollment_grant(@expected_environment_id,@revocation_operation_id,@operation_id,@grant_id,@directory_object_id,@device_id,@mapping_created_at,@token_sha256,@authorization_digest,@created_at,@expires_at,@revoke_authorization_digest)");
+            var issue = authorization.IssueReceipt;
+            var sql = issue.IssueContractVersion == 1
+                ? "SELECT outcome,diagnostic_code,environment_id,revocation_operation_id,issue_operation_id,grant_id,directory_object_id,device_id,mapping_created_at,token_sha256,issue_authorization_digest,issue_created_at,issue_expires_at,issue_contract_version,issue_mint_permit_not_after,revoke_authorization_digest,disposition,completed_at,effective_revoked_at FROM agent_private.revoke_initial_enrollment_grant(@expected_environment_id,@revocation_operation_id,@operation_id,@grant_id,@directory_object_id,@device_id,@mapping_created_at,@token_sha256,@authorization_digest,@created_at,@expires_at,@revoke_authorization_digest)"
+                : "SELECT outcome,diagnostic_code,environment_id,revocation_operation_id,issue_operation_id,grant_id,directory_object_id,device_id,mapping_created_at,token_sha256,issue_authorization_digest,issue_created_at,issue_expires_at,issue_contract_version,issue_mint_permit_not_after,revoke_authorization_digest,disposition,completed_at,effective_revoked_at FROM agent_private.revoke_initial_enrollment_grant(@expected_environment_id,@revocation_operation_id,@operation_id,@grant_id,@directory_object_id,@device_id,@mapping_created_at,@token_sha256,@authorization_digest,@created_at,@expires_at,@issue_contract_version,@mint_permit_not_after,@revoke_authorization_digest)";
+            await using var command = _dataSource.CreateCommand(sql);
             AddIssueReceipt(command, authorization.IssueReceipt);
             command.Parameters.AddWithValue("revocation_operation_id", revocationOperationId);
             command.Parameters.AddWithValue("revoke_authorization_digest", authorization.GetDigest());
@@ -102,18 +107,23 @@ public sealed class PostgresPlatformGrantRevocationRepository
         command.Parameters.AddWithValue("authorization_digest", receipt.GetAuthorizationDigest());
         command.Parameters.AddWithValue("created_at", receipt.CreatedAt);
         command.Parameters.AddWithValue("expires_at", receipt.ExpiresAt);
+        if (receipt.IssueContractVersion == 2 && receipt.MintPermitNotAfter is { } deadline)
+        {
+            command.Parameters.AddWithValue("issue_contract_version", receipt.IssueContractVersion);
+            command.Parameters.AddWithValue("mint_permit_not_after", deadline);
+        }
     }
 
     private static PlatformGrantStateDatabaseResult ReadStateRow(NpgsqlDataReader reader) => new(
         Text(reader, 0), Text(reader, 1), GuidValue(reader, 2), GuidValue(reader, 3), GuidValue(reader, 4),
         GuidValue(reader, 5), GuidValue(reader, 6), Time(reader, 7), Bytes(reader, 8), Bytes(reader, 9),
-        Time(reader, 10), Time(reader, 11), Time(reader, 12), Time(reader, 13));
+        Time(reader, 10), Time(reader, 11), Time(reader, 14), Time(reader, 15), Short(reader, 12), Time(reader, 13));
 
     private static PlatformGrantRevocationDatabaseResult ReadRevocationRow(NpgsqlDataReader reader) => new(
         Text(reader, 0), Text(reader, 1), GuidValue(reader, 2), GuidValue(reader, 3), GuidValue(reader, 4),
         GuidValue(reader, 5), GuidValue(reader, 6), GuidValue(reader, 7), Time(reader, 8), Bytes(reader, 9),
-        Bytes(reader, 10), Time(reader, 11), Time(reader, 12), Bytes(reader, 13), Text(reader, 14),
-        Time(reader, 15), Time(reader, 16));
+        Bytes(reader, 10), Time(reader, 11), Time(reader, 12), Bytes(reader, 15), Text(reader, 16),
+        Time(reader, 17), Time(reader, 18), Short(reader, 13), Time(reader, 14));
 
     internal static PlatformGrantReadResult NormalizeRead(PlatformGrantStateDatabaseResult row,
         PlatformGrantReceipt receipt)
@@ -167,6 +177,7 @@ public sealed class PostgresPlatformGrantRevocationRepository
         ValidIssueReceipt(receipt) && row.EnvironmentId == receipt.EnvironmentId && row.OperationId == receipt.OperationId && row.GrantId == receipt.GrantId &&
         row.DirectoryObjectId == receipt.DirectoryObjectId && row.DeviceId == receipt.DeviceId &&
         row.MappingCreatedAt == receipt.MappingCreatedAt && row.CreatedAt == receipt.CreatedAt && row.ExpiresAt == receipt.ExpiresAt &&
+        row.IssueContractVersion == receipt.IssueContractVersion && row.MintPermitNotAfter == receipt.MintPermitNotAfter &&
         row.TokenSha256 is not null && row.TokenSha256.AsSpan().SequenceEqual(receipt.GetTokenSha256()) &&
         row.AuthorizationDigest is not null && row.AuthorizationDigest.AsSpan().SequenceEqual(receipt.GetAuthorizationDigest());
 
@@ -174,13 +185,15 @@ public sealed class PostgresPlatformGrantRevocationRepository
         ValidIssueReceipt(receipt) && row.EnvironmentId == receipt.EnvironmentId && row.IssueOperationId == receipt.OperationId && row.GrantId == receipt.GrantId &&
         row.DirectoryObjectId == receipt.DirectoryObjectId && row.DeviceId == receipt.DeviceId &&
         row.MappingCreatedAt == receipt.MappingCreatedAt && row.IssueCreatedAt == receipt.CreatedAt && row.IssueExpiresAt == receipt.ExpiresAt &&
+        row.IssueContractVersion == receipt.IssueContractVersion && row.IssueMintPermitNotAfter == receipt.MintPermitNotAfter &&
         row.TokenSha256 is not null && row.TokenSha256.AsSpan().SequenceEqual(receipt.GetTokenSha256()) &&
         row.IssueAuthorizationDigest is not null && row.IssueAuthorizationDigest.AsSpan().SequenceEqual(receipt.GetAuthorizationDigest());
 
     private static bool AllIssueFieldsNull(PlatformGrantStateDatabaseResult row) => row.EnvironmentId is null &&
         row.OperationId is null && row.GrantId is null && row.DirectoryObjectId is null && row.DeviceId is null &&
         row.MappingCreatedAt is null && row.TokenSha256 is null && row.AuthorizationDigest is null &&
-        row.CreatedAt is null && row.ExpiresAt is null && row.ObservedAt is null && row.StateChangedAt is null;
+        row.CreatedAt is null && row.ExpiresAt is null && row.IssueContractVersion is null &&
+        row.MintPermitNotAfter is null && row.ObservedAt is null && row.StateChangedAt is null;
 
     private static bool ValidIssueReceipt(PlatformGrantReceipt receipt) => receipt.EnvironmentId != Guid.Empty &&
         receipt.OperationId != Guid.Empty && receipt.GrantId != Guid.Empty && receipt.DirectoryObjectId != Guid.Empty &&
@@ -188,7 +201,13 @@ public sealed class PostgresPlatformGrantRevocationRepository
         PostgresPlatformGrantRepository.IsCanonical(receipt.MappingCreatedAt) &&
         PostgresPlatformGrantRepository.IsCanonical(receipt.CreatedAt) &&
         PostgresPlatformGrantRepository.IsCanonical(receipt.ExpiresAt) && receipt.MappingCreatedAt <= receipt.CreatedAt &&
-        receipt.ExpiresAt - receipt.CreatedAt == TimeSpan.FromSeconds(600);
+        receipt.ExpiresAt - receipt.CreatedAt == TimeSpan.FromSeconds(600) && receipt.IssueContractVersion switch
+        {
+            1 => receipt.MintPermitNotAfter is null,
+            2 => receipt.MintPermitNotAfter is { } deadline && PostgresPlatformGrantRepository.IsCanonical(deadline) &&
+                receipt.CreatedAt < deadline && deadline <= receipt.CreatedAt.AddSeconds(60),
+            _ => false
+        };
 
     private static bool ValidReadTime(string state, DateTimeOffset observedAt, DateTimeOffset? changedAt,
         PlatformGrantReceipt receipt) => state switch
@@ -222,7 +241,8 @@ public sealed class PostgresPlatformGrantRevocationRepository
         row.RevocationOperationId is null && row.IssueOperationId is null && row.GrantId is null &&
         row.DirectoryObjectId is null && row.DeviceId is null && row.MappingCreatedAt is null &&
         row.TokenSha256 is null && row.IssueAuthorizationDigest is null && row.IssueCreatedAt is null &&
-        row.IssueExpiresAt is null && row.RevokeAuthorizationDigest is null && row.Disposition is null &&
+        row.IssueExpiresAt is null && row.IssueContractVersion is null && row.IssueMintPermitNotAfter is null &&
+        row.RevokeAuthorizationDigest is null && row.Disposition is null &&
         row.CompletedAt is null && row.EffectiveRevokedAt is null;
 
     private static PlatformGrantEffectiveState ParseState(string value) => value switch
@@ -260,16 +280,19 @@ public sealed class PostgresPlatformGrantRevocationRepository
     private static Guid? GuidValue(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
     private static DateTimeOffset? Time(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<DateTimeOffset>(ordinal);
     private static byte[]? Bytes(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<byte[]>(ordinal);
+    private static short? Short(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetInt16(ordinal);
 }
 
 internal sealed record PlatformGrantStateDatabaseResult(string? State, string? Diagnostic, Guid? EnvironmentId,
     Guid? OperationId, Guid? GrantId, Guid? DirectoryObjectId, Guid? DeviceId, DateTimeOffset? MappingCreatedAt,
     byte[]? TokenSha256, byte[]? AuthorizationDigest, DateTimeOffset? CreatedAt, DateTimeOffset? ExpiresAt,
-    DateTimeOffset? ObservedAt, DateTimeOffset? StateChangedAt);
+    DateTimeOffset? ObservedAt, DateTimeOffset? StateChangedAt,
+    short? IssueContractVersion = null, DateTimeOffset? MintPermitNotAfter = null);
 
 internal sealed record PlatformGrantRevocationDatabaseResult(string? Outcome, string? Diagnostic,
     Guid? EnvironmentId, Guid? RevocationOperationId, Guid? IssueOperationId, Guid? GrantId,
     Guid? DirectoryObjectId, Guid? DeviceId, DateTimeOffset? MappingCreatedAt, byte[]? TokenSha256,
     byte[]? IssueAuthorizationDigest, DateTimeOffset? IssueCreatedAt, DateTimeOffset? IssueExpiresAt,
     byte[]? RevokeAuthorizationDigest, string? Disposition, DateTimeOffset? CompletedAt,
-    DateTimeOffset? EffectiveRevokedAt);
+    DateTimeOffset? EffectiveRevokedAt, short? IssueContractVersion = null,
+    DateTimeOffset? IssueMintPermitNotAfter = null);

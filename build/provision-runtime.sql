@@ -34,8 +34,15 @@ reservation_acl AS (
     SELECT a.privilege_type,a.is_grantable FROM pg_class c
     CROSS JOIN LATERAL aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
     WHERE c.oid='public."EnrollmentGrantRecipientReservations"'::regclass AND a.grantee=(SELECT oid FROM runtime)
+), operation_acl AS (
+    SELECT a.privilege_type,a.is_grantable FROM pg_class c
+    CROSS JOIN LATERAL aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
+    WHERE c.oid='public."EnrollmentGrantOperations"'::regclass AND a.grantee=(SELECT oid FROM runtime)
 )
 SELECT CASE WHEN
+    NOT EXISTS(SELECT 1 FROM operation_acl WHERE privilege_type NOT IN ('SELECT','INSERT') OR is_grantable) AND
+    NOT EXISTS(SELECT 1 FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) acl
+        WHERE a.attrelid='public."EnrollmentGrantOperations"'::regclass AND acl.grantee=(SELECT oid FROM runtime)) AND
     NOT EXISTS (SELECT 1 FROM public."DirectoryDatabaseBindings"
         WHERE "LoginRole"=:'runtime_role' AND ("Purpose" IS DISTINCT FROM 'Api' OR "EnvironmentId" IS NOT NULL OR "PrincipalId" IS NOT NULL)) AND
     NOT EXISTS (SELECT 1 FROM public."DirectoryDatabaseBindings" WHERE "LoginRole"=:'enrollment_plan_lock_owner_role') AND
@@ -117,6 +124,8 @@ REVOKE SELECT ("Fingerprint","EnvironmentId","PlanId","RequesterId","RequestId",
     REFERENCES ("Fingerprint","EnvironmentId","PlanId","RequesterId","RequestId","RequestDigest","CreatedAt")
     ON "EnrollmentGrantRecipientReservations" FROM :"runtime_role";
 GRANT SELECT, INSERT ON "EnrollmentGrantRecipientReservations" TO :"runtime_role";
+REVOKE UPDATE, DELETE, TRUNCATE ON "EnrollmentGrantOperations" FROM :"runtime_role";
+GRANT SELECT, INSERT ON "EnrollmentGrantOperations" TO :"runtime_role";
 REVOKE UPDATE ON "DeviceTags", "DeviceTagAssignments" FROM :"runtime_role";
 GRANT UPDATE ("Version", "ArchivedAt", "UpdatedAt", "UpdatedBy") ON "DeviceTags" TO :"runtime_role";
 -- Keep this catalog query aligned with EnrollmentGrantPlanApi.LockHelperIsValidAsync.
@@ -221,7 +230,11 @@ SELECT valid AS "IsValid", CASE WHEN valid THEN 'None' ELSE 'PrivilegeAuditFaile
         WHERE i.indisunique AND i.indisvalid AND i.indisready AND NOT i.indisprimary AND i.indpred IS NULL AND
         ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ord) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum ORDER BY k.ord)
         =ARRAY['EnvironmentId','RequesterId','RequestId']) AND
-    (SELECT count(*)=2 FROM pg_index i JOIN reservation r ON r.oid=i.indrelid WHERE i.indisunique AND NOT i.indisprimary) AND
+    (SELECT count(*)=3 FROM pg_index i JOIN reservation r ON r.oid=i.indrelid WHERE i.indisunique AND NOT i.indisprimary) AND
+                (SELECT count(*)=1 FROM pg_index i JOIN reservation r ON r.oid=i.indrelid
+                    WHERE i.indisunique AND i.indisvalid AND i.indisready AND NOT i.indisprimary AND i.indpred IS NULL AND i.indexprs IS NULL AND i.indnatts=5 AND
+                    ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ord) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum ORDER BY k.ord)
+                    =ARRAY['Fingerprint','EnvironmentId','PlanId','RequesterId','RequestId']) AND
     (SELECT count(*)=1 FROM pg_constraint c JOIN reservation r ON r.oid=c.conrelid WHERE c.contype='f' AND c.confrelid='public."Plans"'::regclass AND c.confdeltype='r' AND
         pg_get_constraintdef(c.oid,true)='FOREIGN KEY ("EnvironmentId", "PlanId") REFERENCES "Plans"("EnvironmentId", "Id") ON DELETE RESTRICT') AND
     (SELECT count(*)=3 FROM pg_constraint c JOIN reservation r ON r.oid=c.conrelid WHERE c.contype='c' AND c.convalidated AND
@@ -330,4 +343,5 @@ SELECT CASE WHEN
     NOT EXISTS (SELECT 1 FROM runtime r JOIN pg_proc p ON true JOIN pg_namespace n ON n.oid=p.pronamespace AND n.nspname<>'public'
         CROSS JOIN LATERAL aclexplode(p.proacl) acl WHERE acl.grantee=r.oid)
     THEN 1 ELSE 1/(pg_catalog.pg_backend_pid()-pg_catalog.pg_backend_pid()) END AS enrollment_plan_capability_postflight;
+\ir audit-enrollment-grant-operations.sql
 COMMIT;

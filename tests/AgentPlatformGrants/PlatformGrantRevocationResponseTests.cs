@@ -351,7 +351,7 @@ public sealed class PlatformGrantRevocationResponseTests
     private static PlatformGrantStateDatabaseResult ReadRow(PlatformGrantReceipt receipt) => new("Available", "None",
         receipt.EnvironmentId, receipt.OperationId, receipt.GrantId, receipt.DirectoryObjectId, receipt.DeviceId,
         receipt.MappingCreatedAt, receipt.GetTokenSha256(), receipt.GetAuthorizationDigest(), receipt.CreatedAt, receipt.ExpiresAt,
-        receipt.CreatedAt.AddSeconds(1), null);
+        receipt.CreatedAt.AddSeconds(1), null, receipt.IssueContractVersion, receipt.MintPermitNotAfter);
 
     private static PlatformGrantRevocationDatabaseResult RevokeRow(Input sample, string outcome = "Completed", string disposition = "Revoked")
     {
@@ -360,7 +360,7 @@ public sealed class PlatformGrantRevocationResponseTests
         DateTimeOffset? revoked = disposition == "Consumed" ? null : completed;
         return new(outcome, "None", r.EnvironmentId, sample.RevokeId, r.OperationId, r.GrantId, r.DirectoryObjectId, r.DeviceId,
             r.MappingCreatedAt, r.GetTokenSha256(), r.GetAuthorizationDigest(), r.CreatedAt, r.ExpiresAt,
-            sample.Authorization.GetDigest(), disposition, completed, revoked);
+            sample.Authorization.GetDigest(), disposition, completed, revoked, r.IssueContractVersion, r.MintPermitNotAfter);
     }
 
     private static Input Sample()

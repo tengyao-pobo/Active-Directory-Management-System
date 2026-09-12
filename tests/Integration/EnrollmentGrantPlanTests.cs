@@ -32,10 +32,11 @@ public sealed partial class EnrollmentGrantPlanTests
     }
     private sealed class Reader(Func<Guid, Guid, EnrollmentTargetResult> read) : IEnrollmentTargetReader
     {
-        public int Calls { get; private set; }
+        private int _calls;
+        public int Calls => Volatile.Read(ref _calls);
         public Task<EnrollmentTargetResult> ReadAsync(Guid environmentId, Guid directoryObjectId, CancellationToken cancellationToken)
         {
-            Calls++;
+            Interlocked.Increment(ref _calls);
             return Task.FromResult(read(environmentId, directoryObjectId));
         }
     }
@@ -352,9 +353,13 @@ public sealed partial class EnrollmentGrantPlanTests
         var created = await Post(client, CreatePath(seeded), Body(seeded, Guid.NewGuid()));
         Assert.Equal(HttpStatusCode.Created, created.Status);
         await using var db = Db();
-        var migrator = db.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
-        var error = await Assert.ThrowsAnyAsync<Exception>(() => migrator.MigrateAsync("20260911205500_EnrollmentGrantPermission"));
+        // Exercise this migration's actual guard even when newer queue history blocks the overall downgrade first.
+        var guard = new global::Persistence.Migrations.EnrollmentGrantPlans().DownOperations
+            .OfType<Microsoft.EntityFrameworkCore.Migrations.Operations.SqlOperation>().First().Sql;
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var error = await Assert.ThrowsAnyAsync<Exception>(() => db.Database.ExecuteSqlRawAsync(guard));
         Assert.Contains("reservations prevent rollback", error.ToString(), StringComparison.OrdinalIgnoreCase);
+        await transaction.RollbackAsync();
         await using var verify = Db();
         Assert.True(await verify.EnrollmentGrantRecipientReservations.AnyAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));
         Assert.True(await verify.Database.SqlQueryRaw<bool>("SELECT to_regclass('public.\"EnrollmentGrantRecipientReservations\"') IS NOT NULL AS \"Value\"").SingleAsync());

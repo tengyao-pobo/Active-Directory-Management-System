@@ -1,6 +1,6 @@
 # 平台 Agent 註冊申請與核准
 
-設備的 Inventory 頁籤提供註冊申請及申請 ID 查詢。另一位管理者在同一設備頁開啟申請、檢查設備、原因、公鑰指紋及核准雜湊後核准。此增量只建立平台內的計畫、永久公鑰保留紀錄與稽核；沒有執行端點，不發行 token、不建立 outbox，也不呼叫私有 grant store、CA 或 listener。
+設備的 Inventory 頁籤提供註冊申請及申請 ID 查詢。另一位管理者在同一設備頁開啟申請、檢查設備、原因、公鑰指紋及核准雜湊後核准。計畫、永久公鑰保留紀錄與稽核均在平台內保存。後續已加入[專用排隊交易與歷史查詢](../architecture/platform-grant-execution.md)，目前 processor 預設不可用，尚未開啟執行按鈕，不發行 token，也不呼叫私有 grant store、CA 或 listener。
 
 ## 操作流程
 

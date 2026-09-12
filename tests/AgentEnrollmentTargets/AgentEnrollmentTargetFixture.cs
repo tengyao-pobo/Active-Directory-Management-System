@@ -94,6 +94,8 @@ public sealed partial class AgentEnrollmentTargetFixture : IAsyncLifetime
             Assert.Equal(0, await Scalar<long>("SELECT count(*) FROM pg_catalog.pg_class object JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace WHERE namespace.nspname='agent_private' AND object.relname='enrollment_target_read_database_bindings'"));
             await Script("upgrade-agent-capability-isolation-v2.sql", CapabilityUpgrade());
             await Script("upgrade-agent-platform-grants-v1-to-v2.sql", PlatformStore());
+            await Script("platform-v2-provision.sql", PlatformProvision(database));
+            await Script("upgrade-agent-platform-grants-v2-to-v3.sql", PlatformProvision(database));
             await Script("provision-agent-platform-grants.sql", PlatformProvision(database));
             await Script("agent-enrollment-target-store.sql", TargetStore());
             await Script("provision-agent-enrollment-target.sql", TargetProvision(database));

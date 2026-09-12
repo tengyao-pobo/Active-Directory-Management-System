@@ -541,5 +541,6 @@
   "enrollmentPlans.keyUnavailable": "The recipient key is not available on this page. This request cannot be delivered here; a replacement key requires a new request and approval.",
   "enrollmentPlans.localExpired": "This request window has expired. The local key was discarded; a new request needs a new key and approval.",
   "enrollmentPlans.clear": "Clear view and discard local key",
-  "enrollmentPlans.noExecution": "This stage records the request and approval only. No registration token is issued and the device is not registered yet."
+  "enrollmentPlans.queued": "Queued for processing",
+  "enrollmentPlans.noExecution": "Registration processing is not enabled yet. No registration token is issued and the device is not registered yet."
 }

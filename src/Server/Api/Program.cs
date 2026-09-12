@@ -23,6 +23,7 @@ builder.Services.AddSingleton<IAgentBitLockerProjectionReader>(services => servi
 builder.Services.AddSingleton<IAgentInventoryProjectionReader>(services => services.GetRequiredService<ConfiguredAgentProjectionReader>());
 builder.Services.AddSingleton<ConfiguredEnrollmentTargetReader>();
 builder.Services.AddSingleton<IEnrollmentTargetReader>(services => services.GetRequiredService<ConfiguredEnrollmentTargetReader>());
+builder.Services.AddSingleton<IEnrollmentGrantExecutionReadiness, UnavailableEnrollmentGrantExecution>();
 builder.Services.AddDbContext<ConsoleDbContext>(o => o.UseNpgsql(connection));
 builder.Services.AddScoped<IPasswordHasher<Principal>, PasswordHasher<Principal>>();
 builder.Services.Configure<PasswordHasherOptions>(o => o.IterationCount = 210000);

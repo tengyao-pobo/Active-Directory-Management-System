@@ -541,5 +541,6 @@
   "enrollmentPlans.keyUnavailable": "此頁面沒有這份申請的接收金鑰，無法在此領取；更換金鑰需要重新申請並核准。",
   "enrollmentPlans.localExpired": "此申請操作期限已到，本機金鑰已捨棄；重新申請需要新的金鑰與核准。",
   "enrollmentPlans.clear": "清除畫面並捨棄本機金鑰",
-  "enrollmentPlans.noExecution": "本階段只記錄申請與核准，尚未發行註冊 token，也尚未完成設備註冊。"
+  "enrollmentPlans.queued": "已排隊等待處理",
+  "enrollmentPlans.noExecution": "註冊處理功能尚未啟用，尚未發行註冊 token，也尚未完成設備註冊。"
 }

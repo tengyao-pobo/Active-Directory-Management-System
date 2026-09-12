@@ -25,7 +25,7 @@ public sealed class PostgresApiFixture : IAsyncLifetime
         Factory = new ApiFactory();
     }
 
-    private async Task ProvisionRuntimeAsync(ConsoleDbContext db)
+    internal async Task ProvisionRuntimeAsync(ConsoleDbContext db)
     {
         var owner = new Npgsql.NpgsqlConnectionStringBuilder(_connectionString);
         var runtime = new Npgsql.NpgsqlConnectionStringBuilder(_runtimeConnectionString);
@@ -46,6 +46,8 @@ public sealed class PostgresApiFixture : IAsyncLifetime
             " LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION";
         await db.Database.ExecuteSqlRawAsync(restrictRuntimeRole);
         var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "provision-runtime.sql"));
+        script = script.Replace("\\ir audit-enrollment-grant-operations.sql",
+            await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "audit-enrollment-grant-operations.sql")), StringComparison.Ordinal);
         script = string.Join('\n', script.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Where(line => !line.TrimStart().StartsWith('\\')));
         script = script.Replace(":\"runtime_role\"", QuoteIdentifier(runtime.Username), StringComparison.Ordinal)
@@ -57,7 +59,7 @@ public sealed class PostgresApiFixture : IAsyncLifetime
             script.Contains(":\"enrollment_plan_lock_owner_role\"", StringComparison.Ordinal) || script.Contains(":'enrollment_plan_lock_owner_role'", StringComparison.Ordinal) ||
             script.Contains(":DBNAME", StringComparison.Ordinal))
             throw new InvalidOperationException("Runtime provisioning substitutions were incomplete.");
-        await db.Database.ExecuteSqlRawAsync(script);
+        await db.Database.ExecuteSqlRawAsync(script.Replace("{", "{{", StringComparison.Ordinal).Replace("}", "}}", StringComparison.Ordinal));
     }
 
     private static string QuoteIdentifier(string value) => $"\"{value.Replace("\"", "\"\"")}\"";

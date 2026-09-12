@@ -9,6 +9,36 @@ namespace ItManagement.AgentPlatformGrants.Tests;
 [Collection(PlatformGrantCollection.Name)]
 public sealed class PlatformGrantRevocationBehaviorTests(AgentPlatformGrantFixture fixture)
 {
+    [Fact]
+    public async Task DeadlineBoundReceiptUsesVersionedReadAndRevokeTuple()
+    {
+        await fixture.Reset();
+        var mapping = await fixture.SeedMapping();
+        var issuer = await PostgresPlatformGrantRepository.CreateAuditedAsync(fixture.Platform,
+            fixture.EnvironmentId, fixture.TableOwnerRole, fixture.PlatformDefinerRole, CancellationToken.None);
+        var issued = await issuer.IssueAsync(Guid.NewGuid(),
+            ValidatedGrantAuthorization.FromValidatedPlan(mapping.DirectoryObjectId, mapping.DeviceId,
+                mapping.MappingCreatedAt, PermitDeadline(), RandomNumberGenerator.GetBytes(32)),
+            ValidatedPersistedPlatformGrant.FromValidatedOutboxRecord(RandomNumberGenerator.GetBytes(32)), CancellationToken.None);
+        Assert.Equal(PlatformGrantOutcome.Created, issued.Outcome);
+        var receipt = Assert.IsType<PlatformGrantReceipt>(issued.Receipt);
+        Assert.Equal((short)2, receipt.IssueContractVersion);
+
+        var repository = await Repository();
+        Assert.Equal(PlatformGrantEffectiveState.Available,
+            (await repository.ReadAsync(receipt, CancellationToken.None)).State);
+        var changedDeadline = new PlatformGrantReceipt(receipt.EnvironmentId, receipt.OperationId, receipt.GrantId,
+            receipt.DirectoryObjectId, receipt.DeviceId, receipt.MappingCreatedAt, receipt.CreatedAt, receipt.ExpiresAt,
+            2, receipt.MintPermitNotAfter!.Value.AddSeconds(1), receipt.GetTokenSha256(), receipt.GetAuthorizationDigest());
+        Assert.Equal(PlatformGrantDiagnostic.OperationConflict,
+            (await repository.ReadAsync(changedDeadline, CancellationToken.None)).Diagnostic);
+
+        var revoked = await repository.RevokeAsync(Guid.NewGuid(), Authorization(receipt), CancellationToken.None);
+        Assert.Equal(PlatformGrantRevocationOutcome.Completed, revoked.Outcome);
+        Assert.Equal((short)2, revoked.Receipt!.IssueReceipt.IssueContractVersion);
+        Assert.Equal(receipt.MintPermitNotAfter, revoked.Receipt.IssueReceipt.MintPermitNotAfter);
+    }
+
     [Theory]
     [InlineData("Available", "Revoked")]
     [InlineData("Expired", "Expired")]
@@ -62,7 +92,7 @@ public sealed class PlatformGrantRevocationBehaviorTests(AgentPlatformGrantFixtu
         var issuer = await PostgresPlatformGrantRepository.CreateAuditedAsync(fixture.Platform, fixture.EnvironmentId,
             fixture.TableOwnerRole, fixture.PlatformDefinerRole, CancellationToken.None);
         var issued = await issuer.IssueAsync(Guid.NewGuid(), ValidatedGrantAuthorization.FromValidatedPlan(
-            seed.Receipt.DirectoryObjectId, seed.Receipt.DeviceId, seed.Receipt.MappingCreatedAt, RandomNumberGenerator.GetBytes(32)),
+            seed.Receipt.DirectoryObjectId, seed.Receipt.DeviceId, seed.Receipt.MappingCreatedAt, PermitDeadline(), RandomNumberGenerator.GetBytes(32)),
             ValidatedPersistedPlatformGrant.FromValidatedOutboxRecord(RandomNumberGenerator.GetBytes(32)), CancellationToken.None);
         Assert.Equal(PlatformGrantOutcome.Created, issued.Outcome);
         Assert.NotEqual(seed.Receipt.GrantId, issued.Receipt!.GrantId);
@@ -352,6 +382,11 @@ public sealed class PlatformGrantRevocationBehaviorTests(AgentPlatformGrantFixtu
     private Task<long> ReceiptCount() => fixture.Scalar<long>("SELECT count(*) FROM agent_private.platform_grant_revocation_receipts");
     private static ValidatedGrantRevocationAuthorization Authorization(PlatformGrantReceipt receipt) =>
         ValidatedGrantRevocationAuthorization.FromValidatedPlan(receipt, RandomNumberGenerator.GetBytes(32));
+    private static DateTimeOffset PermitDeadline()
+    {
+        var value = DateTimeOffset.UtcNow.AddSeconds(45);
+        return new DateTimeOffset(value.Ticks - value.Ticks % 10, TimeSpan.Zero);
+    }
 
     // Owner-only historical seeding avoids waiting ten minutes or altering immutable issued receipts.
     private async Task<Seeded> Seed(string state = "Available", bool expiresSoon = false, Guid? environmentId = null)
@@ -372,8 +407,9 @@ public sealed class PlatformGrantRevocationBehaviorTests(AgentPlatformGrantFixtu
               CASE WHEN @state='Consumed' THEN @request END,
               CASE WHEN @state='Revoked' THEN @created END);
             INSERT INTO agent_private.platform_grant_receipts(environment_id,operation_id,grant_id,directory_object_id,
-              device_id,mapping_created_at,token_sha256,authorization_digest,created_at,expires_at)
-            VALUES(@env,@operation,@grant,@directory,@device,@mapping,@token,@digest,@created,@expires);
+              device_id,mapping_created_at,token_sha256,authorization_digest,created_at,expires_at,
+              issue_contract_version,mint_permit_not_after)
+            VALUES(@env,@operation,@grant,@directory,@device,@mapping,@token,@digest,@created,@expires,1,NULL);
             """, new("env", receipt.EnvironmentId), new("grant", receipt.GrantId), new("device", receipt.DeviceId),
             new("token", receipt.GetTokenSha256()), new("state", state == "Expired" ? "Available" : state),
             new("created", created), new("expires", expires), new("request", Guid.NewGuid()),

@@ -8,6 +8,7 @@ namespace ItManagement.Persistence;
 public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options) : DbContext(options)
 {
     public DbSet<EnrollmentGrantRecipientReservation> EnrollmentGrantRecipientReservations => Set<EnrollmentGrantRecipientReservation>();
+    public DbSet<EnrollmentGrantOperation> EnrollmentGrantOperations => Set<EnrollmentGrantOperation>();
     public DbSet<SavedFilter> SavedFilters => Set<SavedFilter>();
     public DbSet<DeviceTag> DeviceTags => Set<DeviceTag>();
     public DbSet<DeviceTagAssignment> DeviceTagAssignments => Set<DeviceTagAssignment>();
@@ -141,6 +142,24 @@ public sealed class ConsoleDbContext(DbContextOptions<ConsoleDbContext> options)
         b.Entity<EnrollmentGrantRecipientReservation>().HasIndex(x => new { x.EnvironmentId, x.RequesterId, x.RequestId }).IsUnique();
         b.Entity<EnrollmentGrantRecipientReservation>().HasOne<ChangePlan>().WithMany()
             .HasForeignKey(x => new { x.EnvironmentId, Id = x.PlanId }).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<EnrollmentGrantOperation>().ToTable("EnrollmentGrantOperations").HasKey(x => x.Id);
+        b.Entity<EnrollmentGrantOperation>().HasOne<ManagedEnvironment>().WithMany()
+            .HasForeignKey(x => x.EnvironmentId).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<EnrollmentGrantOperation>().HasIndex(x => new { x.EnvironmentId, x.PlanId }).IsUnique();
+        b.Entity<EnrollmentGrantOperation>().HasIndex(x => new { x.EnvironmentId, x.ApprovalId }).IsUnique();
+        b.Entity<EnrollmentGrantOperation>().HasIndex(x => x.RecipientKeyFingerprint).IsUnique();
+        b.Entity<EnrollmentGrantOperation>().HasOne<ChangePlan>().WithMany()
+            .HasForeignKey(x => new { x.EnvironmentId, x.PlanId, x.RequesterId, x.PlanHash })
+            .HasPrincipalKey(x => new { x.EnvironmentId, x.Id, x.RequesterId, x.PlanHash }).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<EnrollmentGrantOperation>().HasOne<ChangeApproval>().WithMany()
+            .HasForeignKey(x => new { x.EnvironmentId, x.ApprovalId, x.PlanId, x.PlanHash, x.ApproverId })
+            .HasPrincipalKey(x => new { x.EnvironmentId, x.Id, x.PlanId, x.PlanHash, x.ApproverId }).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<EnrollmentGrantOperation>().HasOne<EnrollmentGrantRecipientReservation>().WithMany()
+            .HasForeignKey(x => new { x.RecipientKeyFingerprint, x.EnvironmentId, x.PlanId, x.RequesterId, x.RequestId })
+            .HasPrincipalKey(x => new { x.Fingerprint, x.EnvironmentId, x.PlanId, x.RequesterId, x.RequestId }).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<EnrollmentGrantOperation>().Property(x => x.PlanHash).HasMaxLength(64);
+        b.Entity<EnrollmentGrantOperation>().Property(x => x.RecipientSpki).HasColumnType("bytea");
+        b.Entity<EnrollmentGrantOperation>().Property(x => x.RecipientKeyFingerprint).HasColumnType("bytea");
 
         b.Entity<LocalCredential>().ToTable("LocalCredentials").HasKey(x => x.PrincipalId);
         b.Entity<LocalCredential>().Property(x => x.Version).IsConcurrencyToken();

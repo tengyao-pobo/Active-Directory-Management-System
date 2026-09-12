@@ -40,16 +40,157 @@ public sealed class PlatformGrantRepositoryTests(AgentPlatformGrantFixture fixtu
         var operation = Guid.NewGuid();
         var digest = RandomNumberGenerator.GetBytes(32);
         var prepared = ValidatedPersistedPlatformGrant.FromValidatedOutboxRecord(RandomNumberGenerator.GetBytes(32));
-        var created = await repository.IssueAsync(operation, Authorization(mapping, digest), prepared, CancellationToken.None);
+        var authorization = Authorization(mapping, digest);
+        var created = await repository.IssueAsync(operation, authorization, prepared, CancellationToken.None);
         await fixture.Execute("DELETE FROM agent_private.agent_device_directory_bindings WHERE environment_id=@env AND directory_object_id=@directory", new("env", mapping.EnvironmentId), new("directory", mapping.DirectoryObjectId));
 
-        var recovered = await repository.IssueAsync(operation, Authorization(mapping, digest), prepared, CancellationToken.None);
+        var recovered = await repository.IssueAsync(operation, authorization, prepared, CancellationToken.None);
         var conflict = await repository.IssueAsync(operation, Authorization(mapping, RandomNumberGenerator.GetBytes(32)), prepared, CancellationToken.None);
 
         Assert.Equal(PlatformGrantOutcome.AlreadyCreated, recovered.Outcome);
         Assert.Equal(created.Receipt, recovered.Receipt);
         Assert.Equal(PlatformGrantOutcome.OutcomeUnknown, conflict.Outcome);
         Assert.Equal(PlatformGrantDiagnostic.OperationConflict, conflict.Diagnostic);
+    }
+
+    [Fact]
+    public async Task ExactDeadlineBoundRecoverySucceedsAfterPermitExpiryButChangedDeadlineConflicts()
+    {
+        await fixture.Reset();
+        var mapping = await fixture.SeedMapping();
+        var repository = await Repository();
+        var operation = Guid.NewGuid();
+        var digest = RandomNumberGenerator.GetBytes(32);
+        var prepared = ValidatedPersistedPlatformGrant.FromValidatedOutboxRecord(RandomNumberGenerator.GetBytes(32));
+        var deadline = CanonicalNow().AddSeconds(2);
+        var authorization = ValidatedGrantAuthorization.FromValidatedPlan(
+            mapping.DirectoryObjectId, mapping.DeviceId, mapping.MappingCreatedAt, deadline, digest);
+
+        var created = await repository.IssueAsync(operation, authorization, prepared, CancellationToken.None);
+        Assert.Equal(PlatformGrantOutcome.Created, created.Outcome);
+        while (!await fixture.Scalar<bool>("SELECT pg_catalog.clock_timestamp()>=@deadline", new NpgsqlParameter("deadline", deadline)))
+            await Task.Delay(25);
+
+        var replay = await repository.IssueAsync(operation, authorization, prepared, CancellationToken.None);
+        var changed = await repository.IssueAsync(operation,
+            ValidatedGrantAuthorization.FromValidatedPlan(mapping.DirectoryObjectId, mapping.DeviceId,
+                mapping.MappingCreatedAt, deadline.AddSeconds(1), digest), prepared, CancellationToken.None);
+
+        Assert.Equal(PlatformGrantOutcome.AlreadyCreated, replay.Outcome);
+        Assert.Equal(created.Receipt, replay.Receipt);
+        Assert.Equal((short)2, replay.Receipt!.IssueContractVersion);
+        Assert.Equal(deadline, replay.Receipt.MintPermitNotAfter);
+        Assert.Equal(PlatformGrantOutcome.OutcomeUnknown, changed.Outcome);
+        Assert.Equal(PlatformGrantDiagnostic.OperationConflict, changed.Diagnostic);
+    }
+
+    [Fact]
+    public async Task ExpiredAndFarFutureMintPermitsAreDefinitivelyRejectedWithoutWrites()
+    {
+        await fixture.Reset();
+        var mapping = await fixture.SeedMapping();
+        var repository = await Repository();
+        var prepared = ValidatedPersistedPlatformGrant.FromValidatedOutboxRecord(RandomNumberGenerator.GetBytes(32));
+        var digest = RandomNumberGenerator.GetBytes(32);
+        var now = CanonicalNow();
+
+        var expired = await repository.IssueAsync(Guid.NewGuid(),
+            ValidatedGrantAuthorization.FromValidatedPlan(mapping.DirectoryObjectId, mapping.DeviceId,
+                mapping.MappingCreatedAt, now.AddSeconds(-1), digest), prepared, CancellationToken.None);
+        var tooFar = await repository.IssueAsync(Guid.NewGuid(),
+            ValidatedGrantAuthorization.FromValidatedPlan(mapping.DirectoryObjectId, mapping.DeviceId,
+                mapping.MappingCreatedAt, now.AddMinutes(2), digest), prepared, CancellationToken.None);
+
+        Assert.Equal(PlatformGrantDiagnostic.MintPermitExpired, expired.Diagnostic);
+        Assert.Equal(PlatformGrantDiagnostic.InvalidMintPermit, tooFar.Diagnostic);
+        Assert.Equal(0, await fixture.Scalar<long>("SELECT count(*) FROM agent_private.platform_grant_receipts"));
+        Assert.Equal(0, await fixture.Scalar<long>("SELECT count(*) FROM agent_private.enrollment_grants"));
+    }
+
+    [Fact]
+    public async Task LegacySignatureRecoversOnlyAnExistingVersion1Receipt()
+    {
+        await fixture.Reset();
+        var mapping = await fixture.SeedMapping();
+        var repository = await Repository();
+        var operation = Guid.NewGuid();
+        var digest = RandomNumberGenerator.GetBytes(32);
+        var tokenHash = RandomNumberGenerator.GetBytes(32);
+        var authorization = ValidatedGrantAuthorization.FromValidatedPlan(
+            mapping.DirectoryObjectId, mapping.DeviceId, mapping.MappingCreatedAt, digest);
+        var prepared = ValidatedPersistedPlatformGrant.FromValidatedOutboxRecord(tokenHash);
+
+        var absent = await repository.IssueAsync(operation, authorization, prepared, CancellationToken.None);
+        Assert.Equal(PlatformGrantOutcome.PermanentRejected, absent.Outcome);
+        Assert.Equal(PlatformGrantDiagnostic.InvalidMintPermit, absent.Diagnostic);
+
+        var createdAt = CanonicalNow();
+        var grant = Guid.NewGuid();
+        await fixture.Execute("""
+            INSERT INTO agent_private.enrollment_grants(environment_id,grant_id,device_id,token_sha256,state,created_at,expires_at)
+            VALUES(@env,@grant,@device,@token,'Available',@created,@expires);
+            INSERT INTO agent_private.platform_grant_receipts(environment_id,operation_id,grant_id,directory_object_id,
+              device_id,mapping_created_at,token_sha256,authorization_digest,created_at,expires_at,issue_contract_version,mint_permit_not_after)
+            VALUES(@env,@operation,@grant,@directory,@device,@mapping,@token,@digest,@created,@expires,1,NULL);
+            """, new("env", mapping.EnvironmentId), new("grant", grant), new("device", mapping.DeviceId),
+            new("token", tokenHash), new("created", createdAt), new("expires", createdAt.AddSeconds(600)),
+            new("operation", operation), new("directory", mapping.DirectoryObjectId),
+            new("mapping", mapping.MappingCreatedAt), new("digest", digest));
+
+        var recovered = await repository.IssueAsync(operation, authorization, prepared, CancellationToken.None);
+        Assert.Equal(PlatformGrantOutcome.AlreadyCreated, recovered.Outcome);
+        Assert.Equal((short)1, recovered.Receipt!.IssueContractVersion);
+        Assert.Null(recovered.Receipt.MintPermitNotAfter);
+        Assert.Equal(1, await fixture.Scalar<long>("SELECT count(*) FROM agent_private.platform_grant_receipts"));
+    }
+
+    [Fact]
+    public async Task DeviceLockWaitCrossingPermitDeadlineCannotMint()
+    {
+        await fixture.Reset();
+        var mapping = await fixture.SeedMapping();
+        var repository = await Repository();
+        var deadline = CanonicalNow().AddSeconds(2);
+        await using var connection = await fixture.Owner.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using (var command = new NpgsqlCommand(
+            "SELECT 1 FROM agent_private.devices WHERE environment_id=@env AND device_id=@device FOR UPDATE", connection, transaction))
+        {
+            command.Parameters.AddWithValue("env", mapping.EnvironmentId);
+            command.Parameters.AddWithValue("device", mapping.DeviceId);
+            await command.ExecuteScalarAsync();
+        }
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var issue = repository.IssueAsync(Guid.NewGuid(),
+            ValidatedGrantAuthorization.FromValidatedPlan(mapping.DirectoryObjectId, mapping.DeviceId,
+                mapping.MappingCreatedAt, deadline, RandomNumberGenerator.GetBytes(32)),
+            ValidatedPersistedPlatformGrant.FromValidatedOutboxRecord(RandomNumberGenerator.GetBytes(32)), timeout.Token);
+        try
+        {
+            while (!await fixture.Scalar<bool>("SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_stat_activity WHERE usename=@role AND wait_event_type='Lock')",
+                new NpgsqlParameter("role", fixture.PlatformRole)))
+            {
+                Assert.False(issue.IsCompleted);
+                await Task.Delay(25, timeout.Token);
+            }
+            while (!await fixture.Scalar<bool>("SELECT pg_catalog.clock_timestamp()>=@deadline", new NpgsqlParameter("deadline", deadline)))
+                await Task.Delay(25, timeout.Token);
+        }
+        finally
+        {
+            try { await transaction.RollbackAsync(CancellationToken.None); }
+            finally
+            {
+                try { await issue; }
+                catch (OperationCanceledException) when (timeout.IsCancellationRequested) { }
+            }
+        }
+
+        var result = await issue;
+        Assert.Equal(PlatformGrantOutcome.PermanentRejected, result.Outcome);
+        Assert.Equal(PlatformGrantDiagnostic.MintPermitExpired, result.Diagnostic);
+        Assert.Equal(0, await fixture.Scalar<long>("SELECT count(*) FROM agent_private.platform_grant_receipts"));
     }
 
     [Fact]
@@ -62,7 +203,7 @@ public sealed class PlatformGrantRepositoryTests(AgentPlatformGrantFixture fixtu
         var digest = RandomNumberGenerator.GetBytes(32);
 
         var wrongTimestamp = await repository.IssueAsync(Guid.NewGuid(),
-            ValidatedGrantAuthorization.FromValidatedPlan(mapping.DirectoryObjectId, mapping.DeviceId, mapping.MappingCreatedAt.AddTicks(10), digest), prepared, CancellationToken.None);
+            ValidatedGrantAuthorization.FromValidatedPlan(mapping.DirectoryObjectId, mapping.DeviceId, mapping.MappingCreatedAt.AddTicks(10), PermitDeadline(), digest), prepared, CancellationToken.None);
         await fixture.Execute("UPDATE agent_private.devices SET state='Disabled' WHERE environment_id=@env AND device_id=@device", new("env", mapping.EnvironmentId), new("device", mapping.DeviceId));
         var disabled = await repository.IssueAsync(Guid.NewGuid(), Authorization(mapping, digest), prepared, CancellationToken.None);
 
@@ -157,22 +298,40 @@ public sealed class PlatformGrantRepositoryTests(AgentPlatformGrantFixture fixtu
         var mapping = new TestMapping(fixture.EnvironmentId, Guid.NewGuid(), Guid.NewGuid(),
             new DateTimeOffset(638900000000000000, TimeSpan.Zero));
         var operation = Guid.NewGuid();
-        var authorization = Authorization(mapping, RandomNumberGenerator.GetBytes(32));
-        var prepared = ValidatedPersistedPlatformGrant.FromValidatedOutboxRecord(RandomNumberGenerator.GetBytes(32));
         var createdAt = mapping.MappingCreatedAt.AddHours(1);
+        var authorization = ValidatedGrantAuthorization.FromValidatedPlan(mapping.DirectoryObjectId, mapping.DeviceId,
+            mapping.MappingCreatedAt, createdAt.AddSeconds(30), RandomNumberGenerator.GetBytes(32));
+        var prepared = ValidatedPersistedPlatformGrant.FromValidatedOutboxRecord(RandomNumberGenerator.GetBytes(32));
         PlatformGrantDatabaseResult Row(string? outcome, string? diagnostic, Guid? environment = null,
             Guid? operationId = null, Guid? grant = null, Guid? directory = null, Guid? device = null,
-            DateTimeOffset? mapped = null, DateTimeOffset? created = null, DateTimeOffset? expires = null) =>
-            new(outcome, diagnostic, environment, operationId, grant, directory, device, mapped, created, expires);
+            DateTimeOffset? mapped = null, DateTimeOffset? created = null, DateTimeOffset? expires = null,
+            short? contractVersion = null, DateTimeOffset? mintPermitNotAfter = null) =>
+            new(outcome, diagnostic, environment, operationId, grant, directory, device, mapped, created, expires,
+                contractVersion, mintPermitNotAfter);
         PlatformGrantResult Normalize(PlatformGrantDatabaseResult row) =>
             PostgresPlatformGrantRepository.NormalizeResult(row, mapping.EnvironmentId, operation, authorization, prepared);
 
         var complete = Row("Created", "None", mapping.EnvironmentId, operation, Guid.NewGuid(),
-            mapping.DirectoryObjectId, mapping.DeviceId, mapping.MappingCreatedAt, createdAt, createdAt.AddSeconds(600));
+            mapping.DirectoryObjectId, mapping.DeviceId, mapping.MappingCreatedAt, createdAt, createdAt.AddSeconds(600),
+            2, authorization.MintPermitNotAfter);
         Assert.Equal(PlatformGrantOutcome.Created, Normalize(complete).Outcome);
         Assert.Equal(PlatformGrantOutcome.Unknown, Normalize(complete with { Diagnostic = "OperationConflict" }).Outcome);
         Assert.Equal(PlatformGrantOutcome.Unknown, Normalize(complete with { GrantId = null }).Outcome);
         Assert.Equal(PlatformGrantOutcome.Unknown, Normalize(complete with { ExpiresAt = createdAt.AddSeconds(601) }).Outcome);
+        Assert.Equal(PlatformGrantOutcome.Unknown, Normalize(complete with { MappingCreatedAt = createdAt.AddTicks(10) }).Outcome);
+
+        var nearMaximumTicks = DateTimeOffset.MaxValue.Ticks - DateTimeOffset.MaxValue.Ticks % 10 - 10;
+        var nearMaximumDeadline = new DateTimeOffset(nearMaximumTicks, TimeSpan.Zero);
+        var nearMaximumAuthorization = ValidatedGrantAuthorization.FromValidatedPlan(mapping.DirectoryObjectId,
+            mapping.DeviceId, mapping.MappingCreatedAt, nearMaximumDeadline, RandomNumberGenerator.GetBytes(32));
+        var nearMaximum = complete with
+        {
+            CreatedAt = nearMaximumDeadline.AddTicks(-10),
+            ExpiresAt = nearMaximumDeadline,
+            MintPermitNotAfter = nearMaximumDeadline
+        };
+        Assert.Equal(PlatformGrantOutcome.Unknown, PostgresPlatformGrantRepository.NormalizeResult(nearMaximum,
+            mapping.EnvironmentId, operation, nearMaximumAuthorization, prepared).Outcome);
 
         var rejected = Row("PermanentRejected", "MappingUnavailable", mapping.EnvironmentId, operation, null,
             mapping.DirectoryObjectId, mapping.DeviceId, mapping.MappingCreatedAt);
@@ -219,8 +378,8 @@ public sealed class PlatformGrantRepositoryTests(AgentPlatformGrantFixture fixtu
         var additional = await fixture.AddPlatformEnvironment();
         var currentBindingCount = await fixture.Scalar<long>("SELECT count(*) FROM agent_private.platform_grant_database_bindings");
         Assert.Equal(bindingCount + 2, currentBindingCount);
-        Assert.Equal(2, await fixture.Scalar<long>("SELECT count(*) FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_namespace namespace ON namespace.oid=function.pronamespace WHERE namespace.nspname='agent_private' AND pg_catalog.has_function_privilege(@role,function.oid,'EXECUTE')", new NpgsqlParameter("role", additional.Role)));
-        Assert.Equal(3, await fixture.Scalar<long>("SELECT count(*) FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_namespace namespace ON namespace.oid=function.pronamespace WHERE namespace.nspname='agent_private' AND pg_catalog.has_function_privilege(@role,function.oid,'EXECUTE')", new NpgsqlParameter("role", additional.RevokerRole)));
+        Assert.Equal(3, await fixture.Scalar<long>("SELECT count(*) FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_namespace namespace ON namespace.oid=function.pronamespace WHERE namespace.nspname='agent_private' AND pg_catalog.has_function_privilege(@role,function.oid,'EXECUTE')", new NpgsqlParameter("role", additional.Role)));
+        Assert.Equal(5, await fixture.Scalar<long>("SELECT count(*) FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_namespace namespace ON namespace.oid=function.pronamespace WHERE namespace.nspname='agent_private' AND pg_catalog.has_function_privilege(@role,function.oid,'EXECUTE')", new NpgsqlParameter("role", additional.RevokerRole)));
         var firstAfter = await Repository();
         var second = await PostgresPlatformGrantRepository.CreateAuditedAsync(additional.DataSource, additional.EnvironmentId,
             fixture.TableOwnerRole, fixture.PlatformDefinerRole, CancellationToken.None);
@@ -339,8 +498,12 @@ public sealed class PlatformGrantRepositoryTests(AgentPlatformGrantFixture fixtu
     [Fact]
     public void ProvisioningPostflightRetainsTheRuntimeAuditPredicateSet()
     {
-        var store = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "upgrade-agent-platform-grants-v1-to-v2.sql"));
+        var store = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "upgrade-agent-platform-grants-v2-to-v3.sql"));
         var provision = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "provision-agent-platform-grants.sql"));
+        const string profile3AuditHash = "64a11bee2af9f76b2d5e33c1b168934d";
+        Assert.Equal(2, provision.Replace("\r", string.Empty, StringComparison.Ordinal).Split('\n')
+            .Count(line => line.Contains(profile3AuditHash, StringComparison.Ordinal) &&
+                line.Contains("pg_get_function_result", StringComparison.Ordinal)));
         static string Cte(string sql, string startToken, string endToken, int after = 0)
         {
             var start = sql.IndexOf(startToken, after, StringComparison.Ordinal);
@@ -364,6 +527,9 @@ public sealed class PlatformGrantRepositoryTests(AgentPlatformGrantFixture fixtu
                 .Replace("p_expected_table_owner", ":'agent_table_owner_role'::name", StringComparison.Ordinal)
                 .Replace("p_expected_function_owner", ":'agent_platform_grant_definer_role'::name", StringComparison.Ordinal);
             var actual = Cte(provision, $"WITH login AS(SELECT role.* FROM pg_catalog.pg_roles role WHERE role.rolname=:'{role}')", marker);
+            actual = string.Join('\n', actual.Split('\n').Where(line =>
+                !(line.Contains(profile3AuditHash, StringComparison.Ordinal) &&
+                  line.Contains("pg_get_function_result", StringComparison.Ordinal))));
             Assert.Equal(expected, actual);
         }
     }
@@ -418,5 +584,15 @@ public sealed class PlatformGrantRepositoryTests(AgentPlatformGrantFixture fixtu
     }
 
     private async Task<PostgresPlatformGrantRepository> Repository() => await PostgresPlatformGrantRepository.CreateAuditedAsync(fixture.Platform, fixture.EnvironmentId, fixture.TableOwnerRole, fixture.PlatformDefinerRole, CancellationToken.None);
-    private static ValidatedGrantAuthorization Authorization(TestMapping mapping, byte[] digest) => ValidatedGrantAuthorization.FromValidatedPlan(mapping.DirectoryObjectId, mapping.DeviceId, mapping.MappingCreatedAt, digest);
+    private static ValidatedGrantAuthorization Authorization(TestMapping mapping, byte[] digest) => ValidatedGrantAuthorization.FromValidatedPlan(mapping.DirectoryObjectId, mapping.DeviceId, mapping.MappingCreatedAt, PermitDeadline(), digest);
+    private static DateTimeOffset PermitDeadline()
+    {
+        var value = DateTimeOffset.UtcNow.AddSeconds(45);
+        return new DateTimeOffset(value.Ticks - value.Ticks % 10, TimeSpan.Zero);
+    }
+    private static DateTimeOffset CanonicalNow()
+    {
+        var value = DateTimeOffset.UtcNow;
+        return new DateTimeOffset(value.Ticks - value.Ticks % 10, TimeSpan.Zero);
+    }
 }
