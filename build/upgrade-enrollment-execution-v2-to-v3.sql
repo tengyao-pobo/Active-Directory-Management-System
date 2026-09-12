@@ -74,8 +74,8 @@ INSERT INTO enrollment_execution.role_reservations(role_name,role_oid,capability
  SELECT :'execution_queue_definer_role'::name,oid,'EnrollmentGrantExecution','QueueDefiner',1
  FROM pg_catalog.pg_roles WHERE rolname=:'execution_queue_definer_role';
 
-\ir enrollment-execution-queue.sql
-\ir enrollment-execution-functions.sql
+\ir enrollment-execution/v3/enrollment-execution-queue.sql
+\ir enrollment-execution/v3/enrollment-execution-functions.sql
 ALTER FUNCTION enrollment_execution.worker_scope(uuid) OWNER TO :"execution_definer_role";
 ALTER FUNCTION enrollment_execution.read_execution_record(uuid,uuid) OWNER TO :"execution_definer_role";
 ALTER FUNCTION enrollment_execution.read_and_lock_plan_context(uuid,uuid) OWNER TO :"execution_definer_role";
@@ -101,7 +101,7 @@ DO $drop_policies$ DECLARE row record; BEGIN
  LOOP EXECUTE pg_catalog.format('DROP POLICY %I ON %I.%I',row.polname,row.nspname,row.relname); END LOOP;
 END $drop_policies$;
 DROP FUNCTION enrollment_execution.execution_store_profile();
-\ir enrollment-execution-profile.sql
+\ir enrollment-execution/v3/enrollment-execution-profile.sql
 
 GRANT SELECT("LoginRole","Purpose","ContractVersion","EnvironmentId","PrincipalId") ON public."DirectoryDatabaseBindings" TO :"execution_queue_definer_role";
 GRANT USAGE ON SCHEMA enrollment_execution TO :"execution_queue_definer_role";

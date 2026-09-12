@@ -1,5 +1,15 @@
 # Cloud development handoff — 2026-09-12
 
+## Cloud recheck checkpoint — not merge-ready
+
+The initial cloud commit `cfe74ec` was not built or tested and must not be treated as completed delivery attestation. Daybreak Blue subsequently blocked that delta: the external audit queried owner-only application tables through a runtime forbidden from reading them, used throwing regprocedure casts for missing wrappers, and prematurely accepted the unfinished profile4 body in consumers with version3-only downstream checks.
+
+The correction removes that premature profile4 acceptance and replaces the embedded delivery audit with an explicit `SELECT false AS is_valid` gate. This keeps the missing resource from preventing compilation without claiming that a privilege audit exists. A resource regression test pins this temporary closed gate; replace it with positive and negative PostgreSQL catalog tests only when the real attestation is complete. Existing execution clients remain version3-only until complete version4 verification is available.
+
+The v3 archive routing in the existing execution installer and v2-to-v3 upgrade, delivery integration resources, and manually edited dependency lockfiles are retained. Lockfiles still require an actual locked restore; JSON parsing is not NuGet verification. Fresh profile4 installation, upgrade, role isolation and all original handoff completion requirements remain pending.
+
+Cloud shell and public Git clone/fetch work. The checked workspace lacks dotnet/psql/container tools; the previous APT attempt failed on restricted setgroups/setuid operations. No successful backend build, database test, or Windows verification is claimed. The GitHub connector can read PR42; Git HTTPS push lacks credentials. After fetching the two remote branches, neither contains AGENTS.md/agent.md/agents.md, and no ancestor workspace instruction file was found. Any separately maintained latest agent instructions need their actual path or a published commit.
+
 ## Objective and authorization
 
 Continue the IT Management Console implementation against all 100 requirements in `docs/requirements/original-request.md`. The latest user instruction is to continue every stage automatically, build/test/fix/document each stage, and merge verified GitHub PRs without asking again. The user now requests cloud execution so their Windows PC need not stay on. Keep the user-facing workflow in the platform: RSAT was background information about their company, not a separate product workflow.
