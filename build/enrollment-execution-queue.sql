@@ -63,7 +63,7 @@ $function$;
 
 -- Installed only by the reviewed v2-to-v3 execution profile upgrade.
 
-CREATE FUNCTION enrollment_execution.queue_worker_scope(p_environment uuid)
+CREATE OR REPLACE FUNCTION enrollment_execution.queue_worker_scope(p_environment uuid)
 RETURNS boolean LANGUAGE plpgsql STABLE SECURITY INVOKER
 SET search_path=pg_catalog,pg_temp AS $function$
 BEGIN
@@ -92,7 +92,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.queue_worker_scope(uuid) FROM PUBLIC;
 
-CREATE FUNCTION enrollment_execution.claim_next(p_environment uuid,p_token uuid)
+CREATE OR REPLACE FUNCTION enrollment_execution.claim_next(p_environment uuid,p_token uuid)
 RETURNS TABLE(contract_version smallint,outcome text,queried_at timestamptz,environment_id uuid,
     operation_id uuid,claim_token uuid,attempt integer,claimed_at timestamptz,lease_until timestamptz)
 LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE SECURITY DEFINER
@@ -113,7 +113,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.claim_next(uuid,uuid) FROM PUBLIC;
 
-CREATE FUNCTION enrollment_execution.defer_claim(p_environment uuid,p_operation uuid,p_token uuid,p_reason text)
+CREATE OR REPLACE FUNCTION enrollment_execution.defer_claim(p_environment uuid,p_operation uuid,p_token uuid,p_reason text)
 RETURNS TABLE(contract_version smallint,outcome text,queried_at timestamptz,next_attempt_at timestamptz)
 LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE SECURITY DEFINER
 SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
@@ -133,7 +133,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.defer_claim(uuid,uuid,uuid,text) FROM PUBLIC;
 
-CREATE FUNCTION enrollment_execution.complete_claim(p_environment uuid,p_operation uuid,p_token uuid)
+CREATE OR REPLACE FUNCTION enrollment_execution.complete_claim(p_environment uuid,p_operation uuid,p_token uuid)
 RETURNS TABLE(contract_version smallint,outcome text,queried_at timestamptz,next_attempt_at timestamptz)
 LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE SECURITY DEFINER
 SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$

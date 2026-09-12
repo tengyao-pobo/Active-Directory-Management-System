@@ -99,6 +99,7 @@ INSERT INTO enrollment_execution.role_reservations(role_name,role_oid,capability
 
 DROP FUNCTION enrollment_execution.audit_execution_privileges(uuid);
 DROP FUNCTION enrollment_execution.reject_worker_update() CASCADE;
+DROP TRIGGER work_queue_outbox_consistent ON public."Outbox";
 DO $drop_policies$ DECLARE row record; BEGIN
  FOR row IN SELECT namespace_row.nspname,relation.relname,policy_row.polname FROM pg_catalog.pg_policy policy_row
    JOIN pg_catalog.pg_class relation ON relation.oid=policy_row.polrelid
