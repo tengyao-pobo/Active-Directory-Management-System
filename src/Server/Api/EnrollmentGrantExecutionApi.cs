@@ -24,6 +24,7 @@ public static partial class EnrollmentGrantPlanApi
         if (!AuthEndpoints.FreshStepUp(http, time, config)) return Results.Problem(statusCode: 403, title: "StepUpRequired");
         if (!await LockHelperIsValidAsync(db, ct) || !await EnrollmentGrantOperationAudit.IsValidAsync(db, ct)) return ExecutionUnavailable();
         var actor = AuthEndpoints.Actor(http);
+        const int maximumAttempts = 3;
         for (var attempt = 0; ; attempt++)
         {
             db.ChangeTracker.Clear();
@@ -143,7 +144,11 @@ public static partial class EnrollmentGrantPlanApi
                 await final.CommitAsync(ct);
                 return Results.Accepted(value: OperationDto(operation, finalNow));
             }
-            catch (Exception error) when (attempt == 0 && IsSerialization(error)) { }
+            catch (Exception error) when (attempt + 1 < maximumAttempts && IsSerialization(error))
+            {
+                // Start again with fresh authorization and a new transaction after competing commits settle.
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1) + Random.Shared.Next(25)), ct);
+            }
             catch (Exception error) when (IsSerialization(error)) { return Results.Problem(statusCode: 409, title: "ConcurrentChange"); }
             catch (PostgresException error) when (error.SqlState == "42501") { return Results.NotFound(); }
         }

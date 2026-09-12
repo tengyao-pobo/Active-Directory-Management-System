@@ -121,6 +121,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
                     // its transaction is owned by the surrounding rollback-only candidate.
                     pairScript = pairScript.Replace(begin, "", StringComparison.Ordinal).Replace(commit, "", StringComparison.Ordinal);
                     pairScript += "\n" + DeliveryAuditSessionProbe();
+                    pairScript += "\n" + await DeliveryExternalCatalogProbeAsync(deadline.Token);
                 }
                 script = script.Replace(include, include + "\n\\ir enrollment-delivery-identity.sql", StringComparison.Ordinal)
                     .Replace(begin, begin + """

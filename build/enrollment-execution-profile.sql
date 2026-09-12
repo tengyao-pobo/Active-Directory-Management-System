@@ -277,6 +277,8 @@ BEGIN
       AND binding."EnvironmentId"=p_environment AND binding."PrincipalId" IS NULL;
 
     ok := p_environment IS NOT NULL AND p_environment<>'00000000-0000-0000-0000-000000000000'::uuid
+      AND pg_catalog.current_setting('session_replication_role')='origin'
+      AND pg_catalog.current_setting('lo_compat_privileges')='off'
       AND table_owner IS NOT NULL AND definer IS NOT NULL AND queue_definer IS NOT NULL AND runtime IS NOT NULL
       AND delivery_definer IS NOT NULL AND (status_runtime IS NULL)=(delivery_runtime IS NULL)
       AND (SELECT count(*)=1 FROM enrollment_execution.role_reservations

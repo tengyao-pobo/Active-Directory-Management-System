@@ -258,6 +258,13 @@ public sealed partial class EnrollmentGrantPlanTests
             Assert.Equal(calls + 2, reader.Calls); Assert.False(pendingFirst.IsCompleted); Assert.False(pendingSecond.IsCompleted);
             await transaction.CommitAsync();
             using var responseFirst = await pendingFirst; using var responseSecond = await pendingSecond;
+            foreach (var response in new[] { responseFirst, responseSecond })
+            {
+                if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Accepted) continue;
+                var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+                var title = problem.TryGetProperty("title", out var value) ? value.GetString() : "Missing problem title";
+                Assert.Fail($"Concurrent execution returned {(int)response.StatusCode}: {title}");
+            }
             Assert.Equal(new[] { HttpStatusCode.OK, HttpStatusCode.Accepted }, new[] { responseFirst.StatusCode, responseSecond.StatusCode }.Order().ToArray());
             var bodyFirst = await responseFirst.Content.ReadFromJsonAsync<JsonElement>();
             var bodySecond = await responseSecond.Content.ReadFromJsonAsync<JsonElement>();
@@ -276,6 +283,51 @@ public sealed partial class EnrollmentGrantPlanTests
                 finally { await ObserveExecutionRequests(pendingFirst, pendingSecond); }
             }
         }
+    }
+
+    [Theory]
+    [InlineData(2, false, HttpStatusCode.Accepted)]
+    [InlineData(3, false, HttpStatusCode.Conflict)]
+    [InlineData(1, true, HttpStatusCode.Forbidden)]
+    public async Task ExecutionSerializationRetriesAreBoundedAndRevalidateSession(int failures, bool revokeSession, HttpStatusCode expected)
+    {
+        var seeded = await Seed();
+        var armed = false;
+        var attempts = 0;
+        var reader = new AsyncReader(async (environment, directory) =>
+        {
+            if (armed && ++attempts <= failures)
+            {
+                if (revokeSession)
+                {
+                    await using var owner = Db();
+                    await owner.Sessions.Where(x => x.IdHash == SessionTokens.Hash(seeded.Data.RequesterToken))
+                        .ExecuteUpdateAsync(x => x.SetProperty(s => s.RevokedAt, seeded.Now));
+                }
+                throw new Npgsql.PostgresException("Synthetic target-read serialization failure", "ERROR", "ERROR", "40001");
+            }
+            return EnrollmentTargetResult.Resolved(environment, directory, seeded.DeviceId, seeded.Now.AddMinutes(-1));
+        });
+        using var factory = ExecutionFactory(seeded, new Clock(seeded.Now)).WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IEnrollmentTargetReader>();
+            services.AddSingleton<IEnrollmentTargetReader>(reader);
+        }));
+        var plan = await ApprovedExecutionPlan(seeded, factory);
+        using var client = Client(factory, seeded.Data.RequesterToken);
+        armed = true;
+        var response = await Post(client, ExecutionPath(seeded, plan.Id), new { planHash = plan.Hash });
+        Assert.Equal(expected, response.Status);
+        Assert.Equal(Math.Min(failures + 1, 3), attempts);
+        if (expected == HttpStatusCode.Conflict) Assert.Equal("ConcurrentChange", response.Json.GetProperty("title").GetString());
+        if (expected == HttpStatusCode.Forbidden) Assert.Equal("StepUpRequired", response.Json.GetProperty("title").GetString());
+        await using var verify = Db();
+        var expectedWrites = expected == HttpStatusCode.Accepted ? 1 : 0;
+        Assert.Equal(expectedWrites, await verify.EnrollmentGrantOperations.CountAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));
+        Assert.Equal(expectedWrites, await verify.Outbox.CountAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));
+        Assert.Equal(expectedWrites, await verify.Audit.CountAsync(x => x.EnvironmentId == seeded.Data.Environment.Id && x.Action == "EnrollmentGrantExecution.Queued"));
+        Assert.Equal(expectedWrites == 1 ? ChangePlanState.Queued : ChangePlanState.Approved,
+            await verify.Plans.Where(x => x.Id == plan.Id).Select(x => x.State).SingleAsync());
     }
 
     private static async Task ObserveExecutionRequests(params Task<HttpResponseMessage>[] pending)

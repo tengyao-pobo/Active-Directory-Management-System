@@ -6,6 +6,7 @@ if (-not (Test-Path -LiteralPath $dotnet)) { $dotnet = 'dotnet' }
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 Push-Location $root
 try {
+    & (Join-Path $PSScriptRoot 'update-enrollment-delivery-catalog-functions.ps1') -Check
     & $dotnet restore ITManagement.slnx --locked-mode
     if ($LASTEXITCODE -ne 0) { throw 'Restore failed' }
     & $dotnet build ITManagement.slnx -c $Configuration --no-restore
