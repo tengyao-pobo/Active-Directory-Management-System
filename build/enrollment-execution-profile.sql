@@ -878,6 +878,27 @@ BEGIN
           WHERE function_row.oid=pg_catalog.to_regprocedure('enrollment_execution.delivery_worker_scope(uuid,text)'))
         SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
           UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) difference)
+      -- Every owned wrapper grants EXECUTE only to its owner and the registered runtime purpose.
+      AND NOT EXISTS(
+        WITH wrappers(signature,purpose,role_kind) AS (VALUES
+          ('enrollment_execution.read_grant_status_receipt(uuid,uuid)','EnrollmentGrantStatusRefresh','StatusRuntime'),
+          ('enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)','EnrollmentGrantStatusRefresh','StatusRuntime'),
+          ('enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)','EnrollmentGrantDelivery','DeliveryRuntime'),
+          ('enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)','EnrollmentGrantDelivery','DeliveryRuntime')),
+        expected AS (
+          SELECT pg_catalog.to_regprocedure(signature)::oid function_oid,delivery_definer grantor,delivery_definer grantee,'EXECUTE'::text privilege,false grantable FROM wrappers
+          UNION ALL SELECT pg_catalog.to_regprocedure(wrapper.signature)::oid,delivery_definer,role.oid,'EXECUTE',false
+          FROM wrappers wrapper JOIN enrollment_execution.role_reservations reservation
+            ON reservation.capability='EnrollmentGrantDelivery' AND reservation.role_kind=wrapper.role_kind
+          JOIN pg_catalog.pg_roles role ON role.oid=reservation.role_oid AND role.rolname=reservation.role_name
+          JOIN public."DirectoryDatabaseBindings" binding ON binding."LoginRole"=role.rolname
+            AND binding."Purpose"=wrapper.purpose AND binding."ContractVersion"=1 AND binding."PrincipalId" IS NULL),
+        actual AS (
+          SELECT function.oid function_oid,acl.grantor,acl.grantee,acl.privilege_type privilege,acl.is_grantable grantable
+          FROM wrappers wrapper JOIN pg_catalog.pg_proc function ON function.oid=pg_catalog.to_regprocedure(wrapper.signature)
+          CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(function.proacl,pg_catalog.acldefault('f',function.proowner))) acl)
+        SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
+          UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) differences)
       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
         WHERE relation.oid IN('public."DirectoryDatabaseBindings"'::regclass,
             'enrollment_execution.role_reservations'::regclass)

@@ -95,6 +95,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         var bindings = await Snapshot(false);
         var reservations = await Snapshot(true);
         var auditIdentity = await AuditIdentity();
+        var legacyTriggerIdentity = await LegacyTriggerIdentity();
         var pairPrivileges = composition == 2 ? await PairPrivileges() : null;
         if (composition == 2) Assert.Empty(pairPrivileges!);
         if (composition > 0)
@@ -123,6 +124,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
                     pairScript += "\n" + DeliveryAuditSessionProbe();
                     pairScript += "\n" + await DeliveryExternalCatalogProbeAsync(deadline.Token);
                     pairScript += "\n" + DeliveryInternalFunctionProbe();
+                    pairScript += "\n" + await DeliveryDefinerCatalogProbeAsync(deadline.Token);
                 }
                 script = script.Replace(include, include + "\n\\ir enrollment-delivery-identity.sql", StringComparison.Ordinal)
                     .Replace(begin, begin + """
@@ -159,6 +161,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         Assert.Equal(bindings, await Snapshot(false));
         Assert.Equal(reservations, await Snapshot(true));
         Assert.Equal(auditIdentity, await AuditIdentity());
+        Assert.Equal(legacyTriggerIdentity, await LegacyTriggerIdentity());
         if (composition == 2) Assert.Equal(pairPrivileges, await PairPrivileges());
         Assert.True(await db.Database.SqlQueryRaw<bool>("""
             SELECT pg_catalog.to_regprocedure('enrollment_execution.audit_delivery_privileges(uuid)') IS NULL
@@ -180,6 +183,12 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             FROM pg_catalog.pg_shdepend acl JOIN pg_catalog.pg_roles role ON role.oid=acl.refobjid
             WHERE acl.refclassid='pg_catalog.pg_authid'::regclass AND role.rolname IN({statusRuntime},{deliveryRuntime})
             ORDER BY acl.classid,acl.objid,acl.objsubid,acl.deptype,acl.refobjid
+            """).ToArrayAsync(deadline.Token);
+
+        async Task<string[]> LegacyTriggerIdentity() => await db.Database.SqlQueryRaw<string>("""
+            SELECT jsonb_build_object('oid',oid,'owner',proowner,'acl',proacl,'body',prosrc)::text AS "Value"
+            FROM pg_catalog.pg_proc WHERE oid IN('public.guard_role_identity()'::regprocedure,'public.guard_owner_mapping()'::regprocedure,
+              'public.forbid_audit_mutation()'::regprocedure,'public.guard_operator_identity()'::regprocedure) ORDER BY oid
             """).ToArrayAsync(deadline.Token);
 
         async Task<string[]> Snapshot(bool reservationRows) => await db.Database.SqlQueryRaw<string>(reservationRows

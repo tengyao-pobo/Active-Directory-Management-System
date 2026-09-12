@@ -114,6 +114,10 @@ DROP FUNCTION enrollment_execution.execution_store_profile();
 \ir enrollment-execution-profile.sql
 \ir enrollment-delivery-profile.sql
 
+-- Trigger invocation does not require caller EXECUTE; these legacy guards are not callable APIs.
+REVOKE ALL ON FUNCTION public.guard_role_identity(),public.guard_owner_mapping(),
+ public.forbid_audit_mutation(),public.guard_operator_identity() FROM PUBLIC;
+
 -- delivery_worker_scope remains table-owner SECURITY DEFINER, executable only by the delivery definer.
 ALTER FUNCTION enrollment_execution.read_grant_status_receipt(uuid,uuid) OWNER TO :"delivery_definer_role";
 ALTER FUNCTION enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea) OWNER TO :"delivery_definer_role";

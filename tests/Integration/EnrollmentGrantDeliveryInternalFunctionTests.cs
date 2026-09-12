@@ -19,6 +19,8 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         };
         var mutations = new List<(string Label, string Sql)>();
         mutations.Add(("existing queue attestation retained", "ALTER FUNCTION enrollment_execution.guard_work_queue() STRICT;"));
+        mutations.Add(("unregistered wrapper grantee", "GRANT EXECUTE ON FUNCTION enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text) TO :\"execution_runtime_role\";"));
+        mutations.Add(("wrong purpose wrapper grantee", "GRANT EXECUTE ON FUNCTION enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text) TO :\"status_runtime_role\";"));
         foreach (var signature in signatures)
             foreach (var alteration in new[] { "RESET ALL", "SUPPORT pg_catalog.textlike_support", "LEAKPROOF" })
                 mutations.Add((signature.Split('(')[0] + " " + alteration,
