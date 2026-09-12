@@ -33,5 +33,8 @@
     <None Include="..\..\build\enrollment-execution-profile.sql" Link="enrollment-execution-profile.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\provision-enrollment-execution.sql" Link="provision-enrollment-execution.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-execution.sql" Link="audit-enrollment-execution.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\enrollment-execution-queue.sql" Link="enrollment-execution-queue.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\upgrade-enrollment-execution-v2-to-v3.sql" Link="upgrade-enrollment-execution-v2-to-v3.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\enrollment-execution\v2\*.sql" Link="enrollment-execution/v2/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

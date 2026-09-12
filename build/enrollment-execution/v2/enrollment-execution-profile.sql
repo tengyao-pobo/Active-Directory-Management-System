@@ -173,63 +173,6 @@ CREATE POLICY enrollment_execution_worker_stops_limit ON enrollment_execution.ex
     USING (operation_id=nullif(current_setting('app.execution_operation_id',true),'')::uuid)
     WITH CHECK (operation_id=nullif(current_setting('app.execution_operation_id',true),'')::uuid);
 
-CREATE POLICY enrollment_execution_queue_operations_allow ON public."EnrollmentGrantOperations" AS PERMISSIVE FOR ALL TO :"execution_queue_definer_role"
-    USING ("EnvironmentId"=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-       AND (nullif(current_setting('app.execution_operation_id',true),'') IS NULL
-         OR "Id"=nullif(current_setting('app.execution_operation_id',true),'')::uuid));
-CREATE POLICY enrollment_execution_queue_operations_limit ON public."EnrollmentGrantOperations" AS RESTRICTIVE FOR ALL TO :"execution_queue_definer_role"
-    USING ("EnvironmentId"=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-       AND (nullif(current_setting('app.execution_operation_id',true),'') IS NULL
-         OR "Id"=nullif(current_setting('app.execution_operation_id',true),'')::uuid));
-CREATE POLICY enrollment_execution_queue_outbox_allow ON public."Outbox" AS PERMISSIVE FOR ALL TO :"execution_queue_definer_role"
-    USING ("EnvironmentId"=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-       AND "EventType"='EnrollmentGrantExecutionRequested'
-       AND (nullif(current_setting('app.execution_operation_id',true),'') IS NULL
-         OR "Id"=nullif(current_setting('app.execution_operation_id',true),'')::uuid))
-    WITH CHECK ("EnvironmentId"=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-       AND "EventType"='EnrollmentGrantExecutionRequested'
-       AND "Id"=nullif(current_setting('app.execution_operation_id',true),'')::uuid);
-CREATE POLICY enrollment_execution_queue_outbox_limit ON public."Outbox" AS RESTRICTIVE FOR ALL TO :"execution_queue_definer_role"
-    USING ("EnvironmentId"=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-       AND "EventType"='EnrollmentGrantExecutionRequested'
-       AND (nullif(current_setting('app.execution_operation_id',true),'') IS NULL
-         OR "Id"=nullif(current_setting('app.execution_operation_id',true),'')::uuid))
-    WITH CHECK ("EnvironmentId"=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-       AND "EventType"='EnrollmentGrantExecutionRequested'
-       AND "Id"=nullif(current_setting('app.execution_operation_id',true),'')::uuid);
-CREATE POLICY enrollment_execution_queue_work_allow ON enrollment_execution.work_queue AS PERMISSIVE FOR ALL TO :"execution_queue_definer_role"
-    USING (environment_id=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-       AND (nullif(current_setting('app.execution_operation_id',true),'') IS NULL
-         OR operation_id=nullif(current_setting('app.execution_operation_id',true),'')::uuid))
-    WITH CHECK (environment_id=nullif(current_setting('app.execution_environment_id',true),'')::uuid);
-CREATE POLICY enrollment_execution_queue_work_limit ON enrollment_execution.work_queue AS RESTRICTIVE FOR ALL TO :"execution_queue_definer_role"
-    USING (environment_id=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-       AND (nullif(current_setting('app.execution_operation_id',true),'') IS NULL
-         OR operation_id=nullif(current_setting('app.execution_operation_id',true),'')::uuid))
-    WITH CHECK (environment_id=nullif(current_setting('app.execution_environment_id',true),'')::uuid);
-CREATE POLICY enrollment_execution_queue_leases_allow ON enrollment_execution.claim_leases AS PERMISSIVE FOR ALL TO :"execution_queue_definer_role"
-    USING (environment_id=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-         OR claim_token=nullif(current_setting('app.execution_claim_token',true),'')::uuid)
-    WITH CHECK (environment_id=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-       AND claim_token=nullif(current_setting('app.execution_claim_token',true),'')::uuid);
-CREATE POLICY enrollment_execution_queue_leases_limit ON enrollment_execution.claim_leases AS RESTRICTIVE FOR ALL TO :"execution_queue_definer_role"
-    USING (environment_id=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-         OR claim_token=nullif(current_setting('app.execution_claim_token',true),'')::uuid)
-    WITH CHECK (environment_id=nullif(current_setting('app.execution_environment_id',true),'')::uuid
-       AND claim_token=nullif(current_setting('app.execution_claim_token',true),'')::uuid);
-CREATE POLICY enrollment_execution_queue_results_allow ON enrollment_execution.issue_results AS PERMISSIVE FOR SELECT TO :"execution_queue_definer_role"
-    USING (operation_id=nullif(current_setting('app.execution_operation_id',true),'')::uuid);
-CREATE POLICY enrollment_execution_queue_results_limit ON enrollment_execution.issue_results AS RESTRICTIVE FOR SELECT TO :"execution_queue_definer_role"
-    USING (operation_id=nullif(current_setting('app.execution_operation_id',true),'')::uuid);
-CREATE POLICY enrollment_execution_queue_stops_allow ON enrollment_execution.execution_stops AS PERMISSIVE FOR SELECT TO :"execution_queue_definer_role"
-    USING (operation_id=nullif(current_setting('app.execution_operation_id',true),'')::uuid);
-CREATE POLICY enrollment_execution_queue_stops_limit ON enrollment_execution.execution_stops AS RESTRICTIVE FOR SELECT TO :"execution_queue_definer_role"
-    USING (operation_id=nullif(current_setting('app.execution_operation_id',true),'')::uuid);
-
-CREATE CONSTRAINT TRIGGER work_queue_outbox_consistent AFTER INSERT OR UPDATE ON public."Outbox"
-    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-    EXECUTE FUNCTION enrollment_execution.validate_work_queue();
-
 CREATE FUNCTION enrollment_execution.audit_execution_privileges(p_environment uuid)
 RETURNS TABLE(is_valid boolean,diagnostic_code text,profile_version smallint)
 LANGUAGE plpgsql STABLE PARALLEL UNSAFE SECURITY DEFINER
@@ -238,7 +181,6 @@ DECLARE
     table_owner oid;
     definer oid;
     runtime oid;
-    queue_definer oid;
     ok boolean;
     private_registry oid;
     private_marker oid;
@@ -247,8 +189,6 @@ BEGIN
         WHERE c.oid='enrollment_execution.role_reservations'::regclass;
     SELECT r.role_oid INTO definer FROM enrollment_execution.role_reservations r
         WHERE r.capability='EnrollmentGrantExecution' AND r.role_kind='Definer';
-    SELECT r.role_oid INTO queue_definer FROM enrollment_execution.role_reservations r
-        WHERE r.capability='EnrollmentGrantExecution' AND r.role_kind='QueueDefiner';
     SELECT role.oid INTO runtime
     FROM public."DirectoryDatabaseBindings" b JOIN pg_catalog.pg_roles role ON role.rolname=b."LoginRole"
     JOIN enrollment_execution.role_reservations reservation
@@ -258,11 +198,9 @@ BEGIN
       AND b."EnvironmentId"=p_environment AND b."PrincipalId" IS NULL;
 
     ok := p_environment IS NOT NULL AND p_environment<>'00000000-0000-0000-0000-000000000000'::uuid
-      AND table_owner IS NOT NULL AND definer IS NOT NULL AND queue_definer IS NOT NULL AND runtime IS NOT NULL
+      AND table_owner IS NOT NULL AND definer IS NOT NULL AND runtime IS NOT NULL
       AND (SELECT count(*)=1 FROM enrollment_execution.role_reservations
            WHERE capability='EnrollmentGrantExecution' AND role_kind='Definer')
-      AND (SELECT count(*)=1 FROM enrollment_execution.role_reservations
-           WHERE capability='EnrollmentGrantExecution' AND role_kind='QueueDefiner')
       AND (SELECT count(*)=1 FROM public."DirectoryDatabaseBindings"
            WHERE "Purpose"='EnrollmentGrantExecution' AND "ContractVersion"=2
              AND "EnvironmentId"=p_environment AND "PrincipalId" IS NULL)
@@ -319,7 +257,7 @@ BEGIN
         WITH expected(definition) AS (VALUES
           ('PRIMARY KEY (role_name)'),('UNIQUE (role_oid)'),
           ('CHECK (capability = ''EnrollmentGrantExecution''::text)'),('CHECK (reservation_schema_version = 1)'),
-          ('CHECK (role_kind = ANY (ARRAY[''Runtime''::text, ''Definer''::text, ''QueueDefiner''::text]))'),
+          ('CHECK (role_kind = ANY (ARRAY[''Runtime''::text, ''Definer''::text]))'),
           ('CHECK (btrim(role_name::text) <> ''''::text)'),('CHECK (role_oid <> 0::oid)')),
         actual AS (SELECT pg_catalog.pg_get_constraintdef(c.oid,true) definition FROM pg_catalog.pg_constraint c
           WHERE c.conrelid='enrollment_execution.role_reservations'::regclass AND c.contype IN('p','u','c') AND c.convalidated)
@@ -332,7 +270,7 @@ BEGIN
             AND p.proowner=table_owner AND l.lanname='sql' AND NOT p.prosecdef AND p.provolatile='i'
             AND p.proparallel='s' AND p.prokind='f' AND NOT p.proretset AND p.prorettype='smallint'::regtype
             AND p.pronargs=0 AND p.proargnames IS NULL AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp']
-            AND pg_catalog.btrim(p.prosrc,E' \t\r\n')='SELECT 3::smallint')
+            AND pg_catalog.btrim(p.prosrc,E' \t\r\n')='SELECT 2::smallint')
       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p
           CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
           WHERE p.oid='enrollment_execution.execution_store_profile()'::regprocedure
@@ -350,11 +288,11 @@ BEGIN
           ('enrollment_execution.store_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',table_owner,false,false,'plpgsql','v','u',false,'12047650d35da8f6b90b12de80b51cb0e79cb6ed84b1c4e63358c24e177debc0'),
           ('enrollment_execution.store_quarantine(uuid,uuid,bytea,text)',table_owner,false,false,'plpgsql','v','u',false,'7ea3dfa0ad6294076d83d0fec449cbdda1e142e4fadcf55db27f81beef704739'),
           ('enrollment_execution.worker_scope(uuid)',definer,false,false,'plpgsql','s','u',false,'98214f62b088dec4e8b97ee7d01a96c61b5d422924367b903a99ccf932c923be'),
-          ('enrollment_execution.read_execution_record(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'cd7c0975c4cb6f31725fe1151b1513e5df6d7fb51b822f1a862e54df47c9f0f6'),
-          ('enrollment_execution.read_and_lock_plan_context(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'0add6825c35e78b11019b42477581f9c893536005fde7c66e726e51e80bc14f1'),
-          ('enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'69f37bda1a514534520cadfb8431bd4efa17c487ed5e19930f5b1b7d80f8d7d6'),
-          ('enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'ca2fa2d60055e2956f59346b02450e692e63e103d180c4fa7b2444e3668bd6c2'),
-          ('enrollment_execution.quarantine_execution(uuid,uuid,bytea,text)',definer,true,false,'plpgsql','v','u',true,'a7cd12830602f399b12593e59fc4a3d221875c8efb0da666e7e0131669d99524')),
+          ('enrollment_execution.read_execution_record(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'9b1c550cf510584afd81a063b5cf8e3c2d41ff06cb1956e86547e6377f2d6b89'),
+          ('enrollment_execution.read_and_lock_plan_context(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'f259bd9b6c9a2590831ee03646e2c7ffca3e4c521973ba016a1577fed4e42209'),
+          ('enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'d46b11292ae7bfc673b781b3424bda8b33cff7bb03d1a4dc0a775216cf0ee1d8'),
+          ('enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'f553b9909588423969729dd985c154a8ee590be3e228429908d24a69bc5bb2c0'),
+          ('enrollment_execution.quarantine_execution(uuid,uuid,bytea,text)',definer,true,false,'plpgsql','v','u',true,'f420d2d7913085ac6fa46710ee76c26310a4d8000ac65256900e59c92243c483')),
         actual AS (
           SELECT e.*,p.oid,p.proowner,p.prosecdef,p.proisstrict,l.lanname,p.provolatile,p.proparallel,p.proconfig,
             pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
@@ -405,7 +343,7 @@ BEGIN
       AND NOT pg_catalog.has_database_privilege(runtime,pg_catalog.current_database(),'CREATE')
       AND NOT pg_catalog.has_schema_privilege(runtime,'public','CREATE')
       AND NOT pg_catalog.has_schema_privilege(runtime,'enrollment_execution','CREATE')
-      AND (SELECT count(*)=9 FROM pg_catalog.pg_proc p
+      AND (SELECT count(*)=6 FROM pg_catalog.pg_proc p
           CROSS JOIN LATERAL pg_catalog.aclexplode(p.proacl) acl
           WHERE acl.grantee=runtime AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable
             AND p.oid IN ('enrollment_execution.read_execution_record(uuid,uuid)'::regprocedure,
@@ -413,9 +351,6 @@ BEGIN
               'enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea)'::regprocedure,
               'enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'::regprocedure,
               'enrollment_execution.quarantine_execution(uuid,uuid,bytea,text)'::regprocedure,
-              'enrollment_execution.claim_next(uuid,uuid)'::regprocedure,
-              'enrollment_execution.defer_claim(uuid,uuid,uuid,text)'::regprocedure,
-              'enrollment_execution.complete_claim(uuid,uuid,uuid)'::regprocedure,
               'enrollment_execution.audit_execution_privileges(uuid)'::regprocedure))
       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p
           CROSS JOIN LATERAL pg_catalog.aclexplode(p.proacl) acl
@@ -425,9 +360,6 @@ BEGIN
               'enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea)'::regprocedure,
               'enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'::regprocedure,
               'enrollment_execution.quarantine_execution(uuid,uuid,bytea,text)'::regprocedure,
-              'enrollment_execution.claim_next(uuid,uuid)'::regprocedure,
-              'enrollment_execution.defer_claim(uuid,uuid,uuid,text)'::regprocedure,
-              'enrollment_execution.complete_claim(uuid,uuid,uuid)'::regprocedure,
               'enrollment_execution.audit_execution_privileges(uuid)'::regprocedure)));
 
     ok := ok AND NOT EXISTS(
@@ -443,7 +375,6 @@ BEGIN
         UNION ALL SELECT 'enrollment_execution.worker_scope(uuid)'::regprocedure::oid,definer
         UNION ALL SELECT 'enrollment_execution.audit_execution_privileges(uuid)'::regprocedure::oid,table_owner
         UNION ALL SELECT 'enrollment_execution.audit_execution_privileges(uuid)'::regprocedure::oid,definer
-        UNION ALL SELECT 'enrollment_execution.audit_execution_privileges(uuid)'::regprocedure::oid,queue_definer
         UNION ALL SELECT 'enrollment_execution.audit_execution_privileges(uuid)'::regprocedure::oid,role_oid FROM runtime_roles),
       actual AS (SELECT p.oid function_oid,acl.grantee FROM pg_catalog.pg_proc p
         CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
@@ -465,10 +396,6 @@ BEGIN
           CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) acl WHERE acl.grantee=definer AND NOT acl.is_grantable)
         SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
                        UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) difference)
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c
-        CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(c.relacl,pg_catalog.acldefault('r',c.relowner))) acl
-        WHERE c.oid IN('enrollment_execution.work_queue'::regclass,'enrollment_execution.claim_leases'::regclass)
-          AND (acl.grantee NOT IN(table_owner,queue_definer) OR acl.is_grantable))
       AND NOT EXISTS(
         WITH expected(function_oid) AS (VALUES
           ('enrollment_execution.read_record(uuid,uuid)'::regprocedure::oid),
@@ -588,180 +515,7 @@ BEGIN
         WHERE p.oid='enrollment_execution.reject_worker_update()'::regprocedure
           AND (acl.grantee<>table_owner OR acl.privilege_type<>'EXECUTE' OR acl.is_grantable));
 
-    ok := ok
-      AND (SELECT count(*)=4 FROM pg_catalog.pg_proc p WHERE p.proowner=queue_definer AND p.oid IN(
-          'enrollment_execution.queue_worker_scope(uuid)'::regprocedure,
-          'enrollment_execution.claim_next(uuid,uuid)'::regprocedure,
-          'enrollment_execution.defer_claim(uuid,uuid,uuid,text)'::regprocedure,
-          'enrollment_execution.complete_claim(uuid,uuid,uuid)'::regprocedure))
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p WHERE p.proowner=queue_definer AND p.oid NOT IN(
-          'enrollment_execution.queue_worker_scope(uuid)'::regprocedure,
-          'enrollment_execution.claim_next(uuid,uuid)'::regprocedure,
-          'enrollment_execution.defer_claim(uuid,uuid,uuid,text)'::regprocedure,
-          'enrollment_execution.complete_claim(uuid,uuid,uuid)'::regprocedure))
-      AND NOT EXISTS(
-        WITH expected(signature,owner_oid,security_definer,with_rls,volatility,body_hash) AS (VALUES
-          ('enrollment_execution.guard_work_queue()',table_owner,false,false,'v','ff0696df19dbf6a84bb013d1b09a3b46ebcea741f9c13ec81a3f1e11dce32fe9'),
-          ('enrollment_execution.validate_work_queue()',table_owner,true,true,'v','42856db068ea7434ab55cc414b8172d1552d701d9f6029085fd13a5b51aab1aa'),
-          ('enrollment_execution.claim_next_work(uuid,uuid)',table_owner,false,false,'v','ac30e75b4c12d81ce1fe1487aa81adec0277b8c01f98ac4cad7651bed3d78a1d'),
-          ('enrollment_execution.defer_work_claim(uuid,uuid,uuid,text)',table_owner,false,false,'v','d5dbc6f35566e700b1445369cf126cb6befb0e600a991d5cfa1425241fdb5ed2'),
-          ('enrollment_execution.complete_work_claim(uuid,uuid,uuid)',table_owner,false,false,'v','8ef05062db0c3903c82d224672ec898954b11e28e4506bf8d7af1052f7f9c618'),
-          ('enrollment_execution.queue_worker_scope(uuid)',queue_definer,false,false,'s','350f3dc7c48f2869848a2fc67e320f0a67e507caba08d3651e71ab9e2a1e18ea'),
-          ('enrollment_execution.claim_next(uuid,uuid)',queue_definer,true,true,'v','82e5af6d26d860170794d29f404254525c267a36ccae4d0cf1ed030e4dd6aa93'),
-          ('enrollment_execution.defer_claim(uuid,uuid,uuid,text)',queue_definer,true,true,'v','496e54664b5efa4a3656e570d0254d84ace518cac3843a24aca42614223f3379'),
-          ('enrollment_execution.complete_claim(uuid,uuid,uuid)',queue_definer,true,true,'v','9ed1b979fda3916936ad235f4466522a3b90cb871dcb6eea961d1bdf9ec18e82')),
-        actual AS (SELECT expected.*,p.oid,p.proowner,p.prosecdef,p.proisstrict,l.lanname,p.provolatile,p.proparallel,p.proconfig,
-            pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
-              pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex') actual_hash
-          FROM expected LEFT JOIN pg_catalog.pg_proc p ON p.oid=pg_catalog.to_regprocedure(expected.signature)
-          LEFT JOIN pg_catalog.pg_language l ON l.oid=p.prolang)
-        SELECT 1 FROM actual WHERE oid IS NULL OR proowner<>owner_oid OR prosecdef<>security_definer
-          OR proisstrict OR lanname<>'plpgsql' OR provolatile::text<>volatility OR proparallel<>'u'
-          OR proconfig<>CASE WHEN with_rls THEN ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
-                            ELSE ARRAY['search_path=pg_catalog, pg_temp'] END
-          OR actual_hash<>body_hash)
-      AND (SELECT count(*)=2 AND bool_and(c.relowner=table_owner AND c.relkind='r'
-              AND c.relrowsecurity AND c.relforcerowsecurity)
-           FROM pg_catalog.pg_class c WHERE c.oid IN(
-              'enrollment_execution.work_queue'::regclass,'enrollment_execution.claim_leases'::regclass))
-      AND (SELECT pg_catalog.string_agg(a.attname||':'||a.atttypid::regtype::text||':'||a.attnotnull::text,',' ORDER BY a.attnum)
-           FROM pg_catalog.pg_attribute a WHERE a.attrelid='enrollment_execution.work_queue'::regclass
-             AND a.attnum>0 AND NOT a.attisdropped)
-          ='environment_id:uuid:true,operation_id:uuid:true,state:text:true,attempt:integer:true,next_attempt_at:timestamp with time zone:true,active_claim_token:uuid:false,last_transition_token:uuid:false,last_defer_reason:text:false,completed_at:timestamp with time zone:false,seeded_at:timestamp with time zone:true'
-      AND (SELECT pg_catalog.string_agg(a.attname||':'||a.atttypid::regtype::text||':'||a.attnotnull::text,',' ORDER BY a.attnum)
-           FROM pg_catalog.pg_attribute a WHERE a.attrelid='enrollment_execution.claim_leases'::regclass
-             AND a.attnum>0 AND NOT a.attisdropped)
-          ='claim_token:uuid:true,environment_id:uuid:true,operation_id:uuid:true,attempt:integer:true,claimed_at:timestamp with time zone:true,lease_until:timestamp with time zone:true'
-      AND (SELECT count(*)=6 AND pg_catalog.md5(pg_catalog.string_agg(
-             pg_catalog.pg_get_constraintdef(k.oid,true),'|' ORDER BY pg_catalog.pg_get_constraintdef(k.oid,true)))
-             ='a42221f3aae7fd575b78fc30e8fae6e0'
-           FROM pg_catalog.pg_constraint k WHERE k.conrelid='enrollment_execution.claim_leases'::regclass
-             AND k.contype IN('p','u','f','c') AND k.convalidated)
-      AND (SELECT count(*)=8 AND pg_catalog.md5(pg_catalog.string_agg(
-             pg_catalog.pg_get_constraintdef(k.oid,true),'|' ORDER BY pg_catalog.pg_get_constraintdef(k.oid,true)))
-             ='447fd57a3088d4e09acf78470ff0c59b'
-           FROM pg_catalog.pg_constraint k WHERE k.conrelid='enrollment_execution.work_queue'::regclass
-             AND k.contype IN('p','u','f','c') AND k.convalidated)
-      AND NOT EXISTS(
-        WITH expected(table_name,trigger_name,type_code,function_name,deferred_value) AS (VALUES
-          ('work_queue','work_queue_guard',31,'enrollment_execution.guard_work_queue()',false),
-          ('work_queue','work_queue_consistent',21,'enrollment_execution.validate_work_queue()',true),
-          ('claim_leases','claim_leases_immutable',27,'enrollment_execution.reject_history_mutation()',false)),
-        actual AS (SELECT c.relname::text,t.tgname::text,t.tgtype,t.tgfoid::regprocedure::text,t.tgdeferrable
-          FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
-          WHERE t.tgrelid IN('enrollment_execution.work_queue'::regclass,'enrollment_execution.claim_leases'::regclass)
-            AND NOT t.tgisinternal AND t.tgenabled='O')
-        SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
-                       UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) difference)
-      AND NOT EXISTS(
-        WITH expected(table_name,policy_name,command_code,permissive_value,expression_hash) AS (VALUES
-          ('EnrollmentGrantOperations','enrollment_execution_queue_operations_allow','*',true,'5556c1517920a9f5b6050ab51d13d5e6'),
-          ('EnrollmentGrantOperations','enrollment_execution_queue_operations_limit','*',false,'5556c1517920a9f5b6050ab51d13d5e6'),
-          ('Outbox','enrollment_execution_queue_outbox_allow','*',true,'3d58adb52734dd82ac5d154b67922a9e'),
-          ('Outbox','enrollment_execution_queue_outbox_limit','*',false,'3d58adb52734dd82ac5d154b67922a9e'),
-          ('work_queue','enrollment_execution_queue_work_allow','*',true,'29db1f6e19f17b334a3c09d522304884'),
-          ('work_queue','enrollment_execution_queue_work_limit','*',false,'29db1f6e19f17b334a3c09d522304884'),
-          ('claim_leases','enrollment_execution_queue_leases_allow','*',true,'1b87c54a864523d0410a0a4bd7d79676'),
-          ('claim_leases','enrollment_execution_queue_leases_limit','*',false,'1b87c54a864523d0410a0a4bd7d79676'),
-          ('issue_results','enrollment_execution_queue_results_allow','r',true,'367e9d4e206baca6b6386de916a9cdb1'),
-          ('issue_results','enrollment_execution_queue_results_limit','r',false,'367e9d4e206baca6b6386de916a9cdb1'),
-          ('execution_stops','enrollment_execution_queue_stops_allow','r',true,'367e9d4e206baca6b6386de916a9cdb1'),
-          ('execution_stops','enrollment_execution_queue_stops_limit','r',false,'367e9d4e206baca6b6386de916a9cdb1')),
-        actual AS (SELECT c.relname::text,p.polname::text,p.polcmd::text,p.polpermissive,
-            pg_catalog.md5(COALESCE(pg_catalog.pg_get_expr(p.polqual,p.polrelid),'')||'|'||
-              COALESCE(pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid),''))
-          FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid=p.polrelid
-          WHERE p.polname LIKE 'enrollment_execution_queue_%' AND p.polroles=ARRAY[queue_definer])
-        SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
-                       UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) difference)
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy p WHERE queue_definer=ANY(p.polroles)
-             AND p.polname NOT LIKE 'enrollment_execution_queue_%')
-      AND (SELECT count(*)=1 FROM pg_catalog.pg_trigger t
-           WHERE t.tgrelid='public."Outbox"'::regclass AND t.tgname='work_queue_outbox_consistent'
-             AND NOT t.tgisinternal AND t.tgenabled='O' AND t.tgtype=21
-             AND t.tgqual IS NULL AND t.tgnargs=0 AND t.tgattr=''::int2vector
-             AND t.tgoldtable IS NULL AND t.tgnewtable IS NULL AND t.tgdeferrable AND t.tginitdeferred
-             AND EXISTS(SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.oid=t.tgconstraint
-                 AND k.conrelid=t.tgrelid AND k.contype='t' AND k.condeferrable AND k.condeferred)
-             AND t.tgfoid='enrollment_execution.validate_work_queue()'::regprocedure)
-      AND NOT EXISTS(
-        WITH expected(table_oid,privilege_type) AS (VALUES
-          ('enrollment_execution.work_queue'::regclass::oid,'SELECT'),
-          ('enrollment_execution.work_queue'::regclass::oid,'INSERT'),
-          ('enrollment_execution.work_queue'::regclass::oid,'UPDATE'),
-          ('enrollment_execution.claim_leases'::regclass::oid,'SELECT'),
-          ('enrollment_execution.claim_leases'::regclass::oid,'INSERT'),
-          ('enrollment_execution.issue_results'::regclass::oid,'SELECT'),
-          ('enrollment_execution.execution_stops'::regclass::oid,'SELECT')),
-        actual AS (SELECT c.oid,acl.privilege_type::text FROM pg_catalog.pg_class c
-          CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) acl
-          WHERE acl.grantee=queue_definer AND NOT acl.is_grantable)
-        SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
-                       UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) difference)
-      AND NOT EXISTS(
-        WITH expected(table_oid,column_name,privilege_type) AS (VALUES
-          ('public."DirectoryDatabaseBindings"'::regclass::oid,'LoginRole','SELECT'),
-          ('public."DirectoryDatabaseBindings"'::regclass::oid,'Purpose','SELECT'),
-          ('public."DirectoryDatabaseBindings"'::regclass::oid,'ContractVersion','SELECT'),
-          ('public."DirectoryDatabaseBindings"'::regclass::oid,'EnvironmentId','SELECT'),
-          ('public."DirectoryDatabaseBindings"'::regclass::oid,'PrincipalId','SELECT'),
-          ('public."EnrollmentGrantOperations"'::regclass::oid,'EnvironmentId','SELECT'),
-          ('public."EnrollmentGrantOperations"'::regclass::oid,'Id','SELECT'),
-          ('public."EnrollmentGrantOperations"'::regclass::oid,'QueuedAt','SELECT'),
-          ('public."Outbox"'::regclass::oid,'EnvironmentId','SELECT'),
-          ('public."Outbox"'::regclass::oid,'Id','SELECT'),
-          ('public."Outbox"'::regclass::oid,'EventType','SELECT'),
-          ('public."Outbox"'::regclass::oid,'Version','SELECT'),
-          ('public."Outbox"'::regclass::oid,'Payload','SELECT'),
-          ('public."Outbox"'::regclass::oid,'CreatedAt','SELECT'),
-          ('public."Outbox"'::regclass::oid,'DeliveredAt','SELECT'),
-          ('public."Outbox"'::regclass::oid,'Attempts','SELECT'),
-          ('public."Outbox"'::regclass::oid,'Attempts','UPDATE'),
-          ('public."Outbox"'::regclass::oid,'DeliveredAt','UPDATE')),
-        actual AS (SELECT a.attrelid,a.attname::text,acl.privilege_type::text
-          FROM pg_catalog.pg_attribute a CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
-          WHERE acl.grantee=queue_definer AND NOT acl.is_grantable)
-        SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
-                       UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) difference)
-      AND NOT EXISTS(
-        WITH expected(function_oid) AS (VALUES
-          ('enrollment_execution.queue_worker_scope(uuid)'::regprocedure::oid),
-          ('public.has_environment_membership(uuid,uuid)'::regprocedure::oid),
-          ('enrollment_execution.claim_next(uuid,uuid)'::regprocedure::oid),
-          ('enrollment_execution.defer_claim(uuid,uuid,uuid,text)'::regprocedure::oid),
-          ('enrollment_execution.complete_claim(uuid,uuid,uuid)'::regprocedure::oid),
-          ('enrollment_execution.claim_next_work(uuid,uuid)'::regprocedure::oid),
-          ('enrollment_execution.defer_work_claim(uuid,uuid,uuid,text)'::regprocedure::oid),
-          ('enrollment_execution.complete_work_claim(uuid,uuid,uuid)'::regprocedure::oid),
-          ('enrollment_execution.audit_execution_privileges(uuid)'::regprocedure::oid)),
-        actual AS (SELECT p.oid FROM pg_catalog.pg_proc p
-          CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
-          WHERE acl.grantee=queue_definer AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable)
-        SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
-                       UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) difference)
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p
-        CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
-        WHERE acl.grantee=queue_definer AND (acl.privilege_type<>'EXECUTE' OR acl.is_grantable))
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
-        CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(relation.relacl,pg_catalog.acldefault('r',relation.relowner))) acl
-        WHERE acl.grantee=queue_definer AND acl.is_grantable)
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute attribute
-        CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) acl
-        WHERE acl.grantee=queue_definer AND acl.is_grantable);
-
-    ok := ok AND (SELECT count(*)=1 AND bool_and(p.proowner=table_owner AND l.lanname='plpgsql'
-        AND NOT p.prosecdef AND p.provolatile='v' AND p.proparallel='u' AND NOT p.proisstrict AND NOT p.proleakproof
-        AND p.prokind='f' AND NOT p.proretset AND p.prorettype='trigger'::regtype AND p.pronargs=0
-        AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp']
-        AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
-            pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
-            ='dd8064d70027f2b4ae9070970e54aa183e1f70bb4c8798b64f751673de59ee27'
-        AND NOT EXISTS(SELECT 1 FROM pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
-            WHERE acl.grantee<>table_owner OR acl.privilege_type<>'EXECUTE' OR acl.is_grantable))
-      FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
-      WHERE p.oid=pg_catalog.to_regprocedure('public.validate_enrollment_grant_queue_anchor()'));
-
-    RETURN QUERY SELECT COALESCE(ok,false),CASE WHEN COALESCE(ok,false) THEN 'None' ELSE 'ProfileDrift' END,3::smallint;
+    RETURN QUERY SELECT COALESCE(ok,false),CASE WHEN COALESCE(ok,false) THEN 'None' ELSE 'ProfileDrift' END,2::smallint;
 END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.audit_execution_privileges(uuid) FROM PUBLIC;

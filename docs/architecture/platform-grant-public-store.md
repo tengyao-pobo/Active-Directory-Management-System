@@ -18,9 +18,11 @@
 
 ## 部署契約
 
-離線部署者先套用 migration，配置獨立的每環境 LOGIN 與共用 NOLOGIN definer，再執行 `build/provision-enrollment-execution.sql`。腳本與同目錄的 `enrollment-execution-functions.sql`、`enrollment-execution-profile.sql`、`audit-enrollment-execution.sql` 及 API operation audit 應整組部署。
+離線部署者先套用 migration，配置獨立的每環境 LOGIN，以及分開的 execution／queue NOLOGIN definer，再執行 `build/provision-enrollment-execution.sql`。腳本與同目錄的 `enrollment-execution-functions.sql`、`enrollment-execution-queue.sql`、`enrollment-execution-profile.sql`、`audit-enrollment-execution.sql` 及 API operation audit 應整組部署。
 
-必要 psql 變數為 `execution_runtime_role`、`execution_definer_role`、`expected_table_owner_role`、`expected_environment_id` 與 `DBNAME`。連線憑證由部署環境提供，不寫入腳本。profile 以同一排他部署鎖完成預檢、函式／RLS／精確 grants 配置、永久角色身分保留及最終 audit；marker 最後建立。API audit 同時辨識尚未安裝與已安裝的精確狀態。
+必要 psql 變數為 `execution_runtime_role`、`execution_definer_role`、`execution_queue_definer_role`、`expected_table_owner_role`、`expected_environment_id` 與 `DBNAME`。連線憑證由部署環境提供，不寫入腳本。profile 以同一排他部署鎖完成預檢、函式／RLS／精確 grants 配置、永久角色身分保留及最終 audit；marker 最後建立。API audit 同時辨識尚未安裝與已安裝的精確狀態。
+
+v2 已安裝的資料庫先套用 queue migration，再以 `build/upgrade-enrollment-execution-v2-to-v3.sql` 及 `execution_definer_role`、`execution_queue_definer_role`、`expected_table_owner_role` 變數執行一次交易式升級。不要用首次安裝腳本覆蓋 v2。`build/enrollment-execution/v2/` 保留原版安裝與稽核快照；新版 repository 要求 profile v3。升級前應停止舊 worker，升級失敗則整筆交易回復，既有操作與認領歷史不得刪除。
 
 執行 LOGIN 僅可呼叫指定入口及 audit，不能直接讀寫應用資料表。definer 只取得固定欄位與 journal 權限；為取得列鎖而需要的 UPDATE 權限另由不可改寫 trigger 限制。環境隔離不依賴原申請人的會員仍有效，避免撤權後無法恢復既有操作。
 
@@ -32,6 +34,8 @@
 
 ## 驗證狀態與下一步
 
+以下為已合併 v2 執行儲存層的歷史驗證；v3 認領與升級的驗證另見[工作認領](platform-grant-queue.md)。
+
 完整後端回歸共 12 個測試專案、1,159 項測試全部通過，含 468 項整合測試與 execution library 的 44 項單元測試；locked restore 與 Release build 零警告／錯誤。九個 repository 案例涵蓋併發、等待列鎖時取消、撤權與收據重試。全新隔離 public DB 完成 migration、實際 psql 首次安裝、兩層 audit 與讀取入口驗證；12 項 profile 測試包含不完整 private footprint 與任意 marker overload。另一項測試使用正式 capability-v2 升級流程建立的 private fixture，確認安裝以 55000 拒絕且 catalog 不變。一般覆核與 Daybreak 專項覆核均無剩餘阻擋；此結論限於本資料庫與 repository 部分。
 
-接續工作為持久化工作認領與重試、host 組合、私有 target／issue 連線池、同設備頁密文領取及 ACK，然後完成正式註冊 listener。每個部分都必須有實際整合證據，不能因資料庫函式存在便開啟 readiness。
+持久化工作認領與重試已接到[工作認領層](platform-grant-queue.md)。接續工作為 host 組合、私有 target／issue 連線池、同設備頁密文領取及 ACK，然後完成正式註冊 listener。每個部分都必須有實際整合證據，不能因資料庫函式存在便開啟 readiness。

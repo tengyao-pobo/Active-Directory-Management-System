@@ -10,7 +10,7 @@ public sealed partial class EnrollmentGrantPlanTests
     private static readonly SemaphoreSlim ExecutionProvisionLock = new(1, 1);
     private const string ExecutionDefinerRole = "console_execution_definer";
 
-    private sealed record ExecutionRuntimeProfile(NpgsqlDataSource DataSource, string RuntimeRole, string DefinerRole)
+    private sealed record ExecutionRuntimeProfile(NpgsqlDataSource DataSource, string RuntimeRole, string DefinerRole, string QueueDefinerRole)
         : IAsyncDisposable
     {
         public ValueTask DisposeAsync() => DataSource.DisposeAsync();
@@ -26,6 +26,10 @@ public sealed partial class EnrollmentGrantPlanTests
             if (string.IsNullOrWhiteSpace(definerRole)) definerRole = ExecutionDefinerRole;
             if (!System.Text.RegularExpressions.Regex.IsMatch(definerRole, "^[a-z_][a-z0-9_]{0,62}$"))
                 throw new InvalidOperationException("Invalid execution definer test role.");
+            var queueDefinerRole = Environment.GetEnvironmentVariable("CONSOLE_TEST_QUEUE_DEFINER");
+            if (string.IsNullOrWhiteSpace(queueDefinerRole)) queueDefinerRole = "console_execution_queue_definer";
+            if (!System.Text.RegularExpressions.Regex.IsMatch(queueDefinerRole, "^[a-z_][a-z0-9_]{0,62}$"))
+                throw new InvalidOperationException("Invalid execution queue definer test role.");
             var runtimeRole = $"console_execution_{Guid.NewGuid():N}";
             var password = Convert.ToHexString(Guid.NewGuid().ToByteArray());
             await using (var db = Db())
@@ -34,6 +38,9 @@ public sealed partial class EnrollmentGrantPlanTests
                     DO $role$ BEGIN
                       IF NOT EXISTS(SELECT 1 FROM pg_catalog.pg_roles WHERE rolname='{definerRole.Replace("'", "''", StringComparison.Ordinal)}') THEN
                         CREATE ROLE "{definerRole.Replace("\"", "\"\"", StringComparison.Ordinal)}" NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
+                      END IF;
+                      IF NOT EXISTS(SELECT 1 FROM pg_catalog.pg_roles WHERE rolname='{queueDefinerRole.Replace("'", "''", StringComparison.Ordinal)}') THEN
+                        CREATE ROLE "{queueDefinerRole.Replace("\"", "\"\"", StringComparison.Ordinal)}" NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
                       END IF;
                     END $role$;
                     CREATE ROLE "{runtimeRole}" LOGIN PASSWORD '{password}' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
@@ -57,6 +64,7 @@ public sealed partial class EnrollmentGrantPlanTests
                 "-h", ownerConnection.Host!, "-p", ownerConnection.Port.ToString(), "-U", ownerConnection.Username!,
                 "-d", ownerConnection.Database!, "-v", "ON_ERROR_STOP=1", "-v", $"execution_runtime_role={runtimeRole}",
                 "-v", $"execution_definer_role={definerRole}", "-v", $"expected_table_owner_role={ownerConnection.Username}",
+                "-v", $"execution_queue_definer_role={queueDefinerRole}",
                 "-v", $"expected_environment_id={environmentId}", "-v", $"DBNAME={ownerConnection.Database}",
                 "-f", "provision-enrollment-execution.sql"
             }) process.ArgumentList.Add(argument);
@@ -81,7 +89,7 @@ public sealed partial class EnrollmentGrantPlanTests
                 Password = password,
                 Pooling = false
             };
-            return new ExecutionRuntimeProfile(NpgsqlDataSource.Create(runtimeConnection.ConnectionString), runtimeRole, definerRole);
+            return new ExecutionRuntimeProfile(NpgsqlDataSource.Create(runtimeConnection.ConnectionString), runtimeRole, definerRole, queueDefinerRole);
         }
         finally { ExecutionProvisionLock.Release(); }
     }
@@ -99,7 +107,7 @@ public sealed partial class EnrollmentGrantPlanTests
         Assert.True(await reader.ReadAsync());
         Assert.True(reader.GetBoolean(0));
         Assert.Equal("None", reader.GetString(1));
-        Assert.Equal((short)2, reader.GetInt16(2));
+        Assert.Equal((short)3, reader.GetInt16(2));
         Assert.False(await reader.ReadAsync());
         await reader.DisposeAsync();
 

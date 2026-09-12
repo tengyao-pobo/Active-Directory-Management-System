@@ -3,13 +3,11 @@ BEGIN;
 SELECT pg_catalog.pg_advisory_xact_lock(1162235478,1);
 SELECT pg_catalog.set_config('app.execution_install_runtime',:'execution_runtime_role',true),
  pg_catalog.set_config('app.execution_install_definer',:'execution_definer_role',true),
- pg_catalog.set_config('app.execution_install_queue_definer',:'execution_queue_definer_role',true),
  pg_catalog.set_config('app.execution_install_owner',:'expected_table_owner_role',true),
  pg_catalog.set_config('app.execution_install_environment',:'expected_environment_id',true),
  pg_catalog.set_config('app.execution_install_database',:'DBNAME',true);
 DO $preflight$
-DECLARE runtime_role pg_catalog.pg_roles%ROWTYPE; definer_role pg_catalog.pg_roles%ROWTYPE;
- queue_role pg_catalog.pg_roles%ROWTYPE; owner_role pg_catalog.pg_roles%ROWTYPE;
+DECLARE runtime_role pg_catalog.pg_roles%ROWTYPE; definer_role pg_catalog.pg_roles%ROWTYPE; owner_role pg_catalog.pg_roles%ROWTYPE;
  api_oid oid; private_registry oid; private_marker oid;
 BEGIN
  IF current_setting('app.execution_install_environment')::uuid='00000000-0000-0000-0000-000000000000' OR current_setting('app.execution_install_database')<>current_database() THEN
@@ -23,28 +21,19 @@ BEGIN
  END IF;
  SELECT * INTO runtime_role FROM pg_catalog.pg_roles WHERE rolname=current_setting('app.execution_install_runtime');
  SELECT * INTO definer_role FROM pg_catalog.pg_roles WHERE rolname=current_setting('app.execution_install_definer');
- SELECT * INTO queue_role FROM pg_catalog.pg_roles WHERE rolname=current_setting('app.execution_install_queue_definer');
  SELECT * INTO owner_role FROM pg_catalog.pg_roles WHERE rolname=current_setting('app.execution_install_owner');
  SELECT r.oid INTO api_oid FROM public."DirectoryDatabaseBindings" b JOIN pg_catalog.pg_roles r ON r.rolname=b."LoginRole" WHERE b."Purpose"='Api';
  IF runtime_role.oid IS NULL OR NOT runtime_role.rolcanlogin OR runtime_role.rolsuper OR runtime_role.rolbypassrls
   OR runtime_role.rolcreatedb OR runtime_role.rolcreaterole OR runtime_role.rolinherit OR runtime_role.rolreplication
   OR definer_role.oid IS NULL OR definer_role.rolcanlogin OR definer_role.rolsuper OR definer_role.rolbypassrls
   OR definer_role.rolcreatedb OR definer_role.rolcreaterole OR definer_role.rolinherit OR definer_role.rolreplication
-  OR queue_role.oid IS NULL OR queue_role.rolcanlogin OR queue_role.rolsuper OR queue_role.rolbypassrls
-  OR queue_role.rolcreatedb OR queue_role.rolcreaterole OR queue_role.rolinherit OR queue_role.rolreplication
   OR owner_role.oid IS NULL OR owner_role.oid<>CURRENT_USER::regrole::oid OR api_oid IS NULL
-  OR runtime_role.oid IN(definer_role.oid,queue_role.oid,owner_role.oid,api_oid)
-  OR definer_role.oid IN(queue_role.oid,owner_role.oid,api_oid) OR queue_role.oid IN(owner_role.oid,api_oid)
-  OR EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member IN(runtime_role.oid,definer_role.oid,queue_role.oid) OR m.roleid IN(runtime_role.oid,definer_role.oid,queue_role.oid))
-  OR EXISTS(SELECT 1 FROM pg_catalog.pg_database d WHERE d.datdba IN(runtime_role.oid,definer_role.oid,queue_role.oid))
-  OR EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspowner IN(runtime_role.oid,definer_role.oid,queue_role.oid))
-  OR EXISTS(SELECT 1 FROM pg_catalog.pg_class c WHERE c.relowner IN(runtime_role.oid,definer_role.oid,queue_role.oid))
+  OR runtime_role.oid IN(definer_role.oid,owner_role.oid,api_oid) OR definer_role.oid IN(owner_role.oid,api_oid)
+  OR EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member IN(runtime_role.oid,definer_role.oid) OR m.roleid IN(runtime_role.oid,definer_role.oid))
+  OR EXISTS(SELECT 1 FROM pg_catalog.pg_database d WHERE d.datdba IN(runtime_role.oid,definer_role.oid))
+  OR EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspowner IN(runtime_role.oid,definer_role.oid))
+  OR EXISTS(SELECT 1 FROM pg_catalog.pg_class c WHERE c.relowner IN(runtime_role.oid,definer_role.oid))
   OR EXISTS(SELECT 1 FROM pg_catalog.pg_proc p WHERE p.proowner=runtime_role.oid)
-  OR EXISTS(SELECT 1 FROM pg_catalog.pg_proc p WHERE p.proowner=queue_role.oid AND p.oid NOT IN(
-    pg_catalog.to_regprocedure('enrollment_execution.queue_worker_scope(uuid)'),
-    pg_catalog.to_regprocedure('enrollment_execution.claim_next(uuid,uuid)'),
-    pg_catalog.to_regprocedure('enrollment_execution.defer_claim(uuid,uuid,uuid,text)'),
-    pg_catalog.to_regprocedure('enrollment_execution.complete_claim(uuid,uuid,uuid)')))
   OR EXISTS(SELECT 1 FROM pg_catalog.pg_proc p WHERE p.proowner=definer_role.oid AND p.oid NOT IN(
     pg_catalog.to_regprocedure('enrollment_execution.worker_scope(uuid)'),
     pg_catalog.to_regprocedure('enrollment_execution.read_execution_record(uuid,uuid)'),
@@ -52,9 +41,9 @@ BEGIN
     pg_catalog.to_regprocedure('enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea)'),
     pg_catalog.to_regprocedure('enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'),
     pg_catalog.to_regprocedure('enrollment_execution.quarantine_execution(uuid,uuid,bytea,text)')))
-  OR has_database_privilege(runtime_role.oid,current_database(),'CREATE') OR has_database_privilege(definer_role.oid,current_database(),'CREATE') OR has_database_privilege(queue_role.oid,current_database(),'CREATE')
-  OR has_schema_privilege(runtime_role.oid,'public','CREATE') OR has_schema_privilege(definer_role.oid,'public','CREATE') OR has_schema_privilege(queue_role.oid,'public','CREATE')
-  OR has_schema_privilege(runtime_role.oid,'enrollment_execution','CREATE') OR has_schema_privilege(definer_role.oid,'enrollment_execution','CREATE') OR has_schema_privilege(queue_role.oid,'enrollment_execution','CREATE') THEN
+  OR has_database_privilege(runtime_role.oid,current_database(),'CREATE') OR has_database_privilege(definer_role.oid,current_database(),'CREATE')
+  OR has_schema_privilege(runtime_role.oid,'public','CREATE') OR has_schema_privilege(definer_role.oid,'public','CREATE')
+  OR has_schema_privilege(runtime_role.oid,'enrollment_execution','CREATE') OR has_schema_privilege(definer_role.oid,'enrollment_execution','CREATE') THEN
   RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Unsafe enrollment execution role profile.'; END IF;
  IF EXISTS(SELECT 1 FROM enrollment_execution.role_reservations r WHERE (r.role_name=current_setting('app.execution_install_runtime')::name OR r.role_oid=runtime_role.oid)
    AND NOT(r.role_name=current_setting('app.execution_install_runtime')::name AND r.role_oid=runtime_role.oid AND r.capability='EnrollmentGrantExecution' AND r.role_kind='Runtime' AND r.reservation_schema_version=1))
@@ -69,12 +58,11 @@ SELECT (pg_catalog.to_regprocedure('enrollment_execution.execution_store_profile
 -- Never invoke the installed SECURITY DEFINER audit until its catalog identity and body
 -- have been independently pinned.  The internal audit supplies the remaining exact profile.
 DO $catalog_preflight$
-DECLARE owner_oid oid; definer_oid oid; queue_oid oid; audit_oid oid;
+DECLARE owner_oid oid; definer_oid oid; audit_oid oid;
 BEGIN
  IF pg_catalog.to_regprocedure('enrollment_execution.execution_store_profile()') IS NOT NULL THEN
   SELECT oid INTO owner_oid FROM pg_catalog.pg_roles WHERE rolname=current_setting('app.execution_install_owner');
   SELECT oid INTO definer_oid FROM pg_catalog.pg_roles WHERE rolname=current_setting('app.execution_install_definer');
-  SELECT oid INTO queue_oid FROM pg_catalog.pg_roles WHERE rolname=current_setting('app.execution_install_queue_definer');
   SELECT p.oid INTO audit_oid FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
    WHERE p.oid=pg_catalog.to_regprocedure('enrollment_execution.audit_execution_privileges(uuid)')
      AND p.proowner=owner_oid AND l.lanname='plpgsql' AND p.prosecdef AND p.provolatile='s' AND p.proparallel='u'
@@ -86,11 +74,11 @@ BEGIN
      AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
      AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
        pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
-       ='ec0ae2639db2b390471dd63fba05c7851a34112068e425d2d60066770fa16650';
+       ='8ed83a1a4736e9caab7c0a9c32ef8b2e53b48dbdcf184824a8436d3fc33d3da3';
   IF audit_oid IS NULL OR EXISTS(SELECT 1 FROM pg_catalog.aclexplode(
        COALESCE((SELECT proacl FROM pg_catalog.pg_proc WHERE oid=audit_oid),pg_catalog.acldefault('f',owner_oid))) acl
        WHERE acl.privilege_type<>'EXECUTE' OR acl.is_grantable OR acl.grantee=0
-          OR acl.grantee NOT IN(owner_oid,definer_oid,queue_oid)
+          OR acl.grantee NOT IN(owner_oid,definer_oid)
              AND acl.grantee NOT IN(SELECT role_oid FROM enrollment_execution.role_reservations WHERE role_kind='Runtime')) THEN
    RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Enrollment execution catalog attestation failed.';
   END IF;
@@ -100,56 +88,23 @@ $catalog_preflight$;
 
 \if :profile_absent
 DO $fresh$
-DECLARE owner_oid oid;
 BEGIN
- SELECT oid INTO owner_oid FROM pg_catalog.pg_roles WHERE rolname=current_setting('app.execution_install_owner');
  IF EXISTS(SELECT 1 FROM enrollment_execution.role_reservations)
   OR EXISTS(SELECT 1 FROM public."DirectoryDatabaseBindings" WHERE "Purpose"='EnrollmentGrantExecution')
-  OR pg_catalog.to_regclass('enrollment_execution.work_queue') IS NULL
-  OR pg_catalog.to_regclass('enrollment_execution.claim_leases') IS NULL
-  OR EXISTS(SELECT 1 FROM enrollment_execution.work_queue)
-  OR EXISTS(SELECT 1 FROM enrollment_execution.claim_leases)
   OR EXISTS(SELECT 1 FROM pg_catalog.pg_proc WHERE pronamespace='enrollment_execution'::regnamespace
-   AND proname IN('worker_scope','read_execution_record','read_and_lock_plan_context','authorize_and_store_candidate','record_execution_result','quarantine_execution',
-     'queue_worker_scope','claim_next','defer_claim','complete_claim','audit_execution_privileges','reject_worker_update','execution_store_profile'))
-  OR EXISTS(SELECT 1 FROM pg_catalog.pg_policy
-     WHERE polname LIKE 'enrollment_execution_worker_%' OR polname LIKE 'enrollment_execution_queue_%')
-  OR EXISTS(SELECT 1 FROM pg_catalog.pg_trigger WHERE NOT tgisinternal
-     AND (tgname LIKE 'enrollment_execution_worker_%' OR tgname='work_queue_outbox_consistent'))
-  OR (SELECT pg_catalog.pg_get_constraintdef(c.oid,true)
-      FROM pg_catalog.pg_constraint c
-      WHERE c.conrelid='enrollment_execution.role_reservations'::regclass
-        AND c.conname='role_reservations_role_kind_check' AND c.convalidated)
-     IS DISTINCT FROM 'CHECK (role_kind = ANY (ARRAY[''Runtime''::text, ''Definer''::text]))'
-  OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p WHERE p.proowner=owner_oid AND p.oid=ANY(ARRAY[
-       pg_catalog.to_regprocedure('enrollment_execution.guard_work_queue()'),
-       pg_catalog.to_regprocedure('enrollment_execution.validate_work_queue()'),
-       pg_catalog.to_regprocedure('enrollment_execution.claim_next_work(uuid,uuid)'),
-       pg_catalog.to_regprocedure('enrollment_execution.defer_work_claim(uuid,uuid,uuid,text)'),
-       pg_catalog.to_regprocedure('enrollment_execution.complete_work_claim(uuid,uuid,uuid)')])
-     GROUP BY p.proowner HAVING count(*)=5)
-  OR EXISTS(SELECT 1 FROM public."Outbox" outbox
-      LEFT JOIN public."EnrollmentGrantOperations" operation
-        ON operation."EnvironmentId"=outbox."EnvironmentId" AND operation."Id"=outbox."Id"
-      WHERE outbox."EventType"='EnrollmentGrantExecutionRequested'
-        AND (operation."Id" IS NULL OR outbox."Version"<>1 OR outbox."DeliveredAt" IS NOT NULL
-          OR outbox."CreatedAt"<>operation."QueuedAt"
-          OR outbox."Payload"<>jsonb_build_object('version',1,'environmentId',outbox."EnvironmentId",'operationId',outbox."Id"))) THEN
+   AND proname IN('worker_scope','read_execution_record','read_and_lock_plan_context','authorize_and_store_candidate','record_execution_result','quarantine_execution','audit_execution_privileges','reject_worker_update'))
+  OR EXISTS(SELECT 1 FROM pg_catalog.pg_policy WHERE polname LIKE 'enrollment_execution_worker_%')
+  OR EXISTS(SELECT 1 FROM pg_catalog.pg_trigger WHERE NOT tgisinternal AND tgname LIKE 'enrollment_execution_worker_%') THEN
   RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Enrollment execution profile is partially installed.'; END IF;
 END
 $fresh$;
 -- Establish the exact API-only source profile before the first execution-profile mutation.
 SELECT "LoginRole" AS runtime_role FROM public."DirectoryDatabaseBindings" WHERE "Purpose"='Api' \gset
 \ir audit-enrollment-grant-operations.sql
-ALTER TABLE enrollment_execution.role_reservations DROP CONSTRAINT role_reservations_role_kind_check;
-ALTER TABLE enrollment_execution.role_reservations ADD CONSTRAINT role_reservations_role_kind_check
- CHECK(role_kind IN('Runtime','Definer','QueueDefiner'));
 INSERT INTO enrollment_execution.role_reservations SELECT :'execution_definer_role'::name,oid,'EnrollmentGrantExecution','Definer',1 FROM pg_roles WHERE rolname=:'execution_definer_role';
-INSERT INTO enrollment_execution.role_reservations SELECT :'execution_queue_definer_role'::name,oid,'EnrollmentGrantExecution','QueueDefiner',1 FROM pg_roles WHERE rolname=:'execution_queue_definer_role';
 INSERT INTO enrollment_execution.role_reservations SELECT :'execution_runtime_role'::name,oid,'EnrollmentGrantExecution','Runtime',1 FROM pg_roles WHERE rolname=:'execution_runtime_role';
 INSERT INTO public."DirectoryDatabaseBindings"("LoginRole","Purpose","ContractVersion","EnvironmentId","PrincipalId")
  VALUES(:'execution_runtime_role','EnrollmentGrantExecution',2,:'expected_environment_id'::uuid,NULL);
-\ir enrollment-execution-queue.sql
 \ir enrollment-execution-functions.sql
 ALTER FUNCTION enrollment_execution.worker_scope(uuid) OWNER TO :"execution_definer_role";
 ALTER FUNCTION enrollment_execution.read_execution_record(uuid,uuid) OWNER TO :"execution_definer_role";
@@ -157,15 +112,6 @@ ALTER FUNCTION enrollment_execution.read_and_lock_plan_context(uuid,uuid) OWNER 
 ALTER FUNCTION enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea) OWNER TO :"execution_definer_role";
 ALTER FUNCTION enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea) OWNER TO :"execution_definer_role";
 ALTER FUNCTION enrollment_execution.quarantine_execution(uuid,uuid,bytea,text) OWNER TO :"execution_definer_role";
-ALTER FUNCTION enrollment_execution.queue_worker_scope(uuid) OWNER TO :"execution_queue_definer_role";
-ALTER FUNCTION enrollment_execution.claim_next(uuid,uuid) OWNER TO :"execution_queue_definer_role";
-ALTER FUNCTION enrollment_execution.defer_claim(uuid,uuid,uuid,text) OWNER TO :"execution_queue_definer_role";
-ALTER FUNCTION enrollment_execution.complete_claim(uuid,uuid,uuid) OWNER TO :"execution_queue_definer_role";
-ALTER FUNCTION enrollment_execution.guard_work_queue() OWNER TO :"expected_table_owner_role";
-ALTER FUNCTION enrollment_execution.validate_work_queue() OWNER TO :"expected_table_owner_role";
-ALTER FUNCTION enrollment_execution.claim_next_work(uuid,uuid) OWNER TO :"expected_table_owner_role";
-ALTER FUNCTION enrollment_execution.defer_work_claim(uuid,uuid,uuid,text) OWNER TO :"expected_table_owner_role";
-ALTER FUNCTION enrollment_execution.complete_work_claim(uuid,uuid,uuid) OWNER TO :"expected_table_owner_role";
 \ir enrollment-execution-profile.sql
 GRANT USAGE ON SCHEMA enrollment_execution TO :"execution_definer_role";
 GRANT EXECUTE ON FUNCTION enrollment_execution.read_record(uuid,uuid),enrollment_execution.authorization_digest(public."EnrollmentGrantOperations",smallint,timestamptz,timestamptz,bytea,bytea,bytea),
@@ -194,29 +140,15 @@ GRANT SELECT("EnvironmentId","TagId","ObjectId") ON public."DeviceTagAssignments
 GRANT SELECT ON enrollment_execution.mint_permits,enrollment_execution.sealed_envelopes,enrollment_execution.issue_results,enrollment_execution.delivery_acks,enrollment_execution.execution_stops TO :"execution_definer_role";
 GRANT INSERT ON enrollment_execution.mint_permits,enrollment_execution.sealed_envelopes,enrollment_execution.issue_results,enrollment_execution.execution_stops TO :"execution_definer_role";
 GRANT DELETE ON enrollment_execution.sealed_envelopes TO :"execution_definer_role";
-GRANT USAGE ON SCHEMA enrollment_execution TO :"execution_queue_definer_role";
-GRANT EXECUTE ON FUNCTION public.has_environment_membership(uuid,uuid) TO :"execution_queue_definer_role";
-GRANT SELECT("LoginRole","Purpose","ContractVersion","EnvironmentId","PrincipalId") ON public."DirectoryDatabaseBindings" TO :"execution_queue_definer_role";
-GRANT SELECT("EnvironmentId","Id","QueuedAt") ON public."EnrollmentGrantOperations" TO :"execution_queue_definer_role";
-GRANT SELECT("EnvironmentId","Id","EventType","Version","Payload","CreatedAt","DeliveredAt","Attempts"),UPDATE("Attempts","DeliveredAt") ON public."Outbox" TO :"execution_queue_definer_role";
-GRANT SELECT,INSERT,UPDATE ON enrollment_execution.work_queue TO :"execution_queue_definer_role";
-GRANT SELECT,INSERT ON enrollment_execution.claim_leases TO :"execution_queue_definer_role";
-GRANT SELECT ON enrollment_execution.issue_results,enrollment_execution.execution_stops TO :"execution_queue_definer_role";
-GRANT EXECUTE ON FUNCTION enrollment_execution.claim_next_work(uuid,uuid),
- enrollment_execution.defer_work_claim(uuid,uuid,uuid,text),enrollment_execution.complete_work_claim(uuid,uuid,uuid),
- enrollment_execution.audit_execution_privileges(uuid) TO :"execution_queue_definer_role";
-REVOKE CREATE ON SCHEMA public,enrollment_execution FROM :"execution_queue_definer_role";
 \else
 DO $existing$
 DECLARE bad boolean;
 BEGIN
- IF enrollment_execution.execution_store_profile()<>3
+ IF enrollment_execution.execution_store_profile()<>2
   OR (SELECT role_oid FROM enrollment_execution.role_reservations WHERE role_name=current_setting('app.execution_install_definer')::name AND role_kind='Definer')
      IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname=current_setting('app.execution_install_definer'))
-  OR (SELECT role_oid FROM enrollment_execution.role_reservations WHERE role_name=current_setting('app.execution_install_queue_definer')::name AND role_kind='QueueDefiner')
-     IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname=current_setting('app.execution_install_queue_definer'))
   OR EXISTS(SELECT 1 FROM public."DirectoryDatabaseBindings" b CROSS JOIN LATERAL enrollment_execution.audit_execution_privileges(b."EnvironmentId") a
-     WHERE b."Purpose"='EnrollmentGrantExecution' AND (NOT a.is_valid OR a.diagnostic_code<>'None' OR a.profile_version<>3)) THEN
+     WHERE b."Purpose"='EnrollmentGrantExecution' AND (NOT a.is_valid OR a.diagnostic_code<>'None' OR a.profile_version<>2)) THEN
   RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Existing enrollment execution profile is invalid.'; END IF;
 END
 $existing$;
@@ -231,23 +163,20 @@ REVOKE CREATE ON SCHEMA public FROM :"execution_runtime_role",:"execution_define
 GRANT EXECUTE ON FUNCTION enrollment_execution.read_execution_record(uuid,uuid),enrollment_execution.read_and_lock_plan_context(uuid,uuid),
  enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea),
  enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea),
- enrollment_execution.quarantine_execution(uuid,uuid,bytea,text),
- enrollment_execution.claim_next(uuid,uuid),enrollment_execution.defer_claim(uuid,uuid,uuid,text),
- enrollment_execution.complete_claim(uuid,uuid,uuid),enrollment_execution.audit_execution_privileges(uuid) TO :"execution_runtime_role";
+ enrollment_execution.quarantine_execution(uuid,uuid,bytea,text),enrollment_execution.audit_execution_privileges(uuid) TO :"execution_runtime_role";
 GRANT EXECUTE ON FUNCTION enrollment_execution.audit_execution_privileges(uuid) TO :"execution_definer_role";
 \if :profile_absent
 -- Marker is the final mutation of the one-time profile installation.
 CREATE FUNCTION enrollment_execution.execution_store_profile() RETURNS smallint LANGUAGE sql IMMUTABLE PARALLEL SAFE SECURITY INVOKER
- SET search_path=pg_catalog,pg_temp AS 'SELECT 3::smallint';
+ SET search_path=pg_catalog,pg_temp AS 'SELECT 2::smallint';
 REVOKE ALL ON FUNCTION enrollment_execution.execution_store_profile() FROM PUBLIC;
 ALTER FUNCTION enrollment_execution.execution_store_profile() OWNER TO :"expected_table_owner_role";
 \endif
 DO $catalog_postflight$
-DECLARE owner_oid oid; definer_oid oid; queue_oid oid; audit_oid oid;
+DECLARE owner_oid oid; definer_oid oid; audit_oid oid;
 BEGIN
  SELECT oid INTO owner_oid FROM pg_catalog.pg_roles WHERE rolname=current_setting('app.execution_install_owner');
  SELECT oid INTO definer_oid FROM pg_catalog.pg_roles WHERE rolname=current_setting('app.execution_install_definer');
- SELECT oid INTO queue_oid FROM pg_catalog.pg_roles WHERE rolname=current_setting('app.execution_install_queue_definer');
  SELECT p.oid INTO audit_oid FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
   WHERE p.oid=pg_catalog.to_regprocedure('enrollment_execution.audit_execution_privileges(uuid)')
     AND p.proowner=owner_oid AND l.lanname='plpgsql' AND p.prosecdef AND p.provolatile='s' AND p.proparallel='u'
@@ -259,16 +188,16 @@ BEGIN
     AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
     AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
       pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
-      ='ec0ae2639db2b390471dd63fba05c7851a34112068e425d2d60066770fa16650';
+      ='8ed83a1a4736e9caab7c0a9c32ef8b2e53b48dbdcf184824a8436d3fc33d3da3';
  IF audit_oid IS NULL OR EXISTS(SELECT 1 FROM pg_catalog.aclexplode(
       COALESCE((SELECT proacl FROM pg_catalog.pg_proc WHERE oid=audit_oid),pg_catalog.acldefault('f',owner_oid))) acl
       WHERE acl.privilege_type<>'EXECUTE' OR acl.is_grantable OR acl.grantee=0
-         OR acl.grantee NOT IN(owner_oid,definer_oid,queue_oid)
+         OR acl.grantee NOT IN(owner_oid,definer_oid)
             AND acl.grantee NOT IN(SELECT role_oid FROM enrollment_execution.role_reservations WHERE role_kind='Runtime')) THEN
   RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Enrollment execution catalog postflight failed.';
  END IF;
 END
 $catalog_postflight$;
 DO $postflight$ DECLARE a record; BEGIN SELECT * INTO STRICT a FROM enrollment_execution.audit_execution_privileges(current_setting('app.execution_install_environment')::uuid);
- IF a.is_valid IS DISTINCT FROM TRUE OR a.diagnostic_code<>'None' OR a.profile_version<>3 THEN RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Enrollment execution profile postflight failed.'; END IF; END $postflight$;
+ IF a.is_valid IS DISTINCT FROM TRUE OR a.diagnostic_code<>'None' OR a.profile_version<>2 THEN RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Enrollment execution profile postflight failed.'; END IF; END $postflight$;
 COMMIT;

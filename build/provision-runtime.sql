@@ -199,11 +199,14 @@ actual_reservation_acl AS (
     SELECT COALESCE(
       (SELECT count(*)=1 AND bool_and(lanname='sql' AND NOT prosecdef AND provolatile='i' AND proparallel='s'
         AND proowner=(SELECT relowner FROM reservation) AND proconfig=ARRAY['search_path=pg_catalog, pg_temp']
-        AND btrim(prosrc,E' \t\r\n')='SELECT 2::smallint') FROM execution_marker)
+        AND btrim(prosrc,E' \t\r\n') IN('SELECT 2::smallint','SELECT 3::smallint')) FROM execution_marker)
       AND (SELECT count(*)=1 AND bool_and(lanname='plpgsql' AND prosecdef AND provolatile='s' AND proparallel='u'
         AND proowner=(SELECT relowner FROM reservation) AND proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
         AND encode(sha256(convert_to(btrim(regexp_replace(prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
-          ='8ed83a1a4736e9caab7c0a9c32ef8b2e53b48dbdcf184824a8436d3fc33d3da3') FROM execution_audit)
+          =CASE (SELECT btrim(prosrc,E' \t\r\n') FROM execution_marker)
+             WHEN 'SELECT 2::smallint' THEN '8ed83a1a4736e9caab7c0a9c32ef8b2e53b48dbdcf184824a8436d3fc33d3da3'
+             WHEN 'SELECT 3::smallint' THEN 'ec0ae2639db2b390471dd63fba05c7851a34112068e425d2d60066770fa16650'
+             ELSE '' END) FROM execution_audit)
       AND (SELECT count(*)=1 AND bool_and(NOT rolcanlogin AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreatedb
         AND NOT rolcreaterole AND NOT rolinherit AND NOT rolreplication) FROM execution_definer),false) installed
 ), reject_function AS (

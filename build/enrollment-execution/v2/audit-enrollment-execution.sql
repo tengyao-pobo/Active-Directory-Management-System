@@ -17,9 +17,6 @@ WITH identities AS (
   pg_catalog.to_regprocedure('enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea)'),
   pg_catalog.to_regprocedure('enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'),
   pg_catalog.to_regprocedure('enrollment_execution.quarantine_execution(uuid,uuid,bytea,text)'))
-), queue_definer AS (
- SELECT role.* FROM pg_catalog.pg_proc wrapper JOIN pg_catalog.pg_roles role ON role.oid=wrapper.proowner
- WHERE wrapper.oid=pg_catalog.to_regprocedure('enrollment_execution.claim_next(uuid,uuid)')
 ), verified AS (
  SELECT COALESCE(
   :'execution_runtime_role'=SESSION_USER AND :'expected_environment_id'::uuid<>'00000000-0000-0000-0000-000000000000'::uuid
@@ -41,19 +38,16 @@ WITH identities AS (
       AND f.proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
       AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
           pg_catalog.btrim(pg_catalog.regexp_replace(f.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
-          ='ec0ae2639db2b390471dd63fba05c7851a34112068e425d2d60066770fa16650') FROM audit_function f)
+          ='8ed83a1a4736e9caab7c0a9c32ef8b2e53b48dbdcf184824a8436d3fc33d3da3') FROM audit_function f)
   AND (SELECT count(*)=1 AND bool_and(m.proowner=i.owner_oid AND m.lanname='sql' AND NOT m.prosecdef
       AND m.provolatile='i' AND m.proparallel='s' AND NOT m.proretset AND m.prorettype='smallint'::regtype
       AND m.pronargs=0 AND m.proconfig=ARRAY['search_path=pg_catalog, pg_temp']
-      AND pg_catalog.btrim(m.prosrc,E' \t\r\n')='SELECT 3::smallint') FROM marker m)
+      AND pg_catalog.btrim(m.prosrc,E' \t\r\n')='SELECT 2::smallint') FROM marker m)
   AND (SELECT count(*)=5 AND bool_and(w.proowner=i.definer_oid) FROM wrappers w)
-  AND (SELECT count(*)=1 AND bool_and(NOT rolcanlogin AND NOT rolsuper AND NOT rolbypassrls
-      AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolinherit AND NOT rolreplication)
-      FROM queue_definer)
   AND NOT EXISTS(SELECT 1 FROM audit_function f
       CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(f.proacl,pg_catalog.acldefault('f',f.proowner))) acl
       WHERE acl.privilege_type<>'EXECUTE' OR acl.is_grantable OR acl.grantee=0
-         OR acl.grantee NOT IN(i.owner_oid,i.definer_oid,i.runtime_oid,(SELECT oid FROM queue_definer))
+         OR acl.grantee NOT IN(i.owner_oid,i.definer_oid,i.runtime_oid)
             AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_roles role WHERE role.oid=acl.grantee
                 AND role.rolcanlogin AND NOT role.rolsuper AND NOT role.rolbypassrls
                 AND NOT role.rolcreatedb AND NOT role.rolcreaterole AND NOT role.rolinherit AND NOT role.rolreplication))
