@@ -1,4 +1,5 @@
 -- Staged catalog-only profile4 binding structure; not an activation gate.
+-- Shared source embedded into the draft profile by update-enrollment-delivery-catalog-slices.ps1.
 -- The enclosing profile separately attests role/binding rows, ACLs and helper bodies.
 -- Run under the deployment lock with search_path=pg_catalog,pg_temp.
 WITH target AS (

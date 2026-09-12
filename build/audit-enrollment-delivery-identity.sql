@@ -1,5 +1,6 @@
 -- Staged catalog-only identity slice, not a complete profile4 attestation.
 -- Execute inside the profile-locked transaction with search_path=pg_catalog,pg_temp.
+-- Shared source embedded into the draft profile by update-enrollment-delivery-catalog-slices.ps1.
 -- The enclosing profile must separately attest bindings, role inventories and table ACLs.
 WITH identities AS (
   SELECT owner_role.oid owner_oid,plan_role.oid plan_oid,execution_role.oid execution_oid,delivery_role.oid delivery_oid
