@@ -14,6 +14,8 @@ public sealed class PostgresApiFixture : IAsyncLifetime
 
     public ApiFactory Factory { get; private set; } = null!;
     public bool UsesRuntimeRole => true;
+    public string PlanLockOwner { get; } = Environment.GetEnvironmentVariable("CONSOLE_TEST_PLAN_LOCK_OWNER")
+        ?? "console_enrollment_plan_locker";
 
     public async Task InitializeAsync()
     {
@@ -31,7 +33,7 @@ public sealed class PostgresApiFixture : IAsyncLifetime
         var runtime = new Npgsql.NpgsqlConnectionStringBuilder(_runtimeConnectionString);
         if (!string.Equals(owner.Database, runtime.Database, StringComparison.Ordinal) || string.IsNullOrWhiteSpace(runtime.Username))
             throw new InvalidOperationException("The integration runtime connection must target the owner database with a named role.");
-        var lockOwner = Environment.GetEnvironmentVariable("CONSOLE_TEST_PLAN_LOCK_OWNER") ?? "console_enrollment_plan_locker";
+        var lockOwner = PlanLockOwner;
         if (!System.Text.RegularExpressions.Regex.IsMatch(lockOwner, "^[a-z_][a-z0-9_]{0,62}$"))
             throw new InvalidOperationException("Invalid plan lock owner test role.");
         var createLockOwnerSql = $"""

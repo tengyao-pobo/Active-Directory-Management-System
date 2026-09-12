@@ -23,6 +23,21 @@ public sealed partial class EnrollmentGrantPlanTests
     [InlineData("definer-login")]
     [InlineData("definer-membership")]
     [InlineData("search-path")]
+    [InlineData("plan-helper-body")]
+    [InlineData("plan-helper-config")]
+    [InlineData("plan-helper-support")]
+    [InlineData("plan-extra-function")]
+    [InlineData("plan-public-execute")]
+    [InlineData("plan-extra-execute")]
+    [InlineData("plan-grant-option")]
+    [InlineData("plan-extra-table")]
+    [InlineData("plan-column")]
+    [InlineData("plan-public-table")]
+    [InlineData("plan-missing-function")]
+    [InlineData("plan-missing-schema")]
+    [InlineData("api-directory-update")]
+    [InlineData("api-directory-column")]
+    [InlineData("api-extra-schema")]
     public async Task DeliveryIdentityCatalogRejectsPolicyAndHelperDrift(string fault)
     {
         await using var connection = new NpgsqlConnection(Environment.GetEnvironmentVariable("CONSOLE_TEST_DB")!);
@@ -30,10 +45,11 @@ public sealed partial class EnrollmentGrantPlanTests
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable);
         var owner = new NpgsqlConnectionStringBuilder(connection.ConnectionString).Username!;
         var suffix = Guid.NewGuid().ToString("N");
-        var plan = "id_plan_" + suffix;
+        var plan = _fixture.PlanLockOwner;
         var execution = "id_exec_" + suffix;
         var delivery = "id_delivery_" + suffix;
         var extra = "id_extra_" + suffix;
+        var api = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CONSOLE_TEST_RUNTIME_DB")!).Username!;
         async Task Execute(string sql)
         {
             await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -45,11 +61,11 @@ public sealed partial class EnrollmentGrantPlanTests
             .Replace(":\"execution_definer_role\"", QuoteIdentifier(execution), StringComparison.Ordinal)
             .Replace(":\"delivery_definer_role\"", QuoteIdentifier(delivery), StringComparison.Ordinal);
         await Execute($"""
-            CREATE ROLE "{plan}" NOLOGIN NOINHERIT;
             CREATE ROLE "{execution}" NOLOGIN NOINHERIT;
             CREATE ROLE "{delivery}" NOLOGIN NOINHERIT;
             CREATE ROLE "{extra}" NOLOGIN NOINHERIT;
             SET LOCAL search_path=pg_catalog,pg_temp;
+            ALTER FUNCTION public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[]) OWNER TO "{plan}";
             """);
         var profile = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-delivery-profile.sql"));
         var start = profile.IndexOf("CREATE FUNCTION enrollment_execution.reject_delivery_update()", StringComparison.Ordinal);
@@ -98,6 +114,21 @@ public sealed partial class EnrollmentGrantPlanTests
             "definer-login" => $"ALTER ROLE \"{execution}\" LOGIN",
             "definer-membership" => $"GRANT \"{extra}\" TO \"{execution}\"",
             "search-path" => "SET LOCAL search_path=public,pg_catalog",
+            "plan-helper-body" => "CREATE OR REPLACE FUNCTION public.lock_enrollment_grant_plan_context(p_environment_id uuid,p_directory_object_id uuid,p_principal_ids uuid[]) RETURNS void LANGUAGE plpgsql SECURITY DEFINER VOLATILE PARALLEL UNSAFE SET search_path=pg_catalog,pg_temp AS 'BEGIN RETURN; END'",
+            "plan-helper-config" => "ALTER FUNCTION public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[]) SET row_security=off",
+            "plan-helper-support" => "ALTER FUNCTION public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[]) SUPPORT pg_catalog.textlike_support",
+            "plan-extra-function" => $"CREATE FUNCTION public.unexpected_plan_function() RETURNS boolean LANGUAGE sql SECURITY DEFINER AS 'SELECT true'; ALTER FUNCTION public.unexpected_plan_function() OWNER TO \"{plan}\"",
+            "plan-public-execute" => "GRANT EXECUTE ON FUNCTION public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[]) TO PUBLIC",
+            "plan-extra-execute" => $"GRANT EXECUTE ON FUNCTION public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[]) TO \"{extra}\"",
+            "plan-grant-option" => $"GRANT EXECUTE ON FUNCTION public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[]) TO {QuoteIdentifier(api)} WITH GRANT OPTION",
+            "plan-extra-table" => $"GRANT SELECT ON public.\"Sessions\" TO \"{plan}\"",
+            "plan-column" => $"GRANT SELECT(\"Id\") ON public.\"Principals\" TO \"{plan}\"",
+            "plan-public-table" => "GRANT SELECT ON public.\"Sessions\" TO PUBLIC",
+            "plan-missing-function" => $"REVOKE EXECUTE ON FUNCTION public.has_environment_membership(uuid,uuid) FROM \"{plan}\"",
+            "plan-missing-schema" => $"REVOKE USAGE ON SCHEMA public FROM \"{plan}\"",
+            "api-directory-update" => $"GRANT UPDATE ON public.\"DirectoryObjects\" TO {QuoteIdentifier(api)}",
+            "api-directory-column" => $"GRANT UPDATE(\"Status\") ON public.\"DirectorySync\" TO {QuoteIdentifier(api)}",
+            "api-extra-schema" => $"GRANT USAGE ON SCHEMA enrollment_execution TO {QuoteIdentifier(api)}",
             _ => throw new ArgumentOutOfRangeException(nameof(fault))
         });
         Assert.Equal(fault == "none", await Valid());

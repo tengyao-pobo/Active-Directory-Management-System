@@ -9,6 +9,24 @@ public sealed partial class EnrollmentGrantPlanTests
     private const string DeliveryCatalogEnd = "    -- END generated delivery catalog slices";
 
     [Fact]
+    public void DeliveryFixtureSnapshotsDefaultAndConfiguredPlanLockOwners()
+    {
+        const string key = "CONSOLE_TEST_PLAN_LOCK_OWNER";
+        var previous = Environment.GetEnvironmentVariable(key);
+        try
+        {
+            Environment.SetEnvironmentVariable(key, null);
+            // Construction only snapshots settings; no database or host is initialized.
+            var defaults = new PostgresApiFixture();
+            Assert.Equal("console_enrollment_plan_locker", defaults.PlanLockOwner);
+            Environment.SetEnvironmentVariable(key, "configured_plan_locker_probe");
+            Assert.Equal("console_enrollment_plan_locker", defaults.PlanLockOwner);
+            Assert.Equal("configured_plan_locker_probe", new PostgresApiFixture().PlanLockOwner);
+        }
+        finally { Environment.SetEnvironmentVariable(key, previous); }
+    }
+
+    [Fact]
     public async Task DeliveryGeneratedCatalogSlicesMatchSources()
     {
         var parts = new List<string>();
@@ -36,13 +54,18 @@ public sealed partial class EnrollmentGrantPlanTests
     [InlineData("identity")]
     [InlineData("plan-owner")]
     [InlineData("missing-plan-helper")]
+    [InlineData("duplicate-api")]
+    [InlineData("missing-api")]
+    [InlineData("wrong-api-grantee")]
+    [InlineData("bound-plan")]
     public async Task DeliveryCatalogCompositionRequiresBothStructures(string fault)
     {
+        var boundEnvironment = fault == "bound-plan" ? (await _fixture.SeedAsync()).Environment.Id : Guid.Empty;
         await using var connection = new NpgsqlConnection(Environment.GetEnvironmentVariable("CONSOLE_TEST_DB")!);
         await connection.OpenAsync();
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable);
         var owner = new NpgsqlConnectionStringBuilder(connection.ConnectionString).Username!;
-        var plan = Environment.GetEnvironmentVariable("CONSOLE_TEST_PLAN_LOCK_OWNER")!;
+        var plan = _fixture.PlanLockOwner;
         var execution = "composed_execution_" + Guid.NewGuid().ToString("N");
         var delivery = "composed_delivery_" + Guid.NewGuid().ToString("N");
         async Task Execute(string sql)
@@ -69,7 +92,7 @@ public sealed partial class EnrollmentGrantPlanTests
         await Execute(Configure(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-delivery-identity.sql"))));
         var profile = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-execution-profile.sql"));
         start = profile.IndexOf(DeliveryCatalogBegin, StringComparison.Ordinal);
-        end = profile.IndexOf(DeliveryCatalogEnd, StringComparison.Ordinal);
+        end = profile.IndexOf("    -- END delivery API binding identity", StringComparison.Ordinal);
         Assert.True(start >= 0 && end > start);
         // Exact generated PL/pgSQL expressions, not a substitute implementation.
         // The complete profile still must pin the plan helper and all remaining authority.
@@ -95,6 +118,10 @@ public sealed partial class EnrollmentGrantPlanTests
             "identity" => "ALTER TABLE public.\"Sessions\" NO FORCE ROW LEVEL SECURITY",
             "plan-owner" => $"ALTER FUNCTION public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[]) OWNER TO {QuoteIdentifier(execution)}",
             "missing-plan-helper" => "DROP FUNCTION public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[]) CASCADE",
+            "duplicate-api" => $"INSERT INTO public.\"DirectoryDatabaseBindings\"(\"LoginRole\",\"Purpose\") VALUES('{execution}','Api')",
+            "missing-api" => "DELETE FROM public.\"DirectoryDatabaseBindings\" WHERE \"Purpose\"='Api'",
+            "wrong-api-grantee" => $"UPDATE public.\"DirectoryDatabaseBindings\" SET \"LoginRole\"='{execution}' WHERE \"Purpose\"='Api'",
+            "bound-plan" => $"INSERT INTO public.\"DirectoryDatabaseBindings\"(\"LoginRole\",\"Purpose\",\"ContractVersion\",\"EnvironmentId\") VALUES('{plan}','EnrollmentGrantExecution',2,'{boundEnvironment}')",
             _ => throw new ArgumentOutOfRangeException(nameof(fault))
         });
         Assert.Equal(fault == "none", await Valid());

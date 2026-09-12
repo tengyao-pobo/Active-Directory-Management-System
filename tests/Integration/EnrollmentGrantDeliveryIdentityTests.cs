@@ -106,7 +106,7 @@ public sealed partial class EnrollmentGrantPlanTests
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable);
         var owner = new NpgsqlConnectionStringBuilder(connection.ConnectionString).Username!;
         var api = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CONSOLE_TEST_RUNTIME_DB")!).Username!;
-        var planLocker = Environment.GetEnvironmentVariable("CONSOLE_TEST_PLAN_LOCK_OWNER")!;
+        var planLocker = _fixture.PlanLockOwner;
         var suffix = Guid.NewGuid().ToString("N");
         var executor = "identity_exec_" + suffix;
         var unrelated = "identity_other_" + suffix;
