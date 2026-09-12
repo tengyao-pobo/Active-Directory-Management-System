@@ -81,7 +81,7 @@ execution_profile AS (SELECT COALESCE((SELECT count(*)=1 AND bool_and(l.lanname=
      =CASE (SELECT pg_catalog.btrim(marker.prosrc,E' \t\r\n') FROM pg_catalog.pg_proc marker
               WHERE marker.pronamespace=(SELECT oid FROM pg_catalog.pg_namespace WHERE nspname='enrollment_execution') AND marker.proname='execution_store_profile' AND marker.pronargs=0)
         WHEN 'SELECT 2::smallint' THEN '8ed83a1a4736e9caab7c0a9c32ef8b2e53b48dbdcf184824a8436d3fc33d3da3'
-        WHEN 'SELECT 3::smallint' THEN 'ec0ae2639db2b390471dd63fba05c7851a34112068e425d2d60066770fa16650'
+        WHEN 'SELECT 3::smallint' THEN 'b25732a9b6d2e524f4263ff4826ece6625420ca522d28f3b0aeb9fe3f1df4f80'
         ELSE '' END)
   FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
   JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace

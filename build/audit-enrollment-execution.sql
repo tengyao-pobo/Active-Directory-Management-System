@@ -41,7 +41,7 @@ WITH identities AS (
       AND f.proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
       AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
           pg_catalog.btrim(pg_catalog.regexp_replace(f.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
-          ='ec0ae2639db2b390471dd63fba05c7851a34112068e425d2d60066770fa16650') FROM audit_function f)
+          ='b25732a9b6d2e524f4263ff4826ece6625420ca522d28f3b0aeb9fe3f1df4f80') FROM audit_function f)
   AND (SELECT count(*)=1 AND bool_and(m.proowner=i.owner_oid AND m.lanname='sql' AND NOT m.prosecdef
       AND m.provolatile='i' AND m.proparallel='s' AND NOT m.proretset AND m.prorettype='smallint'::regtype
       AND m.pronargs=0 AND m.proconfig=ARRAY['search_path=pg_catalog, pg_temp']

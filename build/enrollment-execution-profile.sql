@@ -633,12 +633,12 @@ BEGIN
              AND a.attnum>0 AND NOT a.attisdropped)
           ='claim_token:uuid:true,environment_id:uuid:true,operation_id:uuid:true,attempt:integer:true,claimed_at:timestamp with time zone:true,lease_until:timestamp with time zone:true'
       AND (SELECT count(*)=6 AND pg_catalog.md5(pg_catalog.string_agg(
-             pg_catalog.pg_get_constraintdef(k.oid,true),'|' ORDER BY pg_catalog.pg_get_constraintdef(k.oid,true)))
+             pg_catalog.pg_get_constraintdef(k.oid,true),'|' ORDER BY pg_catalog.pg_get_constraintdef(k.oid,true) COLLATE "C"))
              ='a42221f3aae7fd575b78fc30e8fae6e0'
            FROM pg_catalog.pg_constraint k WHERE k.conrelid='enrollment_execution.claim_leases'::regclass
              AND k.contype IN('p','u','f','c') AND k.convalidated)
       AND (SELECT count(*)=8 AND pg_catalog.md5(pg_catalog.string_agg(
-             pg_catalog.pg_get_constraintdef(k.oid,true),'|' ORDER BY pg_catalog.pg_get_constraintdef(k.oid,true)))
+             pg_catalog.pg_get_constraintdef(k.oid,true),'|' ORDER BY pg_catalog.pg_get_constraintdef(k.oid,true) COLLATE "C"))
              ='447fd57a3088d4e09acf78470ff0c59b'
            FROM pg_catalog.pg_constraint k WHERE k.conrelid='enrollment_execution.work_queue'::regclass
              AND k.contype IN('p','u','f','c') AND k.convalidated)

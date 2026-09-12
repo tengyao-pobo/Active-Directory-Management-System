@@ -128,7 +128,7 @@ public static partial class EnrollmentGrantPlanApi
                     AND encode(sha256(convert_to(btrim(regexp_replace(prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
                       =CASE (SELECT btrim(prosrc,E' \t\r\n') FROM execution_marker)
                          WHEN 'SELECT 2::smallint' THEN '8ed83a1a4736e9caab7c0a9c32ef8b2e53b48dbdcf184824a8436d3fc33d3da3'
-                         WHEN 'SELECT 3::smallint' THEN 'ec0ae2639db2b390471dd63fba05c7851a34112068e425d2d60066770fa16650'
+                         WHEN 'SELECT 3::smallint' THEN 'b25732a9b6d2e524f4263ff4826ece6625420ca522d28f3b0aeb9fe3f1df4f80'
                          ELSE '' END) FROM execution_audit)
                   AND (SELECT count(*)=1 AND bool_and(NOT rolcanlogin AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreatedb
                     AND NOT rolcreaterole AND NOT rolinherit AND NOT rolreplication) FROM execution_definer),false) installed

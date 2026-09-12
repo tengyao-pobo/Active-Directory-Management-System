@@ -10,8 +10,10 @@ namespace ItManagement.IntegrationTests;
 [Collection(nameof(PostgresApiCollection))]
 public sealed class EnrollmentGrantExecutionQueueUpgradeTests
 {
-    [Fact]
-    public async Task V2UpgradePreservesBindingsRejectsUnsafeOwnerAndDoesNotAllowOldInstallerRollback()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task V2UpgradePreservesBindingsRejectsUnsafeOwnerAndDoesNotAllowOldInstallerRollback(bool useCanonicalCollation)
     {
         var owner = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CONSOLE_TEST_DB")!);
         Assert.Contains(owner.Host, new[] { "localhost", "127.0.0.1", "::1" });
@@ -31,7 +33,8 @@ public sealed class EnrollmentGrantExecutionQueueUpgradeTests
         await using (var connection = new NpgsqlConnection(admin.ConnectionString))
         {
             await connection.OpenAsync(deadline.Token);
-            await using var create = new NpgsqlCommand($"CREATE DATABASE {database}", connection);
+            var createSql = $"CREATE DATABASE {database}" + (useCanonicalCollation ? " TEMPLATE template0 LC_COLLATE 'C' LC_CTYPE 'C'" : "");
+            await using var create = new NpgsqlCommand(createSql, connection);
             await create.ExecuteNonQueryAsync(deadline.Token);
             cleanup.DatabaseCreated = true;
         }

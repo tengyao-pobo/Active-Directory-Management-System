@@ -86,7 +86,7 @@ BEGIN
      AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
      AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
        pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
-       ='ec0ae2639db2b390471dd63fba05c7851a34112068e425d2d60066770fa16650';
+       ='b25732a9b6d2e524f4263ff4826ece6625420ca522d28f3b0aeb9fe3f1df4f80';
   IF audit_oid IS NULL OR EXISTS(SELECT 1 FROM pg_catalog.aclexplode(
        COALESCE((SELECT proacl FROM pg_catalog.pg_proc WHERE oid=audit_oid),pg_catalog.acldefault('f',owner_oid))) acl
        WHERE acl.privilege_type<>'EXECUTE' OR acl.is_grantable OR acl.grantee=0
@@ -259,7 +259,7 @@ BEGIN
     AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
     AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
       pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
-      ='ec0ae2639db2b390471dd63fba05c7851a34112068e425d2d60066770fa16650';
+      ='b25732a9b6d2e524f4263ff4826ece6625420ca522d28f3b0aeb9fe3f1df4f80';
  IF audit_oid IS NULL OR EXISTS(SELECT 1 FROM pg_catalog.aclexplode(
       COALESCE((SELECT proacl FROM pg_catalog.pg_proc WHERE oid=audit_oid),pg_catalog.acldefault('f',owner_oid))) acl
       WHERE acl.privilege_type<>'EXECUTE' OR acl.is_grantable OR acl.grantee=0
@@ -270,13 +270,19 @@ BEGIN
 END
 $catalog_postflight$;
 DO $postflight$ DECLARE a record; BEGIN SELECT * INTO STRICT a FROM enrollment_execution.audit_execution_privileges(current_setting('app.execution_install_environment')::uuid);
- IF a.is_valid IS DISTINCT FROM TRUE OR a.diagnostic_code<>'None' OR a.profile_version<>3 THEN RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Enrollment execution profile postflight failed.',DETAIL=(SELECT pg_catalog.jsonb_build_object(
+ IF a.is_valid IS DISTINCT FROM TRUE OR a.diagnostic_code<>'None' OR a.profile_version<>3 THEN PERFORM pg_catalog.set_config('search_path','pg_catalog,pg_temp',true); RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Enrollment execution profile postflight failed.',DETAIL=(SELECT pg_catalog.jsonb_build_object(
  'function_sha256',(SELECT pg_catalog.jsonb_object_agg(p.proname,
    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.btrim(
      pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex'))
    FROM pg_catalog.pg_proc p WHERE p.pronamespace='enrollment_execution'::regnamespace
      AND p.proname IN('guard_work_queue','validate_work_queue','claim_next_work','defer_work_claim',
        'complete_work_claim','queue_worker_scope','claim_next','defer_claim','complete_claim')),
+ 'constraint_md5',(SELECT pg_catalog.jsonb_object_agg(c.relname,x.hashes)
+   FROM pg_catalog.pg_class c CROSS JOIN LATERAL (
+     SELECT pg_catalog.jsonb_build_object('default',pg_catalog.md5(pg_catalog.string_agg(pg_catalog.pg_get_constraintdef(k.oid,true),'|' ORDER BY pg_catalog.pg_get_constraintdef(k.oid,true))),
+       'canonical',pg_catalog.md5(pg_catalog.string_agg(pg_catalog.pg_get_constraintdef(k.oid,true),'|' ORDER BY pg_catalog.pg_get_constraintdef(k.oid,true) COLLATE "C"))) hashes
+     FROM pg_catalog.pg_constraint k WHERE k.conrelid=c.oid AND k.contype IN('p','u','f','c') AND k.convalidated) x
+   WHERE c.oid IN('enrollment_execution.work_queue'::regclass,'enrollment_execution.claim_leases'::regclass)),
  'constraints',(SELECT pg_catalog.jsonb_object_agg(c.relname,x.definitions)
    FROM pg_catalog.pg_class c CROSS JOIN LATERAL (
      SELECT pg_catalog.jsonb_agg(pg_catalog.pg_get_constraintdef(k.oid,true)
