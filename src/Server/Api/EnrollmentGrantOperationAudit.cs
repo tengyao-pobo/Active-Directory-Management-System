@@ -1,6 +1,5 @@
 using ItManagement.Persistence;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 
 namespace ItManagement.Api;
 
@@ -8,11 +7,9 @@ internal static class EnrollmentGrantOperationAudit
 {
     private static readonly string Query = LoadQuery();
 
-    public static async Task<bool> IsValidAsync(ConsoleDbContext db, CancellationToken cancellationToken)
-    {
-        try { return await db.Database.SqlQueryRaw<int>(Query).SingleAsync(cancellationToken) == 1; }
-        catch (NpgsqlException) when (!cancellationToken.IsCancellationRequested) { return false; }
-    }
+    public static Task<bool> IsValidAsync(ConsoleDbContext db, CancellationToken cancellationToken) =>
+        CatalogAuditScope.RunAsync(db, CatalogAuditPath.Legacy,
+            async (auditDb, token) => await auditDb.Database.SqlQueryRaw<int>(Query).SingleAsync(token) == 1, cancellationToken);
 
     private static string LoadQuery()
     {

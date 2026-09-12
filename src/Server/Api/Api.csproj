@@ -9,6 +9,7 @@
     <PackageReference Include="Fido2" Version="4.0.1" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Integration" />
     <EmbeddedResource Include="../../../build/audit-enrollment-grant-operations.sql" LogicalName="EnrollmentGrantOperationsAudit.sql" />
   </ItemGroup>
 </Project>
