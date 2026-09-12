@@ -13,8 +13,10 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         await Execute(owner, await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-profile4-readiness.sql"), cancellationToken));
+        await VerifyReadinessStructureAsync(owner, cancellationToken);
         var readySource = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-profile4-ready.sql"), cancellationToken);
         await Execute(owner, readySource);
+        await VerifyReadinessFunctionsAsync(owner, cancellationToken);
         var manifest = System.Text.RegularExpressions.Regex.Match(readySource, "expected_manifest constant bytea := decode\\('([0-9a-f]{64})','hex'\\);").Groups[1].Value;
         Assert.Equal(64, manifest.Length);
         async Task IsReady(bool expected)
