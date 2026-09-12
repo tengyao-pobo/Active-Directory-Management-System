@@ -11,7 +11,8 @@ $replacements = [ordered]@{
 }
 $groups = @(
     @{ Name='delivery catalog slices'; Files=@('audit-enrollment-delivery-bindings.sql','audit-enrollment-delivery-identity.sql','audit-owner-mapping-guard.sql') },
-    @{ Name='delivery definer catalog'; Files=@('audit-enrollment-delivery-definer.sql') }
+    @{ Name='delivery definer catalog'; Files=@('audit-enrollment-delivery-definer.sql') },
+    @{ Name='delivery status structure catalog'; Files=@('audit-enrollment-delivery-status.sql') }
 )
 foreach ($group in $groups) {
     $begin = '    -- BEGIN generated ' + $group.Name
