@@ -12,6 +12,22 @@ public sealed partial class EnrollmentGrantPlanTests
     [InlineData("public-acl")]
     [InlineData("policy")]
     [InlineData("trigger")]
+    [InlineData("anchor-plan")]
+    [InlineData("anchor-child")]
+    [InlineData("anchor-approval")]
+    [InlineData("anchor-operation")]
+    [InlineData("anchor-outbox")]
+    [InlineData("anchor-plan-deferred")]
+    [InlineData("anchor-operation-deferred")]
+    [InlineData("anchor-outbox-deferred")]
+    [InlineData("anchor-function-acl")]
+    [InlineData("anchor-function-profile")]
+    [InlineData("anchor-extra-plan")]
+    [InlineData("anchor-extra-child")]
+    [InlineData("anchor-extra-approval")]
+    [InlineData("anchor-extra-outbox")]
+    [InlineData("anchor-truncate")]
+    [InlineData("anchor-trigger-privilege")]
     [InlineData("constraint")]
     [InlineData("foreign-key")]
     [InlineData("unique-index")]
@@ -26,6 +42,26 @@ public sealed partial class EnrollmentGrantPlanTests
         var runtime = QuoteIdentifier(new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CONSOLE_TEST_RUNTIME_DB")).Username!);
         var (apply, restore) = drift switch
         {
+            "anchor-plan" => TriggerDrift("Plans", "enrollment_grant_queued_plan_immutable"),
+            "anchor-extra-plan" => ExtraTriggerDrift("Plans"),
+            "anchor-extra-child" => ExtraTriggerDrift("PlanItems"),
+            "anchor-extra-approval" => ExtraTriggerDrift("Approvals"),
+            "anchor-extra-outbox" => ExtraTriggerDrift("Outbox"),
+            "anchor-truncate" => ($"GRANT TRUNCATE ON public.\"PlanItems\" TO {runtime}",
+                $"REVOKE TRUNCATE ON public.\"PlanItems\" FROM {runtime}"),
+            "anchor-trigger-privilege" => ($"GRANT TRIGGER ON public.\"Outbox\" TO {runtime}",
+                $"REVOKE TRIGGER ON public.\"Outbox\" FROM {runtime}"),
+            "anchor-child" => TriggerDrift("PlanItems", "enrollment_grant_plan_items_anchor"),
+            "anchor-approval" => TriggerDrift("Approvals", "enrollment_grant_approvals_anchor"),
+            "anchor-operation" => TriggerDrift("EnrollmentGrantOperations", "enrollment_grant_operation_parent"),
+            "anchor-outbox" => TriggerDrift("Outbox", "enrollment_grant_outbox_anchor"),
+            "anchor-plan-deferred" => TriggerDrift("Plans", "enrollment_grant_plan_anchor_consistent"),
+            "anchor-operation-deferred" => TriggerDrift("EnrollmentGrantOperations", "enrollment_grant_operation_anchor_consistent"),
+            "anchor-outbox-deferred" => TriggerDrift("Outbox", "enrollment_grant_outbox_anchor_consistent"),
+            "anchor-function-acl" => ("GRANT EXECUTE ON FUNCTION public.guard_enrollment_grant_operation_parent() TO PUBLIC",
+                "REVOKE EXECUTE ON FUNCTION public.guard_enrollment_grant_operation_parent() FROM PUBLIC"),
+            "anchor-function-profile" => ("ALTER FUNCTION public.guard_enrollment_grant_operation_parent() IMMUTABLE",
+                "ALTER FUNCTION public.guard_enrollment_grant_operation_parent() VOLATILE"),
             "table-acl" => ($"GRANT UPDATE ON public.\"EnrollmentGrantOperations\" TO {runtime}", $"REVOKE UPDATE ON public.\"EnrollmentGrantOperations\" FROM {runtime}"),
             "column-acl" => ($"GRANT UPDATE(\"QueuedAt\") ON public.\"EnrollmentGrantOperations\" TO {runtime}", $"REVOKE UPDATE(\"QueuedAt\") ON public.\"EnrollmentGrantOperations\" FROM {runtime}"),
             "public-acl" => ("GRANT SELECT ON public.\"EnrollmentGrantOperations\" TO PUBLIC", "REVOKE SELECT ON public.\"EnrollmentGrantOperations\" FROM PUBLIC"),
@@ -77,4 +113,12 @@ public sealed partial class EnrollmentGrantPlanTests
                     FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_namespace n ON n.oid=c.connamespace WHERE n.nspname='public'))) AS "Value"
             """).SingleAsync();
     }
+
+    private static (string Apply, string Restore) TriggerDrift(string table, string trigger) =>
+        ($"ALTER TABLE public.{QuoteIdentifier(table)} DISABLE TRIGGER {QuoteIdentifier(trigger)}",
+         $"ALTER TABLE public.{QuoteIdentifier(table)} ENABLE TRIGGER {QuoteIdentifier(trigger)}");
+
+    private static (string Apply, string Restore) ExtraTriggerDrift(string table) =>
+        ($"CREATE TRIGGER z_unexpected_anchor BEFORE UPDATE ON public.{QuoteIdentifier(table)} FOR EACH ROW EXECUTE FUNCTION public.reject_enrollment_grant_operation_mutation()",
+         $"DROP TRIGGER z_unexpected_anchor ON public.{QuoteIdentifier(table)}");
 }

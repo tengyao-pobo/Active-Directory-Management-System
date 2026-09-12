@@ -24,6 +24,12 @@ SELECT CASE WHEN btrim(:'runtime_role')<>'' AND btrim(:'enrollment_plan_lock_own
         AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.proowner=r.oid)
     ) THEN 1 ELSE 1/(pg_catalog.pg_backend_pid()-pg_catalog.pg_backend_pid()) END AS enrollment_plan_lock_owner_preflight;
 -- Existing identities and grants may be absent or within this exact capability; never repurpose another login.
+-- Anchor drift must fail before broad provisioning can remove the evidence.
+SELECT CASE WHEN NOT EXISTS(
+    SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_roles r ON r.rolname=:'runtime_role'
+    WHERE c.relnamespace='public'::regnamespace AND c.relname IN ('Plans','PlanItems','Approvals','Outbox')
+    AND (pg_catalog.has_table_privilege(r.oid,c.oid,'TRUNCATE') OR pg_catalog.has_table_privilege(r.oid,c.oid,'TRIGGER'))
+) THEN 1 ELSE 1/(pg_catalog.pg_backend_pid()-pg_catalog.pg_backend_pid()) END AS enrollment_anchor_privilege_preflight;
 WITH locker AS (SELECT oid FROM pg_roles WHERE rolname=:'enrollment_plan_lock_owner_role'),
 runtime AS (SELECT oid FROM pg_roles WHERE rolname=:'runtime_role'),
 allowed_tables(table_name,privilege_type) AS (VALUES
