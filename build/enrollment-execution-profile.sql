@@ -840,7 +840,7 @@ BEGIN
           ('enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)',delivery_definer,true,true,'v','f80126238164f65f17e8fb933b13799aa2fd6b45a1f3eb58a8f673014fcf5e3b'),
           ('enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)',delivery_definer,true,true,'v','99f68247c9d723dfa7755481005aa7104f93646f6095315ea8439db444668323'),
           ('enrollment_execution.reject_delivery_update()',table_owner,true,true,'v','279e969ccd38a161d13a2dad55009fd9e759ee9fd9e9b615dbb834ba4abfeb76'),
-          ('enrollment_execution.audit_delivery_privileges(uuid)',table_owner,true,true,'s','3bf777d8dc0d6b4643c7893912af7d6768acca388c8ded40b47a7350d088467a')),
+          ('enrollment_execution.audit_delivery_privileges(uuid)',table_owner,true,true,'s','a37b4693ed042c9d9f69555024c87cb5c40705cc60606bff14145b24480b1d9e')),
         actual AS (SELECT expected.*,function_row.oid,function_row.proowner,function_row.prosecdef,function_row.proisstrict,
             language_row.lanname,function_row.provolatile,function_row.proparallel,function_row.proconfig,
             pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.btrim(

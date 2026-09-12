@@ -30,6 +30,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         var delivery = "cdu_delivery_" + suffix;
         var statusRuntime = "cdu_status_" + suffix;
         var deliveryRuntime = "cdu_reader_" + suffix;
+        var otherWorker = "cdu_other_worker_" + suffix;
         var password = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         var admin = new NpgsqlConnectionStringBuilder(owner.ConnectionString) { Database = "postgres", Pooling = false };
@@ -49,7 +50,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await db.Database.OpenConnectionAsync(deadline.Token);
         // Every resource name/password is generated from fixed prefixes and hexadecimal bytes.
         var roles = new List<(string Name, bool Login)> { (api, true), (worker, true), (locker, false), (executor, false), (queue, false), (delivery, false) };
-        if (composition == 2) roles.AddRange([(statusRuntime, true), (deliveryRuntime, true)]);
+        if (composition == 2) roles.AddRange([(statusRuntime, true), (deliveryRuntime, true), (otherWorker, true)]);
         foreach (var (name, login) in roles)
         {
             var authentication = login ? "LOGIN PASSWORD '" + password + "'" : "NOLOGIN";
@@ -62,18 +63,34 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         var environment = new ManagedEnvironment { Id = Guid.NewGuid(), Name = "Synthetic delivery upgrade", CanonicalDns = "upgrade.example.test", DefaultLocale = "en-US", Version = 1 };
         db.Environments.Add(environment);
         await db.SaveChangesAsync(deadline.Token);
+        var otherEnvironment = new ManagedEnvironment { Id = Guid.NewGuid(), Name = "Other synthetic delivery environment", CanonicalDns = "other-upgrade.example.test", DefaultLocale = "en-US", Version = 1 };
+        if (composition == 2)
+        {
+            db.Environments.Add(otherEnvironment);
+            await db.SaveChangesAsync(deadline.Token);
+        }
         var variables = new Dictionary<string, string>
         {
             ["runtime_role"] = api, ["enrollment_plan_lock_owner_role"] = locker,
             ["execution_runtime_role"] = worker, ["execution_definer_role"] = executor,
             ["execution_queue_definer_role"] = queue, ["delivery_definer_role"] = delivery,
             ["status_runtime_role"] = statusRuntime, ["delivery_runtime_role"] = deliveryRuntime,
+            ["other_environment_id"] = otherEnvironment.Id.ToString(),
             ["expected_table_owner_role"] = owner.Username!, ["expected_environment_id"] = environment.Id.ToString(), ["DBNAME"] = database
         };
         foreach (var path in new[] { "provision-runtime.sql", "enrollment-execution/v3/provision-enrollment-execution.sql" })
         {
             var result = await RunScript(owner, path, variables, deadline.Token);
             Assert.True(result.ExitCode == 0, result.Error);
+        }
+        if (composition == 2)
+        {
+            var otherVariables = new Dictionary<string, string>(variables)
+            {
+                ["execution_runtime_role"] = otherWorker, ["expected_environment_id"] = otherEnvironment.Id.ToString()
+            };
+            var otherProvision = await RunScript(owner, "enrollment-execution/v3/provision-enrollment-execution.sql", otherVariables, deadline.Token);
+            Assert.True(otherProvision.ExitCode == 0, otherProvision.Error);
         }
         var bindings = await Snapshot(false);
         var reservations = await Snapshot(true);
@@ -103,6 +120,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
                     // Preserve the real pair installer's preflight, grants and postflight;
                     // its transaction is owned by the surrounding rollback-only candidate.
                     pairScript = pairScript.Replace(begin, "", StringComparison.Ordinal).Replace(commit, "", StringComparison.Ordinal);
+                    pairScript += "\n" + DeliveryAuditSessionProbe();
                 }
                 script = script.Replace(include, include + "\n\\ir enrollment-delivery-identity.sql", StringComparison.Ordinal)
                     .Replace(begin, begin + """

@@ -311,6 +311,12 @@ BEGIN
       INTO base_rows,base_valid FROM enrollment_execution.audit_execution_privileges(p_environment) audit;
     -- The complete delivery slice is catalog-pinned by audit_execution_privileges profile4.
     slice_valid:=base_rows=1 AND base_valid=1;
+    -- Direct owner maintenance may inspect the profile. All runtime calls, including
+    -- calls through delivery-definer wrappers, retain the bound LOGIN as SESSION_USER.
+    IF slice_valid AND SESSION_USER<>CURRENT_USER THEN
+        slice_valid:=enrollment_execution.delivery_worker_scope(p_environment,'EnrollmentGrantStatusRefresh') IS TRUE
+            OR enrollment_execution.delivery_worker_scope(p_environment,'EnrollmentGrantDelivery') IS TRUE;
+    END IF;
     RETURN QUERY SELECT COALESCE(slice_valid,false),
         CASE WHEN COALESCE(slice_valid,false) THEN 'None' ELSE 'ProfileDrift' END,4::smallint;
 END
