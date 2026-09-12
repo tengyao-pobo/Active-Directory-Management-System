@@ -46,7 +46,15 @@ The focused eight-test checkpoint passes, including the existing concurrency tes
 
 The new catalog query remains unconsumed: `build/audit-enrollment-delivery.sql` still returns false. Internal transitive callable ABI, complete definer ACL/data contracts, profile3/profile4 consumer compatibility, transactional installation and physical runtime LOGIN/pool validation remain activation prerequisites. PR42 remains draft.
 
-## Earlier cloud recheck evidence
+## Local internal callable checkpoint — inactive
+
+The generated internal block replaces the former partial 13-function delivery check with complete contracts for 19 delivery and journal functions, including permission/scope helpers, immutable/stop/journal validators and the stop-boundary lock. It preserves the existing queue block. Nullable metadata uses null-safe comparison; unexpected overloads of reserved function names are rejected. Generation/check order is catalog slices, internal functions, then outer function contracts. Local checks pass; GitHub rejected the additional workflow check step because its OAuth credential lacks workflow scope. The workflow change was removed from the unpublished commit and preserved locally as `D:\AD\.local\delivery-generated-contract-ci.patch`; existing CI remains unchanged.
+
+Rollback-only mutations cover every selected function's removed settings, planner support hook and leakproof flag, plus body-preserving output ABI changes, argument defaults, extra overloads and retained queue attestation. The corrected 18-function snapshot passed all 165 delivery tests plus three retry tests; a full backend run is checking the final 19-function snapshot. Daybreak's static review found no material defect in this bounded inactive change. The preceding published `f8cc2ba` passed both GitHub runs (34697896687 and 34697894711), including backend, frontend and Windows agent jobs.
+
+Before freezing definer ACLs, the ACK journal path needs a separate repair: project only used operation columns in both INVOKER validators, grant five additional operation SELECT columns, and grant operation-scoped SELECT on execution_stops with both permissive and restrictive policies. Deferred triggers were experimentally confirmed to retain the originating definer identity on PostgreSQL 18.6. Use a new profile4 CREATE OR REPLACE fragment after v3 preflight, preserving validator OIDs/owners/ACLs and historical migrations. Current planned totals are 42 column and 14 table privilege rows. This does not replace required real-LOGIN commit/stop-rejection tests or full trigger/data-contract attestation.
+
+## Earlier cloud recheck details
 
 The initial cloud commit `cfe74ec` was not built or tested and must not be treated as completed delivery attestation. Daybreak Blue subsequently blocked that delta: the external audit queried owner-only application tables through a runtime forbidden from reading them, used throwing regprocedure casts for missing wrappers, and prematurely accepted the unfinished profile4 body in consumers with version3-only downstream checks.
 

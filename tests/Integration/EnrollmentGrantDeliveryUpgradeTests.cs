@@ -122,6 +122,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
                     pairScript = pairScript.Replace(begin, "", StringComparison.Ordinal).Replace(commit, "", StringComparison.Ordinal);
                     pairScript += "\n" + DeliveryAuditSessionProbe();
                     pairScript += "\n" + await DeliveryExternalCatalogProbeAsync(deadline.Token);
+                    pairScript += "\n" + DeliveryInternalFunctionProbe();
                 }
                 script = script.Replace(include, include + "\n\\ir enrollment-delivery-identity.sql", StringComparison.Ordinal)
                     .Replace(begin, begin + """
