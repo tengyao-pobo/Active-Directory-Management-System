@@ -1,5 +1,13 @@
 # Cloud development handoff — 2026-09-12
 
+## Local development resumed — 2026-09-12
+
+The user cancelled cloud development and requested continuous local development again. Local work resumed from remote head `9f0ebd4efd110efbe0a30d144d0d4bc7cd080db0`, preserving all four cloud commits. The old cloud task was unavailable through both task lookup and its browser URL; no claim is made that a stop operation succeeded. GitHub remains the source publication and CI destination.
+
+Local locked restore and all 109 delivery unit tests passed. After restarting the project-only PostgreSQL instance on its original loopback port, 48 delivery integration tests passed. The next bounded repair replaces count-only delivery policy/trigger checks with exact relation, policy, expression, role and trigger metadata sets. Executing the installation slice found that `mint_permits` has no `environment_id`; its policies now use its globally unique operation foreign key, consistent with the pinned operation/environment validation in the helpers. Fifteen new rollback-only PostgreSQL tests pass: fourteen structural drift cases and exact permit operation-context visibility.
+
+The new structural check deliberately rejects the current incomplete profile: `Principals` and `Sessions` still have RLS disabled. The catalog test enables their RLS flags only inside its rollback fixture; this is not a production policy migration. Compatible owner/API/plan-lock behavior must be designed and tested before activating those flags in the upgrade. The external `SELECT false` gate stays closed. Other pending prerequisites include exact global runtime binding uniqueness, complete ACL/return-schema attestation, exclusion of system catalogs from runtime application-privilege checks, compatible profile3/profile4 consumers, and transactional installer/postflight tests. No whole-profile or merge-readiness claim follows from the bounded tests.
+
 ## Cloud recheck checkpoint — not merge-ready
 
 The initial cloud commit `cfe74ec` was not built or tested and must not be treated as completed delivery attestation. Daybreak Blue subsequently blocked that delta: the external audit queried owner-only application tables through a runtime forbidden from reading them, used throwing regprocedure casts for missing wrappers, and prematurely accepted the unfinished profile4 body in consumers with version3-only downstream checks.

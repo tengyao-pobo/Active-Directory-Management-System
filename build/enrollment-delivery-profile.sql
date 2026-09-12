@@ -275,11 +275,9 @@ CREATE POLICY enrollment_delivery_results_limit ON enrollment_execution.issue_re
     USING (environment_id=nullif(current_setting('app.delivery_environment_id',true),'')::uuid
        AND operation_id=nullif(current_setting('app.delivery_operation_id',true),'')::uuid);
 CREATE POLICY enrollment_delivery_permits_allow ON enrollment_execution.mint_permits AS PERMISSIVE FOR SELECT TO :"delivery_definer_role"
-    USING (environment_id=nullif(current_setting('app.delivery_environment_id',true),'')::uuid
-       AND operation_id=nullif(current_setting('app.delivery_operation_id',true),'')::uuid);
+    USING (operation_id=nullif(current_setting('app.delivery_operation_id',true),'')::uuid);
 CREATE POLICY enrollment_delivery_permits_limit ON enrollment_execution.mint_permits AS RESTRICTIVE FOR SELECT TO :"delivery_definer_role"
-    USING (environment_id=nullif(current_setting('app.delivery_environment_id',true),'')::uuid
-       AND operation_id=nullif(current_setting('app.delivery_operation_id',true),'')::uuid);
+    USING (operation_id=nullif(current_setting('app.delivery_operation_id',true),'')::uuid);
 CREATE POLICY enrollment_delivery_envelopes_allow ON enrollment_execution.sealed_envelopes AS PERMISSIVE FOR ALL TO :"delivery_definer_role"
     USING (operation_id=nullif(current_setting('app.delivery_operation_id',true),'')::uuid);
 CREATE POLICY enrollment_delivery_envelopes_limit ON enrollment_execution.sealed_envelopes AS RESTRICTIVE FOR ALL TO :"delivery_definer_role"

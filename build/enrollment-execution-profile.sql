@@ -855,14 +855,74 @@ BEGIN
           AND (pg_catalog.has_table_privilege(delivery_definer,relation.oid,
                  'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
             OR pg_catalog.has_any_column_privilege(delivery_definer,relation.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
-      AND (SELECT count(*)=34 FROM pg_catalog.pg_policy policy_row
-        WHERE delivery_definer=ANY(policy_row.polroles) AND policy_row.polname LIKE 'enrollment_delivery_%')
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy policy_row
-        WHERE delivery_definer=ANY(policy_row.polroles) AND policy_row.polname NOT LIKE 'enrollment_delivery_%')
-      AND (SELECT count(*)=6 FROM pg_catalog.pg_trigger trigger_row
-        WHERE NOT trigger_row.tgisinternal AND trigger_row.tgname LIKE 'enrollment_delivery_%'
-          AND trigger_row.tgenabled='O' AND trigger_row.tgtype=19
-          AND trigger_row.tgfoid='enrollment_execution.reject_delivery_update()'::regprocedure)
+      ;
+
+    -- BEGIN exact delivery structure
+    -- Compare complete sets, including relation identity, rather than trusting counts or names.
+    ok := ok AND NOT EXISTS(
+      WITH relations(schema_name,relation_name,suffix,command,expression_hash) AS (VALUES
+        ('public','Environments','environment','*','5029fb82c8841b4be18f827b6ff65014'),
+        ('public','DirectorySync','sync','*','5805dc21c720e17a48c0383e19d23d8c'),
+        ('public','DirectoryObjects','directory','*','5805dc21c720e17a48c0383e19d23d8c'),
+        ('public','Principals','principals','*','0f4a674f4193404082084f1ce226feca'),
+        ('public','Memberships','memberships','*','c822931371f49937c75216d468de40b6'),
+        ('public','EnrollmentGrantOperations','operations','*','398cc8e9984a655fc7a95d8ffa62f33f'),
+        ('public','Sessions','sessions','r','7423ae3d79d4de92662ecb4bd3658c57'),
+        ('public','Roles','roles','r','dd406c6c90bc4ad9cb66f14eb686cf93'),
+        ('public','RolePermissions','role_permissions','r','dd406c6c90bc4ad9cb66f14eb686cf93'),
+        ('public','Assignments','assignments','r','dd406c6c90bc4ad9cb66f14eb686cf93'),
+        ('public','Scopes','scopes','r','dd406c6c90bc4ad9cb66f14eb686cf93'),
+        ('public','DeviceTagAssignments','tag_assignments','r','dd406c6c90bc4ad9cb66f14eb686cf93'),
+        ('enrollment_execution','issue_results','results','r','16061f7fe3d1e9c443f8c14c547153db'),
+        ('enrollment_execution','mint_permits','permits','r','5fe22733f49093eedfbf3801bc66cdf5'),
+        ('enrollment_execution','sealed_envelopes','envelopes','*','5fe22733f49093eedfbf3801bc66cdf5'),
+        ('enrollment_execution','delivery_acks','acks','*','52b42cd1fccdb1036665767ed5daa164'),
+        ('enrollment_execution','status_observations','status','*','2c6961144391bc85dbfa6ef17383a52b')),
+      expected AS (
+        SELECT pg_catalog.to_regclass(pg_catalog.format('%I.%I',r.schema_name,r.relation_name))::oid relation_oid,
+          'enrollment_delivery_'||r.suffix||'_'||variant.suffix policy_name,
+          r.command,variant.permissive,ARRAY[delivery_definer] roles,r.expression_hash
+        FROM relations r CROSS JOIN (VALUES('allow',true),('limit',false)) variant(suffix,permissive)),
+      actual AS (
+        SELECT p.polrelid relation_oid,p.polname::text policy_name,p.polcmd::text command,
+          p.polpermissive permissive,p.polroles roles,
+          pg_catalog.md5(COALESCE(pg_catalog.pg_get_expr(p.polqual,p.polrelid),'')||'|'||
+            COALESCE(pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid),'')) expression_hash
+        FROM pg_catalog.pg_policy p
+        WHERE p.polname LIKE 'enrollment_delivery_%' OR delivery_definer=ANY(p.polroles)),
+      differences AS (
+        (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+        UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected))
+      SELECT 1 FROM differences
+      UNION ALL
+      SELECT 1 FROM relations r LEFT JOIN pg_catalog.pg_class c
+        ON c.oid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',r.schema_name,r.relation_name))
+      WHERE c.oid IS NULL OR c.relowner IS DISTINCT FROM table_owner OR c.relkind<>'r'
+        OR NOT c.relrowsecurity OR NOT c.relforcerowsecurity)
+    AND NOT EXISTS(
+      WITH expected(relation_oid,trigger_name) AS (VALUES
+        (pg_catalog.to_regclass('public."Environments"')::oid,'enrollment_delivery_environment_guard'),
+        (pg_catalog.to_regclass('public."DirectorySync"')::oid,'enrollment_delivery_sync_guard'),
+        (pg_catalog.to_regclass('public."DirectoryObjects"')::oid,'enrollment_delivery_directory_guard'),
+        (pg_catalog.to_regclass('public."Principals"')::oid,'enrollment_delivery_principal_guard'),
+        (pg_catalog.to_regclass('public."Memberships"')::oid,'enrollment_delivery_membership_guard'),
+        (pg_catalog.to_regclass('public."EnrollmentGrantOperations"')::oid,'enrollment_delivery_operation_guard')),
+      actual AS (
+        SELECT t.tgrelid relation_oid,t.tgname::text trigger_name FROM pg_catalog.pg_trigger t
+        WHERE t.tgname LIKE 'enrollment_delivery_%'
+          AND NOT t.tgisinternal AND t.tgenabled='O' AND t.tgtype=19
+          AND t.tgfoid=pg_catalog.to_regprocedure('enrollment_execution.reject_delivery_update()')
+          AND t.tgqual IS NULL AND t.tgnargs=0 AND t.tgattr=''::int2vector
+          AND t.tgoldtable IS NULL AND t.tgnewtable IS NULL AND t.tgconstraint=0
+          AND NOT t.tgdeferrable AND NOT t.tginitdeferred AND t.tgparentid=0),
+      all_named AS (SELECT t.tgrelid relation_oid,t.tgname::text trigger_name
+        FROM pg_catalog.pg_trigger t WHERE t.tgname LIKE 'enrollment_delivery_%'
+          OR t.tgfoid=pg_catalog.to_regprocedure('enrollment_execution.reject_delivery_update()'))
+      SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
+        UNION ALL (SELECT * FROM all_named EXCEPT SELECT * FROM expected)) differences);
+    -- END exact delivery structure
+
+    ok := ok
       AND (status_runtime IS NULL OR (
         NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row WHERE function_row.proowner IN(status_runtime,delivery_runtime))
         AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
