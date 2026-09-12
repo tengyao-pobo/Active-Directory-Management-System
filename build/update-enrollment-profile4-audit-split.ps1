@@ -9,10 +9,13 @@ $body=$matchesSource[0].Groups['body'].Value
 $deliveryContract="('enrollment_execution.audit_delivery_privileges(pg_catalog.uuid)',table_owner,'plpgsql','s',true,true,"
 if([regex]::Matches($body,[regex]::Escape($deliveryContract)).Count -ne 1){throw 'Expected one delivery audit volatility contract.'}
 $body=$body.Replace($deliveryContract,$deliveryContract.Replace("'s'","'v'"))
+$helperConfiguration="AND p.proconfig IS NOT DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp','row_security=off']"
+if([regex]::Matches($body,[regex]::Escape($helperConfiguration)).Count -ne 1){throw 'Expected one public helper configuration contract.'}
+$body=$body.Replace($helperConfiguration,"AND p.proconfig IS NOT DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp',CASE WHEN p.proname='has_environment_membership' THEN 'row_security=on' ELSE 'row_security=off' END]")
 $end='    RETURN QUERY SELECT COALESCE(ok,false),CASE WHEN COALESCE(ok,false) THEN ''None'' ELSE ''ProfileDrift'' END,4::smallint;'
 if([regex]::Matches($body,[regex]::Escape($end)).Count -ne 1){throw 'Expected one final structure verdict.'}
 $blocks=[Collections.Generic.List[string]]::new()
-foreach($file in @('audit-enrollment-profile4-readiness-structure.sql','audit-enrollment-profile4-readiness-functions.sql','audit-enrollment-profile4-runtime-metadata.sql')){
+foreach($file in @('audit-enrollment-profile4-readiness-structure.sql','audit-enrollment-profile4-readiness-functions.sql','audit-enrollment-profile4-runtime-metadata.sql','audit-enrollment-profile4-membership.sql','audit-enrollment-profile4-publication-metadata.sql')){
  $source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot $file)).Replace("`r`n","`n")
  $start=$source.IndexOf('WITH ',[StringComparison]::Ordinal)
  if($start -lt 0){throw 'Missing readiness catalog query.'}

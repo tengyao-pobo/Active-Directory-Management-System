@@ -23,7 +23,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         const string final = "    RETURN QUERY SELECT COALESCE(ok,false),CASE WHEN COALESCE(ok,false) THEN 'None' ELSE 'ProfileDrift' END,4::smallint;";
         Assert.Equal(1, original.Groups["body"].Value.Split(final, StringSplitOptions.None).Length - 1);
         var blocks = new List<string>();
-        foreach (var name in new[] { "audit-enrollment-profile4-readiness-structure.sql", "audit-enrollment-profile4-readiness-functions.sql", "audit-enrollment-profile4-runtime-metadata.sql" })
+        foreach (var name in new[] { "audit-enrollment-profile4-readiness-structure.sql", "audit-enrollment-profile4-readiness-functions.sql", "audit-enrollment-profile4-runtime-metadata.sql", "audit-enrollment-profile4-membership.sql", "audit-enrollment-profile4-publication-metadata.sql" })
         {
             var source = await Read(name);
             var query = source[source.IndexOf("WITH ", StringComparison.Ordinal)..].Trim().TrimEnd(';')
@@ -32,7 +32,10 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         }
         const string deliveryContract = "('enrollment_execution.audit_delivery_privileges(pg_catalog.uuid)',table_owner,'plpgsql','s',true,true,";
         Assert.Equal(1, original.Groups["body"].Value.Split(deliveryContract, StringSplitOptions.None).Length - 1);
+        const string helperConfiguration = "AND p.proconfig IS NOT DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp','row_security=off']";
+        Assert.Equal(1, original.Groups["body"].Value.Split(helperConfiguration, StringSplitOptions.None).Length - 1);
         Assert.Equal(original.Groups["body"].Value
+            .Replace(helperConfiguration, "AND p.proconfig IS NOT DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp',CASE WHEN p.proname='has_environment_membership' THEN 'row_security=on' ELSE 'row_security=off' END]", StringComparison.Ordinal)
             .Replace(deliveryContract, deliveryContract.Replace("'s'", "'v'", StringComparison.Ordinal), StringComparison.Ordinal)
             .Replace(final, string.Join("\n", blocks) + "\n" + final, StringComparison.Ordinal), candidate.Groups["body"].Value);
         Assert.DoesNotContain(":'expected_table_owner_role'", candidateSource, StringComparison.Ordinal);

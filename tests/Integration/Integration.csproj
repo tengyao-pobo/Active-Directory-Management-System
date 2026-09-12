@@ -54,6 +54,12 @@
     <None Include="..\..\build\audit-enrollment-profile4-history-transition.sql" Link="audit-enrollment-profile4-history-transition.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\activate-enrollment-profile4-candidate.sql" Link="activate-enrollment-profile4-candidate.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-profile4-runtime-metadata.sql" Link="audit-enrollment-profile4-runtime-metadata.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\enrollment-profile4-publication.template.sql" Link="enrollment-profile4-publication.template.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\enrollment-profile4-publication.sql" Link="enrollment-profile4-publication.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-profile4-publication-metadata.sql" Link="audit-enrollment-profile4-publication-metadata.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-profile4-publication.sql" Link="audit-enrollment-profile4-publication.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\enrollment-profile4-membership.sql" Link="enrollment-profile4-membership.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-profile4-membership.sql" Link="audit-enrollment-profile4-membership.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\enrollment-profile4-readiness.sql" Link="enrollment-profile4-readiness.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-delivery-history.sql" Link="audit-enrollment-delivery-history.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-delivery-status.sql" Link="audit-enrollment-delivery-status.sql" CopyToOutputDirectory="PreserveNewest" />

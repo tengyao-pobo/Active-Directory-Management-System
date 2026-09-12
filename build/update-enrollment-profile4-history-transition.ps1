@@ -35,6 +35,16 @@ $maintenancePin=$maintenancePin.Replace('=expected_audit_hash)',@'
 '@)
 $runtimePin=$rawPin.Replace('expected_audit_hash','expected_runtime_audit_hash').Replace('History audit function contract is invalid.','History ordinary audit function contract is invalid.').Replace("function_row.provolatile='s'","function_row.provolatile='v'")
 $source=$source.Replace($pin,$maintenancePin+$nl+'    -- Ordinary ACL is attested transitively by maintenance before any ordinary call.'+$nl+$runtimePin)
+$publication=Read-Source 'audit-enrollment-profile4-publication.sql'
+$publicationStart=$publication.IndexOf('SELECT (',[StringComparison]::Ordinal)
+if($publicationStart -lt 0){throw 'Missing rendered publication attestation.'}
+$publicationQuery=$publication.Substring($publicationStart).Trim().TrimEnd(';')
+$ownerPlaceholder=":'expected_table_owner_role'"
+if([regex]::Matches($publicationQuery,[regex]::Escape($ownerPlaceholder)).Count -ne 1){throw 'Expected one publication owner placeholder.'}
+$publicationQuery=$publicationQuery.Replace($ownerPlaceholder,'(SELECT rolname FROM pg_catalog.pg_roles WHERE oid=owner_oid)')
+$publicationPin='    IF ('+$nl+$publicationQuery+$nl+') IS NOT TRUE THEN'+$nl+
+ "        RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='History publication guard contract is invalid.';"+$nl+'    END IF;'
+$source=$source.Replace($runtimePin,$runtimePin+$nl+$publicationPin)
 $source=$source.Replace('FROM enrollment_execution.audit_execution_privileges(binding.environment_id) result','FROM enrollment_execution.audit_execution_profile_structure(binding.environment_id) result')
 $source=[regex]::Replace($source,"expected_audit_hash constant text := '[0-9a-f]{64}';","expected_audit_hash constant text := '$maintenanceHash';")
 $source=$source.Replace('    owner_oid oid;',("    expected_runtime_audit_hash constant text := '$runtimeHash';"+$nl+"    expected_manifest constant bytea := decode('$manifest','hex');"+$nl+'    expected_input record;'+$nl+'    installed_state record;'+$nl+'    owner_oid oid;'))

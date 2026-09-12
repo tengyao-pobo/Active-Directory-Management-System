@@ -33,10 +33,13 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await status.OpenAsync(cancellationToken);
         await delivery.OpenAsync(cancellationToken);
         var original = await Identity();
+        await Execute(owner, await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-profile4-membership.sql"), cancellationToken));
         await Execute(owner, await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-profile4-structure-audit.sql"), cancellationToken));
         await Execute(owner, await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-profile4-runtime-audit.sql"), cancellationToken));
+        await Execute(owner, await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-profile4-publication.sql"), cancellationToken));
         Assert.Equal(original, await Identity());
         await Audit(owner, "audit_execution_profile_structure", true);
+        await VerifyProfile4MembershipCatalogAsync(owner, environment, cancellationToken);
         await Audit(owner, "audit_execution_privileges", false);
         await Audit(runtime, "audit_execution_privileges", false);
         await Audit(status, "audit_delivery_privileges", false);

@@ -4,7 +4,7 @@ RETURNS TABLE(is_valid boolean,diagnostic_code text,profile_version smallint)
 LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE SECURITY DEFINER
 SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
 DECLARE
-    expected_structure_hash constant text := '6b623e8e062c5278d4705a0407de5da972066db2477010e7c997d838992c8814';
+    expected_structure_hash constant text := 'a05146573ba7d57bcbe9c027eddf37d730bd20fb827a91ac8cdb36c77e0a1c5b';
     owner_oid oid;
     row_count bigint;
     valid_count bigint;
