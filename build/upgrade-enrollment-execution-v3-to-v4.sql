@@ -69,6 +69,8 @@ BEGIN
 END
 $preflight$;
 
+\ir owner-mapping-guard-v1.sql
+
 ALTER TABLE public."DirectoryDatabaseBindings" DROP CONSTRAINT directory_database_binding_purpose;
 ALTER TABLE public."DirectoryDatabaseBindings" DROP CONSTRAINT directory_database_binding_shape;
 ALTER TABLE public."DirectoryDatabaseBindings" ADD CONSTRAINT directory_database_binding_purpose

@@ -186,7 +186,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             """).ToArrayAsync(deadline.Token);
 
         async Task<string[]> LegacyTriggerIdentity() => await db.Database.SqlQueryRaw<string>("""
-            SELECT jsonb_build_object('oid',oid,'owner',proowner,'acl',proacl,'body',prosrc)::text AS "Value"
+            SELECT jsonb_build_object('oid',oid,'owner',proowner,'acl',proacl,'body',prosrc,'config',proconfig,'triggers',(SELECT jsonb_agg(to_jsonb(t) ORDER BY t.oid) FROM pg_catalog.pg_trigger t WHERE t.tgfoid=pg_proc.oid))::text AS "Value"
             FROM pg_catalog.pg_proc WHERE oid IN('public.guard_role_identity()'::regprocedure,'public.guard_owner_mapping()'::regprocedure,
               'public.forbid_audit_mutation()'::regprocedure,'public.guard_operator_identity()'::regprocedure) ORDER BY oid
             """).ToArrayAsync(deadline.Token);

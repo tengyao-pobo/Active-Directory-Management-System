@@ -30,7 +30,7 @@ public sealed partial class EnrollmentGrantPlanTests
     public async Task DeliveryGeneratedCatalogSlicesMatchSources()
     {
         var parts = new List<string>();
-        foreach (var file in new[] { "audit-enrollment-delivery-bindings.sql", "audit-enrollment-delivery-identity.sql" })
+        foreach (var file in new[] { "audit-enrollment-delivery-bindings.sql", "audit-enrollment-delivery-identity.sql", "audit-owner-mapping-guard.sql" })
         {
             var source = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, file));
             var query = source[source.IndexOf("WITH ", StringComparison.Ordinal)..].Trim().TrimEnd(';')
@@ -50,6 +50,7 @@ public sealed partial class EnrollmentGrantPlanTests
 
     [Theory]
     [InlineData("none")]
+    [InlineData("owner-guard")]
     [InlineData("bindings")]
     [InlineData("identity")]
     [InlineData("plan-owner")]
@@ -58,7 +59,7 @@ public sealed partial class EnrollmentGrantPlanTests
     [InlineData("missing-api")]
     [InlineData("wrong-api-grantee")]
     [InlineData("bound-plan")]
-    public async Task DeliveryCatalogCompositionRequiresBothStructures(string fault)
+    public async Task DeliveryCatalogCompositionRequiresAllStructures(string fault)
     {
         var boundEnvironment = fault == "bound-plan" ? (await _fixture.SeedAsync()).Environment.Id : Guid.Empty;
         await using var connection = new NpgsqlConnection(Environment.GetEnvironmentVariable("CONSOLE_TEST_DB")!);
@@ -91,6 +92,7 @@ public sealed partial class EnrollmentGrantPlanTests
         await Execute(Configure(source[start..end]));
         await Execute(Configure(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-delivery-identity.sql"))));
         var profile = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-execution-profile.sql"));
+        await Execute(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "owner-mapping-guard-v1.sql")));
         start = profile.IndexOf(DeliveryCatalogBegin, StringComparison.Ordinal);
         end = profile.IndexOf("    -- END delivery API binding identity", StringComparison.Ordinal);
         Assert.True(start >= 0 && end > start);
@@ -114,6 +116,7 @@ public sealed partial class EnrollmentGrantPlanTests
         await Execute(fault switch
         {
             "none" => "SELECT 1",
+            "owner-guard" => "ALTER FUNCTION public.guard_owner_mapping() RESET ALL",
             "bindings" => "ALTER TABLE public.\"DirectoryDatabaseBindings\" DROP CONSTRAINT \"DirectoryDatabaseBindings_pkey\"",
             "identity" => "ALTER TABLE public.\"Sessions\" NO FORCE ROW LEVEL SECURITY",
             "plan-owner" => $"ALTER FUNCTION public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[]) OWNER TO {QuoteIdentifier(execution)}",

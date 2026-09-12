@@ -124,6 +124,19 @@ public sealed class ApiSecurityBoundaryTests(PostgresApiFixture fixture)
         Assert.Equal("23514", ownerMapping);
     }
 
+    [Theory]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    public async Task Runtime_owner_mapping_guard_ignores_temporary_roles_table(bool shadow, bool owner, bool update)
+    {
+        var data = await fixture.SeedAsync();
+        Assert.Equal(owner ? "23514" : "allowed", await fixture.RuntimeOwnerMappingErrorAsync(data, shadow, owner, update));
+    }
+
     [Fact]
     public async Task Approval_requires_a_distinct_operator_and_execution_rejects_version_drift()
     {

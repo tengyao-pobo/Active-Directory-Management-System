@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../../../build/owner-mapping-guard-v1.sql" LogicalName="ItManagement.Persistence.OwnerMappingGuard.sql" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../../Server/Core/Core.csproj" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />

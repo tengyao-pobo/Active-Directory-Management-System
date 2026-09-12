@@ -212,17 +212,37 @@ public sealed class PostgresApiFixture : IAsyncLifetime
         }
     }
 
-    public async Task<string> RuntimeOwnerMappingErrorAsync(TestData data)
+    public async Task<string> RuntimeOwnerMappingErrorAsync(TestData data, bool shadowRoles = false, bool mapOwner = true, bool update = false)
     {
         await using var db = new ConsoleDbContext(new DbContextOptionsBuilder<ConsoleDbContext>().UseNpgsql(_runtimeConnectionString).Options);
         await using var transaction = await db.BeginEnvironment(data.Environment.Id, data.Requester.Id, CancellationToken.None);
-        db.GroupMappings.Add(new DirectoryGroupMapping
+        var ordinaryRole = await db.Roles.Where(x => x.EnvironmentId == data.Environment.Id && x.Name == "reviewer").Select(x => x.Id).SingleAsync();
+        if (shadowRoles)
+            await db.Database.ExecuteSqlRawAsync("""
+                CREATE TEMP TABLE "Roles" ("EnvironmentId" uuid, "Id" uuid, "BuiltInKind" text) ON COMMIT DROP;
+                SET LOCAL search_path=pg_temp,public;
+                """);
+        var mapping = new DirectoryGroupMapping
         {
-            EnvironmentId = data.Environment.Id, Id = Guid.NewGuid(), GroupSid = "S-1-5-21-1-2-3-4", RoleId = data.RequesterRoleId, ScopeId = data.AllScopeId
-        });
+            EnvironmentId = data.Environment.Id, Id = Guid.NewGuid(), GroupSid = "S-1-5-21-1-2-3-4",
+            RoleId = update || !mapOwner ? ordinaryRole : data.RequesterRoleId, ScopeId = data.AllScopeId
+        };
+        db.GroupMappings.Add(mapping);
         try
         {
             await db.SaveChangesAsync();
+            if (update)
+            {
+                mapping.RoleId = mapOwner ? data.RequesterRoleId : ordinaryRole;
+                mapping.GroupSid = "S-1-5-21-1-2-3-5";
+                await db.SaveChangesAsync();
+            }
+            if (!mapOwner)
+            {
+                await transaction.CommitAsync();
+                await using var verify = CreateDb();
+                Assert.True(await verify.GroupMappings.AnyAsync(x => x.EnvironmentId == data.Environment.Id && x.Id == mapping.Id && x.RoleId == ordinaryRole));
+            }
             return "allowed";
         }
         catch (Npgsql.PostgresException error)

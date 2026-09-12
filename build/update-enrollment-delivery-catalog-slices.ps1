@@ -10,7 +10,7 @@ $replacements = [ordered]@{
     ":'delivery_definer_role'" = 'pg_catalog.pg_get_userbyid(delivery_definer)'
     ":'enrollment_plan_lock_owner_role'" = "(SELECT pg_catalog.pg_get_userbyid(plan_helper.proowner) FROM pg_catalog.pg_proc plan_helper WHERE plan_helper.oid=pg_catalog.to_regprocedure('public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[])'))"
 }
-$parts = foreach ($file in @('audit-enrollment-delivery-bindings.sql','audit-enrollment-delivery-identity.sql')) {
+$parts = foreach ($file in @('audit-enrollment-delivery-bindings.sql','audit-enrollment-delivery-identity.sql','audit-owner-mapping-guard.sql')) {
     $source = [IO.File]::ReadAllText((Join-Path $PSScriptRoot $file))
     $start = $source.IndexOf('WITH ', [StringComparison]::Ordinal)
     if ($start -lt 0) { throw "Missing catalog query in $file" }

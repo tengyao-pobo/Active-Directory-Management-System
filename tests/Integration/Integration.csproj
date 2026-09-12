@@ -29,6 +29,8 @@
 
   <ItemGroup>
     <None Include="..\..\build\provision-runtime.sql" Link="provision-runtime.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-owner-mapping-guard.sql" Link="audit-owner-mapping-guard.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\owner-mapping-guard-v1.sql" Link="owner-mapping-guard-v1.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-grant-operations.sql" Link="audit-enrollment-grant-operations.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\enrollment-execution-functions.sql" Link="enrollment-execution-functions.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\enrollment-execution-profile.sql" Link="enrollment-execution-profile.sql" CopyToOutputDirectory="PreserveNewest" />
