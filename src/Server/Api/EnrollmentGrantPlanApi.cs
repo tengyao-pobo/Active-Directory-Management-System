@@ -29,7 +29,7 @@ public sealed record EnrollmentGrantPlanDto(
     bool CanApprove,
     bool CanRequest);
 
-public static class EnrollmentGrantPlanApi
+public static partial class EnrollmentGrantPlanApi
 {
     private static readonly JsonSerializerOptions StrictJson = new(JsonSerializerDefaults.Web)
     {
@@ -42,6 +42,8 @@ public static class EnrollmentGrantPlanApi
         app.MapPost("/api/v1/environments/{environmentId:guid}/devices/{directoryObjectId:guid}/enrollment-grant-plans", Create);
         app.MapGet("/api/v1/environments/{environmentId:guid}/enrollment-grant-plans/{planId:guid}", Read);
         app.MapPost("/api/v1/environments/{environmentId:guid}/enrollment-grant-plans/{planId:guid}/approval", Approve);
+        app.MapPost("/api/v1/environments/{environmentId:guid}/enrollment-grant-plans/{planId:guid}/execution", QueueExecution);
+        app.MapGet("/api/v1/environments/{environmentId:guid}/enrollment-grant-operations/{operationId:guid}", ReadExecution);
     }
 
     internal static bool IsDedicatedAction(string action) =>
@@ -161,7 +163,11 @@ public static class EnrollmentGrantPlanApi
                     WHERE i.indisunique AND i.indisvalid AND i.indisready AND NOT i.indisprimary AND i.indpred IS NULL AND
                     ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ord) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum ORDER BY k.ord)
                     =ARRAY['EnvironmentId','RequesterId','RequestId']) AND
-                (SELECT count(*)=2 FROM pg_index i JOIN reservation r ON r.oid=i.indrelid WHERE i.indisunique AND NOT i.indisprimary) AND
+                (SELECT count(*)=3 FROM pg_index i JOIN reservation r ON r.oid=i.indrelid WHERE i.indisunique AND NOT i.indisprimary) AND
+                (SELECT count(*)=1 FROM pg_index i JOIN reservation r ON r.oid=i.indrelid
+                    WHERE i.indisunique AND i.indisvalid AND i.indisready AND NOT i.indisprimary AND i.indpred IS NULL AND i.indexprs IS NULL AND i.indnatts=5 AND
+                    ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ord) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum ORDER BY k.ord)
+                    =ARRAY['Fingerprint','EnvironmentId','PlanId','RequesterId','RequestId']) AND
                 (SELECT count(*)=1 FROM pg_constraint c JOIN reservation r ON r.oid=c.conrelid WHERE c.contype='f' AND c.confrelid='public."Plans"'::regclass AND c.confdeltype='r' AND
                     pg_get_constraintdef(c.oid,true)='FOREIGN KEY ("EnvironmentId", "PlanId") REFERENCES "Plans"("EnvironmentId", "Id") ON DELETE RESTRICT') AND
                 (SELECT count(*)=3 FROM pg_constraint c JOIN reservation r ON r.oid=c.conrelid WHERE c.contype='c' AND c.convalidated AND
@@ -363,6 +369,8 @@ public static class EnrollmentGrantPlanApi
             reservation = await db.EnrollmentGrantRecipientReservations.AsNoTracking().SingleOrDefaultAsync(x => x.EnvironmentId == environmentId && x.PlanId == planId, ct)
                 ?? null!;
             if (reservation is null || !TryValidateStored(plan, reservation, out payload)) return PlanUnavailable();
+            if (plan.State == ChangePlanState.Queued)
+                return await ReadQueuedPlan(db, plan, payload, actor, now, plans, ct);
             var access = await ReadAccess(db, environmentId, actor, payload, now, ct);
             if (!access.RequesterCurrent || !access.ActorCanRead) return Results.NotFound();
             if (!IsCurrent(plan, payload, access, now, plans)) return PlanUnavailable();
@@ -371,12 +379,14 @@ public static class EnrollmentGrantPlanApi
 
         var resolved = await reader.ReadAsync(environmentId, payload.DirectoryObjectId, ct);
         now = Canonical(time.GetUtcNow());
-        if (!MatchesResolved(resolved, payload, now)) return EnrollmentTargetUnavailable();
 
         await using var second = await db.BeginEnvironment(environmentId, actor, ct);
         plan = await db.Plans.AsNoTracking().Include(x => x.Items).SingleOrDefaultAsync(x => x.EnvironmentId == environmentId && x.Id == planId, ct) ?? null!;
         reservation = await db.EnrollmentGrantRecipientReservations.AsNoTracking().SingleOrDefaultAsync(x => x.EnvironmentId == environmentId && x.PlanId == planId, ct) ?? null!;
         if (plan is null || reservation is null || !IsDedicatedAction(plan.Action) || !TryValidateStored(plan, reservation, out payload)) return PlanUnavailable();
+        if (plan.State == ChangePlanState.Queued)
+            return await ReadQueuedPlan(db, plan, payload, actor, now, plans, ct);
+        if (!MatchesResolved(resolved, payload, now)) return EnrollmentTargetUnavailable();
         var current = await ReadAccess(db, environmentId, actor, payload, now, ct);
         if (!current.RequesterCurrent || !current.ActorCanRead) return Results.NotFound();
         if (!IsCurrent(plan, payload, current, now, plans) || !MatchesResolved(resolved, payload, now)) return PlanUnavailable();
@@ -528,7 +538,7 @@ public static class EnrollmentGrantPlanApi
             payload.RequesterId != plan.RequesterId || payload.RequesterId != reservation.RequesterId || payload.RequestId != reservation.RequestId ||
             payload.DirectoryObjectId == Guid.Empty || payload.ServerDeviceId == Guid.Empty || payload.OperationId == Guid.Empty || payload.RequestId == Guid.Empty ||
             payload.DirectoryGeneration == Guid.Empty || payload.EnvironmentVersion <= 0 || plan.PolicyVersion != payload.EnvironmentVersion ||
-            plan.State is not (ChangePlanState.PendingApproval or ChangePlanState.Approved or ChangePlanState.Rejected or ChangePlanState.Expired) ||
+            plan.State is not (ChangePlanState.PendingApproval or ChangePlanState.Approved or ChangePlanState.Rejected or ChangePlanState.Expired or ChangePlanState.Queued) ||
             plan.Items.Count != 1 || plan.Items.Single().EnvironmentId != plan.EnvironmentId || plan.Items.Single().PlanId != plan.Id ||
             plan.Items.Single().TargetId != plan.EnvironmentId.ToString() || plan.Items.Single().ExpectedVersion != payload.EnvironmentVersion ||
             payload.GrantTtlSeconds != EnrollmentGrantPlanContract.GrantTtlSeconds || plan.Reason != payload.Reason ||

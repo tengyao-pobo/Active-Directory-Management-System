@@ -114,7 +114,40 @@ public sealed partial class AgentPlatformGrantFixture : IAsyncLifetime
             await Script("v1-provision-agent-platform-grants.sql", LegacyPlatformProvision(database));
             await Script("upgrade-agent-capability-isolation-v2.sql", CapabilityUpgrade());
             await Script("upgrade-agent-platform-grants-v1-to-v2.sql", PlatformStore());
+            await Script("v2-provision-agent-platform-grants.sql", PlatformProvision(database));
+            await Script("v2-downgrade-agent-platform-grants-v2-to-v1.sql", PlatformDowngrade());
+            Assert.False(await Scalar<bool>("SELECT rolcanlogin FROM pg_catalog.pg_roles WHERE rolname=@role", P("role", RevokerRole)));
+            Assert.Equal(0, await Scalar<long>("SELECT count(*) FROM agent_private.platform_grant_database_bindings WHERE purpose='RevokeInitialGrant' OR login_role=@role", P("role", RevokerRole)));
+            Assert.Equal(0, await Scalar<long>("SELECT count(*) FROM agent_private.agent_capability_roles WHERE role_name=@role", P("role", RevokerRole)));
+            Assert.Equal(0, await Scalar<long>("SELECT count(*) FROM pg_catalog.pg_proc WHERE oid IN(pg_catalog.to_regprocedure('agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'),pg_catalog.to_regprocedure('agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)'))"));
+            var downgradedLifecycleFingerprint = await PlatformLifecycleFingerprint();
+            await AssertScriptRejected(() => Script("v2-provision-agent-platform-grants.sql", PlatformProvision(database)));
+            Assert.Equal(downgradedLifecycleFingerprint, await PlatformLifecycleFingerprint());
+            await Execute($"ALTER ROLE {Id(RevokerRole)} LOGIN");
+            await Script("v2-upgrade-agent-platform-grants-v1-to-v2.sql", PlatformStore());
+            await Script("v2-provision-agent-platform-grants.sql", PlatformProvision(database));
+            var migratedAdditional = await CreateUnprovisionedPlatformEnvironment();
+            var additionalV2Provision = PlatformProvision(database);
+            additionalV2Provision[":\"agent_platform_grant_role\""] = Id(migratedAdditional.Role);
+            additionalV2Provision[":'agent_platform_grant_role'"] = Lit(migratedAdditional.Role);
+            additionalV2Provision[":\"agent_platform_grant_revoker_role\""] = Id(migratedAdditional.RevokerRole);
+            additionalV2Provision[":'agent_platform_grant_revoker_role'"] = Lit(migratedAdditional.RevokerRole);
+            additionalV2Provision[":'environment_id'"] = Lit(migratedAdditional.EnvironmentId.ToString());
+            await Script("v2-provision-agent-platform-grants.sql", additionalV2Provision);
+            var lifecycleV2Fingerprint = await PlatformLifecycleFingerprint();
+            const string lifecycleV3Postflight = "SELECT 1/pg_catalog.count(*) AS target_revoker_profile_is_v3";
+            await AssertScriptRejected(() => Script("upgrade-agent-platform-grants-v2-to-v3.sql", PlatformProvision(database), sql =>
+            {
+                Assert.Equal(1, sql.Split(lifecycleV3Postflight, StringSplitOptions.None).Length - 1);
+                return sql.Replace(lifecycleV3Postflight, "SELECT 1/0 AS target_profile_is_v3", StringComparison.Ordinal);
+            }));
+            Assert.Equal(lifecycleV2Fingerprint, await PlatformLifecycleFingerprint());
+            await Script("upgrade-agent-platform-grants-v2-to-v3.sql", PlatformProvision(database));
             await Script("provision-agent-platform-grants.sql", PlatformProvision(database));
+            _ = await PostgresPlatformGrantRepository.CreateAuditedAsync(migratedAdditional.DataSource,
+                migratedAdditional.EnvironmentId, TableOwnerRole, PlatformDefinerRole, CancellationToken.None);
+            _ = await PostgresPlatformGrantRevocationRepository.CreateAuditedAsync(migratedAdditional.RevokerDataSource,
+                migratedAdditional.EnvironmentId, TableOwnerRole, PlatformDefinerRole, CancellationToken.None);
             Platform = DataSource(builder, PlatformRole, _platformPassword);
             Revoker = DataSource(builder, RevokerRole, _revokerPassword);
             Ingest = DataSource(builder, IngestRole, _ingestPassword);
@@ -279,10 +312,25 @@ public sealed partial class AgentPlatformGrantFixture : IAsyncLifetime
         FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_namespace namespace ON namespace.oid=function.pronamespace
         WHERE namespace.nspname='agent_private'
         """);
+    private Task<string> PlatformLifecycleFingerprint() => Scalar<string>("""
+        SELECT pg_catalog.md5(pg_catalog.concat_ws('|',
+          (SELECT pg_catalog.string_agg(pg_catalog.pg_get_functiondef(function.oid)||function.proowner::text||COALESCE(function.proacl::text,''),E'\n' ORDER BY function.oid)
+             FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_namespace namespace ON namespace.oid=function.pronamespace
+            WHERE namespace.nspname='agent_private' AND function.proname IN('issue_initial_enrollment_grant','read_initial_enrollment_grant','revoke_initial_enrollment_grant','audit_platform_grant_privileges')),
+          (SELECT pg_catalog.string_agg(object.relname||':'||attribute.attnum::text||':'||attribute.attname||':'||attribute.atttypid::text||':'||attribute.attnotnull::text,E'\n' ORDER BY object.relname,attribute.attnum)
+             FROM pg_catalog.pg_class object JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace
+             JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid=object.oid
+            WHERE namespace.nspname='agent_private' AND object.relname IN('platform_grant_database_bindings','platform_grant_receipts','platform_grant_revocation_receipts') AND attribute.attnum>0 AND NOT attribute.attisdropped),
+          (SELECT pg_catalog.string_agg(object.relname||':'||constraint_info.contype::text||':'||pg_catalog.pg_get_constraintdef(constraint_info.oid),E'\n' ORDER BY object.relname,constraint_info.oid)
+             FROM pg_catalog.pg_constraint constraint_info JOIN pg_catalog.pg_class object ON object.oid=constraint_info.conrelid
+             JOIN pg_catalog.pg_namespace namespace ON namespace.oid=object.relnamespace
+            WHERE namespace.nspname='agent_private' AND object.relname IN('platform_grant_database_bindings','platform_grant_receipts','platform_grant_revocation_receipts'))))
+        """);
     internal async Task Script(string file, Dictionary<string, string> replacements)
     {
         await Script(file, replacements, static sql => sql);
     }
+
 
     internal async Task Script(string file, Dictionary<string, string> replacements, Func<string, string> transform)
     {

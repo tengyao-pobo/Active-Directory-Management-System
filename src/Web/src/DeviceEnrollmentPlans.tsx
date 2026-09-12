@@ -6,7 +6,7 @@ import { useI18n } from './i18n';
 interface Plan {
   id: string; environmentId: string; directoryObjectId: string; requesterId: string; requestId: string;
   recipientKeyFingerprint: string; planHash: string; policyVersion: number; directoryGeneration: string;
-  expiresAt: string; queriedAt: string; state: 'PendingApproval' | 'Approved' | 'Rejected' | 'Expired';
+  expiresAt: string; queriedAt: string; state: 'PendingApproval' | 'Approved' | 'Rejected' | 'Expired' | 'Queued';
   reason: string; canApprove: boolean; canRequest: boolean;
 }
 interface Proposal {
@@ -27,7 +27,8 @@ function validPlan(value: Plan, environmentId: string, directoryId: string): boo
     Number.isSafeInteger(value.policyVersion) && value.policyVersion > 0 &&
     typeof value.expiresAt === 'string' && Number.isFinite(Date.parse(value.expiresAt)) &&
     typeof value.queriedAt === 'string' && Number.isFinite(Date.parse(value.queriedAt)) &&
-    ['PendingApproval', 'Approved', 'Rejected', 'Expired'].includes(value.state) &&
+    ['PendingApproval', 'Approved', 'Rejected', 'Expired', 'Queued'].includes(value.state) &&
+    (value.state !== 'Queued' || (!value.canApprove && !value.canRequest)) &&
     typeof value.reason === 'string' && value.reason.length >= 5 && value.reason.length <= 512 &&
     typeof value.canApprove === 'boolean' && typeof value.canRequest === 'boolean';
 }
@@ -172,7 +173,7 @@ export default function DeviceEnrollmentPlans({ environmentId, id, canRequest }:
         <dt>{t('enrollmentPlans.fingerprint')}</dt><dd className="tag-hash">{plan.recipientKeyFingerprint}</dd>
         <dt>{t('enrollmentPlans.hash')}</dt><dd className="tag-hash">{plan.planHash}</dd>
         <dt>{t('enrollmentPlans.expiry')}</dt><dd>{new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(plan.expiresAt))}</dd>
-        <dt>{t('enrollmentPlans.state')}</dt><dd>{t(`tags.state.${expired ? 'Expired' : plan.state}`)}</dd></dl>
+        <dt>{t('enrollmentPlans.state')}</dt><dd>{plan.state === 'Queued' ? t('enrollmentPlans.queued') : t(`tags.state.${expired ? 'Expired' : plan.state}`)}</dd></dl>
       {plan.canApprove && plan.state === 'PendingApproval' && !expired && <button disabled={busy} onClick={() => void run('approve')}>{t('enrollmentPlans.approve')}</button>}
       <p>{t('enrollmentPlans.noExecution')}</p>
       {plan.requesterId === actorId && !key.current && <p role="status">{t('enrollmentPlans.keyUnavailable')}</p>}

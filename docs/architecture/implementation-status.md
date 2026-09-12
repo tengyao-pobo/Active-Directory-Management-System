@@ -40,9 +40,10 @@
 - Agent 註冊身分：schema 2 pending／enrolled 狀態、穩定 request ID、獨占 lease、精確完成與中斷恢復；伺服器 grant／CSR／CA／憑證領取及 listener 仍待完成。
 - Agent 註冊資料庫與格式驗證：一次性 grant 原子消耗、固定發證編號、租約調和、不可重用 epoch、不可變發證結果，以及 CSR／釘選憑證鏈的嚴格 profile。正式 CA 操作綁定、撤銷驗證、平台授權發行 UI、憑證領取與 mTLS listener 仍待完成，服務維持未啟用。
 - 平台註冊加密交付：固定 RSA-OAEP-SHA256 封套、一次性接收 key、用戶端精確環境／操作核對與 token buffer 清除，並有 .NET→WebCrypto 互通測試。公鑰驗證已供提案使用；封套交付仍未組合啟用，領取 UI、撤銷與 worker 尚待接上。
-- 平台初始註冊授權儲存層：獨立環境登入、固定到期時間、精確 mapping 與 operation 收據、重試調和及新舊服務隔離升級。v2 加入帶查詢時間的狀態讀回、完整收據綁定的撤銷、永久撤銷結果，以及保留歷史的升降級。此為 dormant library，尚未註冊到 API／DI／worker；平台已有申請／核准計畫，執行交易、密文持久化／領取與撤銷操作介面仍待完成。
+- 平台初始註冊授權儲存層：獨立環境登入、固定到期時間、精確 mapping 與 operation 收據、重試調和及新舊服務隔離升級。v2 加入帶查詢時間的狀態讀回、完整收據綁定的撤銷、永久撤銷結果，以及保留歷史的升降級。v3 綁定限時 mint permit，舊 issue 僅可恢復歷史收據；此為 dormant library，尚未註冊到 API／DI／worker。平台已有申請／核准及排隊交易，密文持久化／領取與撤銷操作介面仍待完成。
 - 平台設備註冊準備查詢：Inventory 頁籤內唯讀查詢、Owner-only 物件範圍交集、server-owned mapping 解析與通用服務角色隔離。畫面不揭露內部 Device ID；mapping 管理、加密交付、grant 撤銷及註冊 worker 仍待完成。
-- 平台 Agent 註冊申請與核准：固定設備與接收公鑰、永久指紋保留、同 requestId 恢復、目前權限／mapping 重查及獨立操作人員核准。Web 提供申請、查詢、核准與有期限的本機金鑰保留；尚無 execution、outbox 或 grant 發行，不能把 Approved 當作設備註冊成功。
+- 平台 Agent 註冊申請與核准：固定設備與接收公鑰、永久指紋保留、同 requestId 恢復、目前權限／mapping 重查及獨立操作人員核准。Web 提供申請、查詢、核准與有期限的本機金鑰保留；不能把 Approved 當作設備註冊成功。
+- 平台註冊排隊：專用執行交易、不可變 operation、單一 outbox／audit、原 requester 的目前權限重查與歷史讀回，以及共用 catalog audit。畫面能呈現已排隊歷史；正式 processor 預設不可用，worker／單次許可持久化／密文保存與領取仍待完成，沒有啟用 grant 發行。
 
 - 個人收藏：四種目錄物件的加入／取消、私有持久化、範圍化分頁及雙語介面；只顯示目前有權查看且仍在有效目錄快照中的物件。
 

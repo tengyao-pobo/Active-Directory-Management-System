@@ -55,5 +55,6 @@ React UI 提供深色雙語介面、登入、環境切換、唯讀 RBAC/稽核�
 - [平台授權撤銷、狀態讀回與永久收據](docs/architecture/platform-grant-revocation.md)
 - [平台設備註冊準備狀態](docs/deployment/enrollment-target-read.md)
 - [平台 Agent 註冊申請與核准](docs/deployment/platform-enrollment-plans.md)
+- [平台註冊排隊、歷史查詢與發行期限](docs/architecture/platform-grant-execution.md)
 - [平台設備標籤與雙人核准](docs/deployment/device-tags.md)
 - [個人儲存篩選與即時授權](docs/deployment/saved-filters.md)

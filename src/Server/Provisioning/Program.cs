@@ -21,8 +21,12 @@ switch (args[0])
 {
     case "provision-connector-principal" when args.Length == 4:
         var connectorEnv = Guid.Parse(args[1]); var connectorOperator = Guid.Parse(args[2]);
-        if (connectorOperator == Guid.Empty || args[3].Length is < 1 or > 128 || !await db.Environments.AnyAsync(x => x.Id == connectorEnv))
+        if (connectorOperator == Guid.Empty || args[3].Length is < 1 or > 128)
             throw new ArgumentException("Valid environment, operator identity and name required.");
+        var connectorEnvironment = await db.Environments.FromSqlInterpolated(
+            $"SELECT * FROM public.\"Environments\" WHERE \"Id\"={connectorEnv} FOR UPDATE").SingleOrDefaultAsync()
+            ?? throw new InvalidOperationException("Unknown environment.");
+        connectorEnvironment.Version = checked(connectorEnvironment.Version + 1);
         var connector = new Principal { Id = Guid.NewGuid(), OperatorId = connectorOperator, Issuer = "connector", Subject = args[3], DisplayName = args[3], Enabled = true };
         db.Principals.Add(connector);
         db.Memberships.Add(new EnvironmentMembership { EnvironmentId = connectorEnv, PrincipalId = connector.Id, Active = true });
@@ -46,7 +50,10 @@ switch (args[0])
     case "bootstrap-owner" when args.Length == 4:
         var environmentId = Guid.Parse(args[1]); var operatorId = Guid.Parse(args[2]);
         if (operatorId == Guid.Empty || args[3].Length is < 1 or > 128) throw new ArgumentException("Stable operator ID and account name required.");
-        if (!await db.Environments.AnyAsync(x => x.Id == environmentId)) throw new InvalidOperationException("Unknown environment.");
+        var ownerEnvironment = await db.Environments.FromSqlInterpolated(
+            $"SELECT * FROM public.\"Environments\" WHERE \"Id\"={environmentId} FOR UPDATE").SingleOrDefaultAsync()
+            ?? throw new InvalidOperationException("Unknown environment.");
+        ownerEnvironment.Version = checked(ownerEnvironment.Version + 1);
         // Offline provisioning is explicit. There is no web first-login promotion.
         var secret = ReadPassword();
         if (secret.Length is < 20 or > 1024) throw new ArgumentException("Use an offline-vaulted random password of at least 20 characters.");

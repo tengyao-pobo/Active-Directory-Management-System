@@ -131,6 +131,31 @@ test('a plan for another directory device is not displayed or approved', async (
   expect(state.approvals).toEqual([]);
 });
 
+for (const locale of ['en-US', 'zh-TW'] as const) {
+  test(`queued history remains queued after original plan expiry (${locale})`, async ({ page }) => {
+    const state: State = { manager: true, locale, plan: { ...basePlan, state: 'Queued', canApprove: false, canRequest: false,
+      queriedAt: '2030-01-01T00:11:00Z' }, proposals: [], approvals: [] };
+    await open(page, state);
+    const panel = page.getByRole('region', { name: locale === 'zh-TW' ? 'Agent 註冊申請' : 'Agent registration requests', exact: true });
+    await panel.getByRole('textbox', { name: locale === 'zh-TW' ? '註冊申請 ID' : 'Registration request ID' }).fill(planId);
+    await panel.getByRole('button', { name: locale === 'zh-TW' ? '開啟或重新查詢申請' : 'Open or refresh request' }).click();
+    await expect(panel.getByText(locale === 'zh-TW' ? '已排隊等待處理' : 'Queued for processing', { exact: true })).toBeVisible();
+    await expect(panel.getByRole('alert')).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: /approve|execute|核准|執行/i })).toHaveCount(0);
+    expect(state.proposals).toEqual([]); expect(state.approvals).toEqual([]);
+  });
+}
+
+test('queued history with contradictory action flags is rejected', async ({ page }) => {
+  const state: State = { manager: true, plan: { ...basePlan, state: 'Queued', canApprove: true }, proposals: [], approvals: [] };
+  await open(page, state);
+  const panel = page.getByRole('region', { name: 'Agent registration requests', exact: true });
+  await panel.getByRole('textbox', { name: 'Registration request ID' }).fill(planId);
+  await panel.getByRole('button', { name: 'Open or refresh request' }).click();
+  await expect(panel.getByRole('alert')).toBeVisible();
+  await expect(panel).not.toContainText(basePlan.planHash);
+});
+
 test('registration approval expires using server remaining time', async ({ page }) => {
   const state: State = { approver: true, plan: { ...basePlan, canApprove: true, expiresAt: '2030-01-01T00:00:01Z' }, proposals: [], approvals: [] };
   await open(page, state); const panel = page.getByRole('region', { name: 'Agent registration requests', exact: true });

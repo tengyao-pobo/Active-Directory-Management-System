@@ -11,6 +11,7 @@ public enum ChangePlanState
     Executed = 2,
     Rejected = 3,
     Expired = 4,
+    Queued = 5,
 }
 
 public sealed class ChangePlan

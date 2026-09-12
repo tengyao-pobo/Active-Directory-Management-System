@@ -22,7 +22,7 @@ public sealed class PostgresPlatformGrantRepository
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedTableOwner);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedFunctionOwner);
         await using var command = dataSource.CreateCommand(
-            "SELECT audit.is_valid,audit.diagnostic_code,audit.profile_version,pg_catalog.has_function_privilege(SESSION_USER,'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'::pg_catalog.regprocedure,'EXECUTE') AND NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)'::pg_catalog.regprocedure,'EXECUTE') FROM agent_private.audit_platform_grant_privileges(@environment_id,@table_owner::name,@function_owner::name) audit");
+            "SELECT audit.is_valid,audit.diagnostic_code,audit.profile_version,pg_catalog.has_function_privilege(SESSION_USER,'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND pg_catalog.has_function_privilege(SESSION_USER,'agent_private.issue_initial_enrollment_grant(uuid,uuid,uuid,uuid,timestamptz,timestamptz,bytea,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz)'::pg_catalog.regprocedure,'EXECUTE') AND NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.read_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,smallint,timestamptz)'::pg_catalog.regprocedure,'EXECUTE') AND NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,bytea)'::pg_catalog.regprocedure,'EXECUTE') AND NOT pg_catalog.has_function_privilege(SESSION_USER,'agent_private.revoke_initial_enrollment_grant(uuid,uuid,uuid,uuid,uuid,uuid,timestamptz,bytea,bytea,timestamptz,timestamptz,smallint,timestamptz,bytea)'::pg_catalog.regprocedure,'EXECUTE') FROM agent_private.audit_platform_grant_privileges(@environment_id,@table_owner::name,@function_owner::name) audit");
         command.Parameters.AddWithValue("environment_id", expectedEnvironmentId);
         command.Parameters.AddWithValue("table_owner", expectedTableOwner);
         command.Parameters.AddWithValue("function_owner", expectedFunctionOwner);
@@ -33,7 +33,7 @@ public sealed class PostgresPlatformGrantRepository
         var diagnostic = ParseDiagnostic(reader.GetString(1));
         var profileVersion = reader.GetInt16(2);
         var hasExactIssueCapability = reader.GetBoolean(3);
-        if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !isValid || profileVersion != 2 ||
+        if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !isValid || profileVersion != 3 ||
             diagnostic != PlatformGrantDiagnostic.None || !hasExactIssueCapability)
             throw new InvalidOperationException("PlatformGrantPrivilegeAuditFailed");
         return new(dataSource, expectedEnvironmentId);
@@ -47,13 +47,17 @@ public sealed class PostgresPlatformGrantRepository
         if (operationId == Guid.Empty) return new(PlatformGrantOutcome.PermanentRejected, PlatformGrantDiagnostic.InvalidRequest, null);
         try
         {
-            await using var command = _dataSource.CreateCommand(
-                "SELECT outcome,diagnostic_code,environment_id,operation_id,grant_id,directory_object_id,device_id,mapping_created_at,created_at,expires_at FROM agent_private.issue_initial_enrollment_grant(@expected_environment_id,@operation_id,@directory_object_id,@expected_device_id,@mapping_created_at,@token_sha256,@authorization_digest)");
+            var sql = authorization.IssueContractVersion == 1
+                ? "SELECT outcome,diagnostic_code,environment_id,operation_id,grant_id,directory_object_id,device_id,mapping_created_at,created_at,expires_at,issue_contract_version,mint_permit_not_after FROM agent_private.issue_initial_enrollment_grant(@expected_environment_id,@operation_id,@directory_object_id,@expected_device_id,@mapping_created_at,@token_sha256,@authorization_digest)"
+                : "SELECT outcome,diagnostic_code,environment_id,operation_id,grant_id,directory_object_id,device_id,mapping_created_at,created_at,expires_at,issue_contract_version,mint_permit_not_after FROM agent_private.issue_initial_enrollment_grant(@expected_environment_id,@operation_id,@directory_object_id,@expected_device_id,@mapping_created_at,@mint_permit_not_after,@token_sha256,@authorization_digest)";
+            await using var command = _dataSource.CreateCommand(sql);
             command.Parameters.AddWithValue("expected_environment_id", _environmentId);
             command.Parameters.AddWithValue("operation_id", operationId);
             command.Parameters.AddWithValue("directory_object_id", authorization.DirectoryObjectId);
             command.Parameters.AddWithValue("expected_device_id", authorization.ExpectedDeviceId);
             command.Parameters.AddWithValue("mapping_created_at", authorization.MappingCreatedAt);
+            if (authorization.MintPermitNotAfter is { } deadline)
+                command.Parameters.AddWithValue("mint_permit_not_after", deadline);
             command.Parameters.AddWithValue("token_sha256", preparedGrant.GetTokenSha256());
             command.Parameters.AddWithValue("authorization_digest", authorization.GetDigest());
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -63,7 +67,8 @@ public sealed class PostgresPlatformGrantRepository
                 reader.IsDBNull(2) ? null : reader.GetGuid(2), reader.IsDBNull(3) ? null : reader.GetGuid(3),
                 reader.IsDBNull(4) ? null : reader.GetGuid(4), reader.IsDBNull(5) ? null : reader.GetGuid(5),
                 reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.IsDBNull(7) ? null : reader.GetFieldValue<DateTimeOffset>(7),
-                reader.IsDBNull(8) ? null : reader.GetFieldValue<DateTimeOffset>(8), reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9));
+                reader.IsDBNull(8) ? null : reader.GetFieldValue<DateTimeOffset>(8), reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9),
+                reader.IsDBNull(10) ? null : reader.GetInt16(10), reader.IsDBNull(11) ? null : reader.GetFieldValue<DateTimeOffset>(11));
             if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) return Unknown();
             return NormalizeResult(row, _environmentId, operationId, authorization, preparedGrant);
         }
@@ -92,11 +97,15 @@ public sealed class PostgresPlatformGrantRepository
             if (diagnostic != PlatformGrantDiagnostic.None || !MatchesRequest(row, environmentId, operationId, authorization) ||
                 row.GrantId is null || row.GrantId == Guid.Empty || row.MappingCreatedAt is null || row.CreatedAt is null || row.ExpiresAt is null ||
                 !IsCanonical(row.MappingCreatedAt.Value) || !IsCanonical(row.CreatedAt.Value) || !IsCanonical(row.ExpiresAt.Value) ||
+                row.MappingCreatedAt.Value > row.CreatedAt.Value ||
+                row.IssueContractVersion != authorization.IssueContractVersion || row.MintPermitNotAfter != authorization.MintPermitNotAfter ||
+                !ValidContract(row.IssueContractVersion.Value, row.MintPermitNotAfter, row.CreatedAt.Value) ||
                 row.ExpiresAt.Value - row.CreatedAt.Value != TimeSpan.FromSeconds(600))
                 return Unknown();
             return new(outcome, diagnostic, new PlatformGrantReceipt(environmentId, operationId, row.GrantId.Value,
                 row.DirectoryObjectId!.Value, row.DeviceId!.Value, row.MappingCreatedAt!.Value,
-                row.CreatedAt.Value, row.ExpiresAt.Value, preparedGrant.GetTokenSha256(), authorization.GetDigest()));
+                row.CreatedAt.Value, row.ExpiresAt.Value, row.IssueContractVersion.Value, row.MintPermitNotAfter,
+                preparedGrant.GetTokenSha256(), authorization.GetDigest()));
         }
 
         if (outcome == PlatformGrantOutcome.Unauthorized)
@@ -104,6 +113,7 @@ public sealed class PostgresPlatformGrantRepository
                 ? new(outcome, diagnostic, null) : Unknown();
 
         if (row.GrantId is not null || row.CreatedAt is not null || row.ExpiresAt is not null ||
+            row.IssueContractVersion is not null || row.MintPermitNotAfter is not null ||
             !MatchesRequest(row, environmentId, operationId, authorization))
             return Unknown();
 
@@ -113,7 +123,8 @@ public sealed class PostgresPlatformGrantRepository
         if (outcome == PlatformGrantOutcome.PermanentRejected && diagnostic is
             PlatformGrantDiagnostic.InvalidRequest or PlatformGrantDiagnostic.MappingUnavailable or
             PlatformGrantDiagnostic.DeviceUnavailable or PlatformGrantDiagnostic.EnrollmentAlreadyExists or
-            PlatformGrantDiagnostic.EnrollmentInProgress or PlatformGrantDiagnostic.GrantAlreadyAvailable)
+            PlatformGrantDiagnostic.EnrollmentInProgress or PlatformGrantDiagnostic.GrantAlreadyAvailable or
+            PlatformGrantDiagnostic.MintPermitExpired or PlatformGrantDiagnostic.InvalidMintPermit)
             return new(outcome, diagnostic, null);
 
         return Unknown();
@@ -128,7 +139,14 @@ public sealed class PostgresPlatformGrantRepository
     private static bool AllResultFieldsNull(PlatformGrantDatabaseResult row) =>
         row.EnvironmentId is null && row.OperationId is null && row.GrantId is null &&
         row.DirectoryObjectId is null && row.DeviceId is null && row.MappingCreatedAt is null &&
-        row.CreatedAt is null && row.ExpiresAt is null;
+        row.CreatedAt is null && row.ExpiresAt is null && row.IssueContractVersion is null && row.MintPermitNotAfter is null;
+
+    private static bool ValidContract(short version, DateTimeOffset? deadline, DateTimeOffset createdAt) => version switch
+    {
+        1 => deadline is null,
+        2 => deadline is { } value && IsCanonical(value) && value > createdAt && value - createdAt <= TimeSpan.FromSeconds(60),
+        _ => false
+    };
 
     internal static bool IsCanonical(DateTimeOffset value) => value.Offset == TimeSpan.Zero && value.Ticks % 10 == 0 &&
         value != DateTimeOffset.MinValue && value != DateTimeOffset.MaxValue;
@@ -152,6 +170,8 @@ public sealed class PostgresPlatformGrantRepository
         "EnrollmentAlreadyExists" => PlatformGrantDiagnostic.EnrollmentAlreadyExists,
         "EnrollmentInProgress" => PlatformGrantDiagnostic.EnrollmentInProgress,
         "GrantAlreadyAvailable" => PlatformGrantDiagnostic.GrantAlreadyAvailable,
+        "MintPermitExpired" => PlatformGrantDiagnostic.MintPermitExpired,
+        "InvalidMintPermit" => PlatformGrantDiagnostic.InvalidMintPermit,
         "ReceiptUnavailable" => PlatformGrantDiagnostic.ReceiptUnavailable,
         "OperationConflict" => PlatformGrantDiagnostic.OperationConflict,
         "PrivilegeAuditFailed" => PlatformGrantDiagnostic.PrivilegeAuditFailed,
@@ -162,4 +182,5 @@ public sealed class PostgresPlatformGrantRepository
 
 internal sealed record PlatformGrantDatabaseResult(string? Outcome, string? Diagnostic, Guid? EnvironmentId,
     Guid? OperationId, Guid? GrantId, Guid? DirectoryObjectId, Guid? DeviceId,
-    DateTimeOffset? MappingCreatedAt, DateTimeOffset? CreatedAt, DateTimeOffset? ExpiresAt);
+    DateTimeOffset? MappingCreatedAt, DateTimeOffset? CreatedAt, DateTimeOffset? ExpiresAt,
+    short? IssueContractVersion = null, DateTimeOffset? MintPermitNotAfter = null);
