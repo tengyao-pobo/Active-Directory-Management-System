@@ -239,9 +239,6 @@ DECLARE
     definer oid;
     runtime oid;
     queue_definer oid;
-    delivery_definer oid;
-    status_runtime oid;
-    delivery_runtime oid;
     ok boolean;
     private_registry oid;
     private_marker oid;
@@ -252,8 +249,6 @@ BEGIN
         WHERE r.capability='EnrollmentGrantExecution' AND r.role_kind='Definer';
     SELECT r.role_oid INTO queue_definer FROM enrollment_execution.role_reservations r
         WHERE r.capability='EnrollmentGrantExecution' AND r.role_kind='QueueDefiner';
-    SELECT r.role_oid INTO delivery_definer FROM enrollment_execution.role_reservations r
-        WHERE r.capability='EnrollmentGrantDelivery' AND r.role_kind='DeliveryDefiner';
     SELECT role.oid INTO runtime
     FROM public."DirectoryDatabaseBindings" b JOIN pg_catalog.pg_roles role ON role.rolname=b."LoginRole"
     JOIN enrollment_execution.role_reservations reservation
@@ -261,41 +256,22 @@ BEGIN
       AND reservation.capability='EnrollmentGrantExecution' AND reservation.role_kind='Runtime'
     WHERE b."Purpose"='EnrollmentGrantExecution' AND b."ContractVersion"=2
       AND b."EnvironmentId"=p_environment AND b."PrincipalId" IS NULL;
-    SELECT role.oid INTO status_runtime FROM public."DirectoryDatabaseBindings" binding
-    JOIN pg_catalog.pg_roles role ON role.rolname=binding."LoginRole"
-    JOIN enrollment_execution.role_reservations reservation
-      ON reservation.role_name=binding."LoginRole" AND reservation.role_oid=role.oid
-      AND reservation.capability='EnrollmentGrantDelivery' AND reservation.role_kind='StatusRuntime'
-    WHERE binding."Purpose"='EnrollmentGrantStatusRefresh' AND binding."ContractVersion"=1
-      AND binding."EnvironmentId"=p_environment AND binding."PrincipalId" IS NULL;
-    SELECT role.oid INTO delivery_runtime FROM public."DirectoryDatabaseBindings" binding
-    JOIN pg_catalog.pg_roles role ON role.rolname=binding."LoginRole"
-    JOIN enrollment_execution.role_reservations reservation
-      ON reservation.role_name=binding."LoginRole" AND reservation.role_oid=role.oid
-      AND reservation.capability='EnrollmentGrantDelivery' AND reservation.role_kind='DeliveryRuntime'
-    WHERE binding."Purpose"='EnrollmentGrantDelivery' AND binding."ContractVersion"=1
-      AND binding."EnvironmentId"=p_environment AND binding."PrincipalId" IS NULL;
 
     ok := p_environment IS NOT NULL AND p_environment<>'00000000-0000-0000-0000-000000000000'::uuid
       AND table_owner IS NOT NULL AND definer IS NOT NULL AND queue_definer IS NOT NULL AND runtime IS NOT NULL
-      AND delivery_definer IS NOT NULL AND (status_runtime IS NULL)=(delivery_runtime IS NULL)
       AND (SELECT count(*)=1 FROM enrollment_execution.role_reservations
            WHERE capability='EnrollmentGrantExecution' AND role_kind='Definer')
       AND (SELECT count(*)=1 FROM enrollment_execution.role_reservations
            WHERE capability='EnrollmentGrantExecution' AND role_kind='QueueDefiner')
-      AND (SELECT count(*)=1 FROM enrollment_execution.role_reservations
-           WHERE capability='EnrollmentGrantDelivery' AND role_kind='DeliveryDefiner')
       AND (SELECT count(*)=1 FROM public."DirectoryDatabaseBindings"
            WHERE "Purpose"='EnrollmentGrantExecution' AND "ContractVersion"=2
              AND "EnvironmentId"=p_environment AND "PrincipalId" IS NULL)
       AND NOT EXISTS (
           SELECT 1 FROM enrollment_execution.role_reservations reservation
           LEFT JOIN pg_catalog.pg_roles role ON role.oid=reservation.role_oid AND role.rolname=reservation.role_name
-          WHERE role.oid IS NULL OR reservation.capability NOT IN('EnrollmentGrantExecution','EnrollmentGrantDelivery')
+          WHERE role.oid IS NULL OR reservation.capability<>'EnrollmentGrantExecution'
              OR reservation.reservation_schema_version<>1
-             OR (reservation.role_kind IN('Runtime','StatusRuntime','DeliveryRuntime')) IS DISTINCT FROM role.rolcanlogin
-             OR (reservation.capability='EnrollmentGrantExecution') IS DISTINCT FROM (reservation.role_kind IN('Runtime','Definer','QueueDefiner'))
-             OR (reservation.capability='EnrollmentGrantDelivery') IS DISTINCT FROM (reservation.role_kind IN('DeliveryDefiner','StatusRuntime','DeliveryRuntime'))
+             OR (reservation.role_kind='Runtime') IS DISTINCT FROM role.rolcanlogin
              OR role.rolsuper OR role.rolbypassrls OR role.rolcreatedb OR role.rolcreaterole
              OR role.rolinherit OR role.rolreplication OR role.oid=table_owner
              OR EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.roleid=role.oid OR m.member=role.oid))
@@ -307,37 +283,11 @@ BEGIN
           WHERE binding."Purpose"='EnrollmentGrantExecution' AND NOT EXISTS(SELECT 1 FROM enrollment_execution.role_reservations reservation
             WHERE reservation.role_name=binding."LoginRole" AND reservation.role_kind='Runtime'
               AND reservation.capability='EnrollmentGrantExecution' AND reservation.reservation_schema_version=1))
-      AND NOT EXISTS(SELECT 1 FROM enrollment_execution.role_reservations reservation
-          WHERE reservation.role_kind IN('StatusRuntime','DeliveryRuntime') AND NOT EXISTS(
-            SELECT 1 FROM public."DirectoryDatabaseBindings" binding
-            WHERE binding."LoginRole"=reservation.role_name
-              AND binding."Purpose"=CASE reservation.role_kind WHEN 'StatusRuntime' THEN 'EnrollmentGrantStatusRefresh'
-                    ELSE 'EnrollmentGrantDelivery' END
-              AND binding."ContractVersion"=1 AND binding."EnvironmentId" IS NOT NULL AND binding."PrincipalId" IS NULL))
-      AND NOT EXISTS(SELECT 1 FROM public."DirectoryDatabaseBindings" binding
-          WHERE binding."Purpose" IN('EnrollmentGrantStatusRefresh','EnrollmentGrantDelivery') AND NOT EXISTS(
-            SELECT 1 FROM enrollment_execution.role_reservations reservation
-            WHERE reservation.role_name=binding."LoginRole" AND reservation.capability='EnrollmentGrantDelivery'
-              AND reservation.role_kind=CASE binding."Purpose" WHEN 'EnrollmentGrantStatusRefresh' THEN 'StatusRuntime'
-                    ELSE 'DeliveryRuntime' END AND reservation.reservation_schema_version=1))
-      AND NOT EXISTS(SELECT 1 FROM public."DirectoryDatabaseBindings" binding
-          WHERE binding."Purpose" IN('EnrollmentGrantStatusRefresh','EnrollmentGrantDelivery')
-          GROUP BY binding."EnvironmentId" HAVING count(*)<>2)
       AND EXISTS(SELECT 1 FROM pg_catalog.pg_index index_row JOIN pg_catalog.pg_class index_class ON index_class.oid=index_row.indexrelid
           WHERE index_class.relname='enrollment_execution_environment_login'
             AND index_row.indrelid='public."DirectoryDatabaseBindings"'::regclass AND index_row.indisunique
             AND index_row.indisvalid AND index_row.indisready AND index_row.indpred IS NOT NULL
             AND pg_catalog.pg_get_expr(index_row.indpred,index_row.indrelid)='("Purpose" = ''EnrollmentGrantExecution''::text)')
-      AND EXISTS(SELECT 1 FROM pg_catalog.pg_index index_row JOIN pg_catalog.pg_class index_class ON index_class.oid=index_row.indexrelid
-          WHERE index_class.relname='enrollment_grant_status_environment_login'
-            AND index_row.indrelid='public."DirectoryDatabaseBindings"'::regclass AND index_row.indisunique
-            AND index_row.indisvalid AND index_row.indisready AND index_row.indpred IS NOT NULL
-            AND pg_catalog.pg_get_expr(index_row.indpred,index_row.indrelid)='("Purpose" = ''EnrollmentGrantStatusRefresh''::text)')
-      AND EXISTS(SELECT 1 FROM pg_catalog.pg_index index_row JOIN pg_catalog.pg_class index_class ON index_class.oid=index_row.indexrelid
-          WHERE index_class.relname='enrollment_grant_delivery_environment_login'
-            AND index_row.indrelid='public."DirectoryDatabaseBindings"'::regclass AND index_row.indisunique
-            AND index_row.indisvalid AND index_row.indisready AND index_row.indpred IS NOT NULL
-            AND pg_catalog.pg_get_expr(index_row.indpred,index_row.indrelid)='("Purpose" = ''EnrollmentGrantDelivery''::text)')
       ;
 
     SELECT c.oid INTO private_registry FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -368,8 +318,8 @@ BEGIN
       AND NOT EXISTS(
         WITH expected(definition) AS (VALUES
           ('PRIMARY KEY (role_name)'),('UNIQUE (role_oid)'),
-          ('CHECK (capability = ANY (ARRAY[''EnrollmentGrantExecution''::text, ''EnrollmentGrantDelivery''::text]))'),('CHECK (reservation_schema_version = 1)'),
-          ('CHECK (((capability = ''EnrollmentGrantExecution''::text) AND (role_kind = ANY (ARRAY[''Runtime''::text, ''Definer''::text, ''QueueDefiner''::text]))) OR ((capability = ''EnrollmentGrantDelivery''::text) AND (role_kind = ANY (ARRAY[''DeliveryDefiner''::text, ''StatusRuntime''::text, ''DeliveryRuntime''::text]))))'),
+          ('CHECK (capability = ''EnrollmentGrantExecution''::text)'),('CHECK (reservation_schema_version = 1)'),
+          ('CHECK (role_kind = ANY (ARRAY[''Runtime''::text, ''Definer''::text, ''QueueDefiner''::text]))'),
           ('CHECK (btrim(role_name::text) <> ''''::text)'),('CHECK (role_oid <> 0::oid)')),
         actual AS (SELECT pg_catalog.pg_get_constraintdef(c.oid,true) definition FROM pg_catalog.pg_constraint c
           WHERE c.conrelid='enrollment_execution.role_reservations'::regclass AND c.contype IN('p','u','c') AND c.convalidated)
@@ -382,7 +332,7 @@ BEGIN
             AND p.proowner=table_owner AND l.lanname='sql' AND NOT p.prosecdef AND p.provolatile='i'
             AND p.proparallel='s' AND p.prokind='f' AND NOT p.proretset AND p.prorettype='smallint'::regtype
             AND p.pronargs=0 AND p.proargnames IS NULL AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp']
-            AND pg_catalog.btrim(p.prosrc,E' \t\r\n')='SELECT 4::smallint')
+            AND pg_catalog.btrim(p.prosrc,E' \t\r\n')='SELECT 3::smallint')
       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p
           CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
           WHERE p.oid='enrollment_execution.execution_store_profile()'::regprocedure
@@ -799,92 +749,6 @@ BEGIN
         CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) acl
         WHERE acl.grantee=queue_definer AND acl.is_grantable);
 
-    -- Profile4 delivery family: one shared NOLOGIN definer is always installed. Each environment
-    -- has either no delivery bindings or one exact status/delivery LOGIN pair.
-    ok := ok
-      AND (SELECT count(*)=5 FROM pg_catalog.pg_proc function_row WHERE function_row.proowner=delivery_definer
-        AND function_row.oid IN(
-          'enrollment_execution.delivery_worker_scope(uuid,text)'::regprocedure,
-          'enrollment_execution.read_grant_status_receipt(uuid,uuid)'::regprocedure,
-          'enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'::regprocedure,
-          'enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)'::regprocedure,
-          'enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)'::regprocedure))
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row WHERE function_row.proowner=delivery_definer
-        AND function_row.oid NOT IN(
-          'enrollment_execution.delivery_worker_scope(uuid,text)'::regprocedure,
-          'enrollment_execution.read_grant_status_receipt(uuid,uuid)'::regprocedure,
-          'enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'::regprocedure,
-          'enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)'::regprocedure,
-          'enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)'::regprocedure))
-      AND NOT EXISTS(
-        WITH expected(signature,owner_oid,security_definer,with_rls,volatility,body_hash) AS (VALUES
-          ('enrollment_execution.guard_status_observation()',table_owner,false,false,'v','205fb0e014963548e6ed954ef2680df39de239c5a94893e79079009986c63c17'),
-          ('enrollment_execution.record_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',table_owner,false,false,'v','16e7ce5bada9c6ad5cd54a083fc2f5064300bfa0f1b1591ec5d7a1f328b83e10'),
-          ('enrollment_execution.read_status_refresh_receipt(uuid,uuid)',table_owner,false,false,'v','b140b5dbe814117c4a1214fe4f86d2b595069b35f81a74f94afb061108d9e26f'),
-          ('enrollment_execution.lock_delivery_context(uuid,uuid,uuid,text)',table_owner,false,false,'v','2773f0caa2d5ccdb20d5192bcefc5ef4d848004424b52bd43c746ef2abdd806b'),
-          ('enrollment_execution.get_sealed_delivery(uuid,uuid,uuid,text)',table_owner,false,false,'v','49ac0d54d67374f2e26c4bb1ad57c7ccdd15096da5b013ee1175002b04fefa53'),
-          ('enrollment_execution.ack_sealed_delivery(uuid,uuid,uuid,text,bytea,bytea)',table_owner,false,false,'v','85a3d6f503a90f067a7d94cffaf3fc03f6f3b1adb84db92a40110c721454ab24'),
-          ('enrollment_execution.delivery_worker_scope(uuid,text)',delivery_definer,false,false,'s','ffa020aca5046594c4fe40536acf40c2e6bb9d79aa30363963cf045ebb333bab'),
-          ('enrollment_execution.read_grant_status_receipt(uuid,uuid)',delivery_definer,true,true,'v','63cc9a1b50e70f66d59ed1a754a54c05aee02259341b8f7b6ed9ecf10256ed78'),
-          ('enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',delivery_definer,true,true,'v','545ce0efbc1807b4104a1d5386d328326f1bfc03db98dbcec9ab531f021b03cf'),
-          ('enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)',delivery_definer,true,true,'v','f80126238164f65f17e8fb933b13799aa2fd6b45a1f3eb58a8f673014fcf5e3b'),
-          ('enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)',delivery_definer,true,true,'v','99f68247c9d723dfa7755481005aa7104f93646f6095315ea8439db444668323'),
-          ('enrollment_execution.reject_delivery_update()',table_owner,true,true,'v','279e969ccd38a161d13a2dad55009fd9e759ee9fd9e9b615dbb834ba4abfeb76'),
-          ('enrollment_execution.audit_delivery_privileges(uuid)',table_owner,true,true,'s','3bf777d8dc0d6b4643c7893912af7d6768acca388c8ded40b47a7350d088467a')),
-        actual AS (SELECT expected.*,function_row.oid,function_row.proowner,function_row.prosecdef,function_row.proisstrict,
-            language_row.lanname,function_row.provolatile,function_row.proparallel,function_row.proconfig,
-            pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.btrim(
-              pg_catalog.regexp_replace(function_row.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex') actual_hash
-          FROM expected LEFT JOIN pg_catalog.pg_proc function_row
-            ON function_row.oid=pg_catalog.to_regprocedure(expected.signature)
-          LEFT JOIN pg_catalog.pg_language language_row ON language_row.oid=function_row.prolang)
-        SELECT 1 FROM actual WHERE oid IS NULL OR proowner<>owner_oid OR prosecdef<>security_definer
-          OR proisstrict OR lanname<>'plpgsql' OR provolatile::text<>volatility OR proparallel<>'u'
-          OR proconfig<>CASE WHEN with_rls THEN ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
-                            ELSE ARRAY['search_path=pg_catalog, pg_temp'] END OR actual_hash<>body_hash)
-      AND (SELECT count(*)=34 FROM pg_catalog.pg_policy policy_row
-        WHERE delivery_definer=ANY(policy_row.polroles) AND policy_row.polname LIKE 'enrollment_delivery_%')
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy policy_row
-        WHERE delivery_definer=ANY(policy_row.polroles) AND policy_row.polname NOT LIKE 'enrollment_delivery_%')
-      AND (SELECT count(*)=6 FROM pg_catalog.pg_trigger trigger_row
-        WHERE NOT trigger_row.tgisinternal AND trigger_row.tgname LIKE 'enrollment_delivery_%'
-          AND trigger_row.tgenabled='O' AND trigger_row.tgtype=19
-          AND trigger_row.tgfoid='enrollment_execution.reject_delivery_update()'::regprocedure)
-      AND (status_runtime IS NULL OR (
-        NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row WHERE function_row.proowner IN(status_runtime,delivery_runtime))
-        AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
-          WHERE pg_catalog.has_table_privilege(status_runtime,relation.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-             OR pg_catalog.has_table_privilege(delivery_runtime,relation.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'))
-        AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
-          WHERE pg_catalog.has_any_column_privilege(status_runtime,relation.oid,'SELECT,INSERT,UPDATE,REFERENCES')
-             OR pg_catalog.has_any_column_privilege(delivery_runtime,relation.oid,'SELECT,INSERT,UPDATE,REFERENCES'))
-        AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row
-          CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(function_row.proacl,
-            pg_catalog.acldefault('f',function_row.proowner))) acl
-          WHERE acl.grantee=status_runtime AND (acl.privilege_type<>'EXECUTE' OR acl.is_grantable OR function_row.oid NOT IN(
-              'enrollment_execution.read_grant_status_receipt(uuid,uuid)'::regprocedure,
-              'enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'::regprocedure,
-              'enrollment_execution.audit_delivery_privileges(uuid)'::regprocedure)))
-        AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row
-          CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(function_row.proacl,
-            pg_catalog.acldefault('f',function_row.proowner))) acl
-          WHERE acl.grantee=delivery_runtime AND (acl.privilege_type<>'EXECUTE' OR acl.is_grantable OR function_row.oid NOT IN(
-              'enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)'::regprocedure,
-              'enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)'::regprocedure,
-              'enrollment_execution.audit_delivery_privileges(uuid)'::regprocedure)))
-        AND (SELECT count(*)=3 FROM pg_catalog.pg_proc function_row CROSS JOIN LATERAL
-          pg_catalog.aclexplode(function_row.proacl) acl WHERE acl.grantee=status_runtime
-            AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable)
-        AND (SELECT count(*)=3 FROM pg_catalog.pg_proc function_row CROSS JOIN LATERAL
-          pg_catalog.aclexplode(function_row.proacl) acl WHERE acl.grantee=delivery_runtime
-            AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable)))
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
-        CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(relation.relacl,pg_catalog.acldefault('r',relation.relowner))) acl
-        WHERE acl.grantee=delivery_definer AND acl.is_grantable)
-      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute attribute
-        CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) acl
-        WHERE acl.grantee=delivery_definer AND acl.is_grantable);
-
     ok := ok AND (SELECT count(*)=1 AND bool_and(p.proowner=table_owner AND l.lanname='plpgsql'
         AND NOT p.prosecdef AND p.provolatile='v' AND p.proparallel='u' AND NOT p.proisstrict AND NOT p.proleakproof
         AND p.prokind='f' AND NOT p.proretset AND p.prorettype='trigger'::regtype AND p.pronargs=0
@@ -897,7 +761,7 @@ BEGIN
       FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
       WHERE p.oid=pg_catalog.to_regprocedure('public.validate_enrollment_grant_queue_anchor()'));
 
-    RETURN QUERY SELECT COALESCE(ok,false),CASE WHEN COALESCE(ok,false) THEN 'None' ELSE 'ProfileDrift' END,4::smallint;
+    RETURN QUERY SELECT COALESCE(ok,false),CASE WHEN COALESCE(ok,false) THEN 'None' ELSE 'ProfileDrift' END,3::smallint;
 END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.audit_execution_privileges(uuid) FROM PUBLIC;

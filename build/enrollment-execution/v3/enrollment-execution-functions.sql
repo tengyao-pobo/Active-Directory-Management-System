@@ -90,7 +90,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 DECLARE audit_rows bigint; valid_rows bigint; operation public."EnrollmentGrantOperations"%ROWTYPE;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=4)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=3)
         INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution capability is unavailable.';
@@ -157,7 +157,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 DECLARE audit_rows bigint; valid_rows bigint; operation public."EnrollmentGrantOperations"%ROWTYPE;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=4)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=3)
         INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution capability is unavailable.';
@@ -192,7 +192,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 DECLARE audit_rows bigint; valid_rows bigint; operation public."EnrollmentGrantOperations"%ROWTYPE;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=4)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=3)
         INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution capability is unavailable.';
@@ -230,7 +230,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 DECLARE audit_rows bigint; valid_rows bigint; operation public."EnrollmentGrantOperations"%ROWTYPE;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=4)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=3)
         INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution capability is unavailable.';
@@ -266,7 +266,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 DECLARE audit_rows bigint; valid_rows bigint; operation public."EnrollmentGrantOperations"%ROWTYPE;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=4)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=3)
         INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution capability is unavailable.';

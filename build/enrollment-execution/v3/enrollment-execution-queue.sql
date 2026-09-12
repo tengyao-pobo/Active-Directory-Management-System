@@ -100,7 +100,7 @@ SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
 DECLARE audit_rows bigint; valid_rows bigint;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=4)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=3)
       INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) AS audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.queue_worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution queue capability is unavailable.';
@@ -120,7 +120,7 @@ SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
 DECLARE audit_rows bigint; valid_rows bigint;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=4)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=3)
       INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) AS audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.queue_worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution queue capability is unavailable.';
@@ -140,7 +140,7 @@ SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
 DECLARE audit_rows bigint; valid_rows bigint;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=4)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=3)
       INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) AS audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.queue_worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution queue capability is unavailable.';

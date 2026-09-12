@@ -1,0 +1,81 @@
+# Cloud development handoff — 2026-09-12
+
+## Objective and authorization
+
+Continue the IT Management Console implementation against all 100 requirements in `docs/requirements/original-request.md`. The latest user instruction is to continue every stage automatically, build/test/fix/document each stage, and merge verified GitHub PRs without asking again. The user now requests cloud execution so their Windows PC need not stay on. Keep the user-facing workflow in the platform: RSAT was background information about their company, not a separate product workflow.
+
+This repository is deliberately public and authorized: `tengyao-pobo/Active-Directory-Management-System`. Publish code and synthetic fixtures only. Never copy local database credentials, databases, certificates, session tokens, or `.local`/`.tools` contents. Do not perform real AD, Entra, IAM, CA, production database, or enterprise changes; these still require exact approval and environment verification. Windows/enterprise-only checks remain explicitly pending while cloud-compatible implementation continues.
+
+Use a small number of agents only for useful independent work; Root may take over poor agent work. Specialist security analysis/review must use Daybreak Blue only; if unavailable, report it and do not substitute a general model for essential specialist review. Ordinary coding/testing can continue independently. Do not create scheduled tasks or claim indefinite background operation without an actual supported scheduler.
+
+## Verified base
+
+- `main` at `d1e0aa35ac4e5b18ad6c1bb1b72e680141c8039f`, PR #41 merged.
+- PR #41 head `9df5072601b64e8ae5116e9dc69f23f387c796f8`, tree `b7e4b9918dc3d36d58402479fe5c2a6e708bc6eb`.
+- Both push and PR workflows passed: 34687261433 and 34687271894.
+- Local full backend: 14 projects, 1,401 passing tests, zero build warnings/errors. Final affected status integration suite: 23 passing tests after two concurrency cases and a test-oracle correction. Do not add these counts together as unique tests.
+- PR #40 private lifecycle profile4 isolated status reader/delivery DTOs and PR #39 verify-only worker host are already merged.
+- Read `docs/architecture/implementation-status.md`, platform-grant-delivery.md, platform-grant-public-store.md, platform-grant-queue.md, platform-grant-worker.md, and deployment/enrollment-worker.md for context.
+- Overall requirements remain incomplete. The coarse status table is 4 I / 58 P / 38 A; the user was told approximately 33% by weighting P as one half, explicitly not an exact effort estimate.
+
+## This branch is an unfinished checkpoint, not merge-ready
+
+`codex/platform-delivery-capabilities` contains incomplete public profile4 integration. Do not deploy, activate readiness, or merge this snapshot just because some earlier tests passed.
+
+Completed bounded pieces:
+
+1. `20260912130000_EnrollmentGrantDeliveryHelpers.cs` adds four owner-only SECURITY INVOKER helpers: read_status_refresh_receipt, lock_delivery_context, get_sealed_delivery, ack_sealed_delivery. Combined with the prior record_status_observation helper there are five owner helpers.
+2. Current helper migration SHA-256: `EAD9661859DD2F7209427D1AA21A01B7BF9A01FB280A4CCCC7669F031A842664`. Daybreak approved this exact delta after removing an unnecessary FOR UPDATE from the immutable receipt read.
+3. On a fresh isolated PostgreSQL 18 database, all 23 `DeliveryHelper` integration cases passed, including a receipt-read transaction that does not block another connection's ACK. The prior failed ACK tests were a fixture issue: receipt setup forced constraints immediate; tests now restore normal initially-deferred mode before atomic ACK/delete.
+4. `EnrollmentGrantStatusObservationWriteResult` strictly normalizes the 12-column record response. Recorded/AlreadyRecorded require exact candidate binding; Terminal returns an existing different terminal observation and does not accept the new UUID; NotFound requires all payload columns NULL. Its project had 58 passing tests including 15 new cases before later repository work. Root changed only Unknown() visibility from private to internal afterward.
+
+Unverified new C# implementation:
+
+- EnrollmentGrantDeliveryStores.cs, PostgresEnrollmentDeliveryPool.cs, PostgresEnrollmentDeliveryCodec.cs, PostgresEnrollmentGrantStatusStore.cs, PostgresEnrollmentGrantDeliveryStore.cs.
+- New project reference to AgentPlatformGrants and corresponding friend assembly; embedded audit resource `EnrollmentDeliveryCatalogAudit` points to `build/audit-enrollment-delivery.sql`, which is NOT WRITTEN yet. Therefore this checkpoint is expected not to build until the audit file and lockfiles are completed.
+- Pool audits before every SERIALIZABLE transaction; unknown decoded results roll back; no accepted result escapes before confirmed commit. Purpose and environment are fixed per pool. Session hashes are uppercase 64-character hex, never raw cookies. Add focused codec/negative/connection/audit/commit-ambiguity tests, review and fix as needed.
+- Lockfiles have NOT been refreshed after the new project reference. Integration.csproj still needs delivery reference and copied new SQL scripts for runtime tests.
+
+## Profile4 SQL work in progress
+
+An agent froze work when cloud migration was requested. New scripts: enrollment-delivery-profile.sql, provision-enrollment-delivery.sql, upgrade-enrollment-execution-v3-to-v4.sql. Modified existing scripts: enrollment-execution-functions.sql, enrollment-execution-queue.sql, and a partial enrollment-execution-profile.sql.
+
+These scripts have NOT been parsed, built, or run. The delivery audit currently relies on an INCOMPLETE execution profile4 slice. Complete exact policy expressions, table/column ACLs, owner helpers/table/constraint/trigger metadata, no-extra-privilege checks and the absent/pair matrix. Never treat that draft as proof of security.
+
+Still required:
+
+- Write external `audit-enrollment-delivery.sql` with one boolean row, pin the audit function's body/metadata before trusting it, and validate purpose-specific rights. Exact placeholders agreed with C#: `:'runtime_role'`, `:'delivery_definer_role'`, `:'expected_table_owner_role'`, `:'expected_environment_id'`, `:'expected_purpose'`.
+- Finish provision-enrollment-execution.sql, audit-enrollment-execution.sql, audit-enrollment-grant-operations.sql, provision-runtime.sql and API/C# pins/version acceptance. Existing C# must support exactly 3 or 4 for staged upgrade, with complete version-specific audits.
+- Keep historical `build/enrollment-execution/v3/` copies immutable. Adapt v2-to-v3 upgrades to use these instead of the new profile4 scripts. Preserve existing v2 archive.
+- Implement fresh installation and exact transactional v3 preflight/v4 postflight. Regenerate ALL changed normalized body pins, verify catalog output on PostgreSQL including Linux collation (`COLLATE "C"` where ordered textual definitions are hashed), then test rollback injection, repeat provisioning and complete role/environment separation.
+- Public profile4 globally installs a shared NOLOGIN DeliveryDefiner. For each environment, the status/delivery LOGIN pair may be wholly absent or both complete; never a partial pair. All global structure must still audit in the definer-only state.
+- Provision parameters: status_runtime_role, delivery_runtime_role, delivery_definer_role, expected_table_owner_role, expected_environment_id, DBNAME.
+- Reserve role capability EnrollmentGrantDelivery with DeliveryDefiner/StatusRuntime/DeliveryRuntime kinds. Bind purposes EnrollmentGrantStatusRefresh / EnrollmentGrantDelivery, contract1, PrincipalId NULL. No rebind/reuse with execution/API/private roles. LOGINs get wrappers/audit only, no tables. Shared definer gets exact helpers, minimum columns and scoped RLS. Dummy UPDATE privileges needed for row locks must be paired with audited triggers rejecting actual mutation of authority rows.
+
+Agreed public wrapper signatures (do not accidentally diverge from C#):
+
+- audit_delivery_privileges(uuid) -> is_valid, diagnostic_code, profile_version
+- read_grant_status_receipt(uuid,uuid) -> same 14 columns as owner receipt helper
+- append_grant_status_observation(same 17 parameters as owner record helper) -> same 12 columns
+- read_grant_delivery(uuid,uuid,uuid,text) -> same 10 columns as owner GET
+- acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea) -> same 2 columns as owner ACK
+
+Each wrapper validates exact SESSION_USER purpose/environment binding, acquires shared profile lock, audits, and configures transaction-local `app.delivery_environment_id`, `app.delivery_operation_id`, `app.delivery_requester_id`.
+
+## Approved delivery rules
+
+- GET and ACK both revalidate original requester, enabled principal, active membership, current Ready directory generation Computer, and current Computer.View AND Owner-only AgentEnrollmentGrant.Manage.
+- Common helper locks environment -> sync -> current computer -> principal -> membership -> session -> operation; initial operation lookup only identifies immutable target. Re-read locked env/op/requester/directory tuple. Use DB clock after locks.
+- Session IdHash is TEXT uppercase hex64, not bytea. Session must be unrevoked/unexpired, canonical finite chronology; StepUpAt and LastSeenAt each no older than ONE minute, not future and not before CreatedAt. This conservative delivery limit cannot exceed any supported global minimum setting (StepUpMinutes >=1, IdleMinutes >=1). Mirror it in future API UX. Do not replace it with fixed5 minutes or bypass step-up for ACK.
+- Do not revalidate old approver/plan/approval expiry/issuance authorization deadline to deliver an already issued grant.
+- GET only returns ciphertext for latest fresh Available, Issued, envelope present, no ACK, grant unexpired; reject clock rollback before recorded/private-observed time. DTO remains seven public fields and <=15-second deadline.
+- ACK JSON remains only formatVersion/recipientKeyFingerprint/ciphertextSha256. Derive token hash from DB permit/receipt. Exact ACK retry succeeds after envelope deletion; original requester must still pass current authorization. ACK can clean up after Unknown/Consumed/Revoked/Expired. Insert ACK and delete envelope in the same transaction; CSRF enforced by future API, not a caller SQL token.
+- Unknown status has no invented private timestamp. New Available must be >= maximum Unknown recorded time; terminal status latches. Exact old observation retries are historical evidence, not current delivery permission.
+
+## Cloud verification and next stages
+
+Use the existing `.github/workflows/verify.yml` as the portable environment reference: .NET SDK from global.json, Node/pnpm from workflow, PostgreSQL 18 with psql. Run database projects sequentially because fixtures mutate shared catalogs. Use fresh synthetic public DB and isolated private fixtures; do not recreate local secrets. Backend verification is build/verify.ps1 or equivalent locked restore/build/test -m:1. Frontend has lint, tests, enrollment interop, build, Playwright.
+
+First complete and test this profile4/store increment, request ordinary and Daybreak review, verify exact published head in both CI workflows, and only then merge. Continue status refresh orchestration/pools, authorized GET/ACK API, browser trusted local handoff, durable expired ciphertext disposition/cleanup, listener/CA enrollment and worker activation. Readiness remains false until the full path is safe and validated. Then continue the remaining original platform requirements rather than stopping at enrollment or V1. Keep real Windows/enterprise validation distinct from synthetic code tests.
+
+No current local process or state is needed by the cloud task. Local source and synthetic test data are preserved for recovery; they are not a dependency for cloud continuation.

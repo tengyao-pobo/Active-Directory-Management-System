@@ -3,4 +3,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>ItManagement.EnrollmentGrantDelivery</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AgentPlatformGrants\AgentPlatformGrants.csproj" />
+    <EmbeddedResource Include="..\..\..\build\audit-enrollment-delivery.sql" LogicalName="EnrollmentDeliveryCatalogAudit" />
+    <InternalsVisibleTo Include="EnrollmentGrantDelivery.Tests" />
+    <InternalsVisibleTo Include="Integration" />
+  </ItemGroup>
 </Project>
