@@ -5,6 +5,51 @@ namespace ItManagement.IntegrationTests;
 
 public sealed partial class EnrollmentGrantPlanTests
 {
+    [Fact]
+    public async Task DeliveryIdentityOwnerPolicyWorksWithoutSuperuserOrBypassRls()
+    {
+        var seed = await _fixture.SeedAsync();
+        await using var connection = new NpgsqlConnection(Environment.GetEnvironmentVariable("CONSOLE_TEST_DB")!);
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable);
+        var suffix = Guid.NewGuid().ToString("N");
+        var owner = "identity_owner_" + suffix;
+        var plan = "identity_plan_" + suffix;
+        var execution = "identity_exec_" + suffix;
+        async Task Execute(string sql)
+        {
+            await using var command = new NpgsqlCommand(sql, connection, transaction);
+            await command.ExecuteNonQueryAsync();
+        }
+        await Execute($"""
+            CREATE ROLE "{owner}" NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS;
+            CREATE ROLE "{plan}" NOLOGIN NOINHERIT;
+            CREATE ROLE "{execution}" NOLOGIN NOINHERIT;
+            GRANT USAGE ON SCHEMA public TO "{owner}";
+            GRANT SELECT ON public."DirectoryDatabaseBindings" TO "{owner}";
+            ALTER TABLE public."Principals" OWNER TO "{owner}";
+            ALTER TABLE public."Sessions" OWNER TO "{owner}";
+            """);
+        var source = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "enrollment-delivery-identity.sql"));
+        await Execute(source.Replace(":\"expected_table_owner_role\"", QuoteIdentifier(owner), StringComparison.Ordinal)
+            .Replace(":\"enrollment_plan_lock_owner_role\"", QuoteIdentifier(plan), StringComparison.Ordinal)
+            .Replace(":\"execution_definer_role\"", QuoteIdentifier(execution), StringComparison.Ordinal));
+        await Execute($"SET LOCAL SESSION AUTHORIZATION {QuoteIdentifier(owner)}");
+        await using (var flags = new NpgsqlCommand("SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname=CURRENT_USER", connection, transaction))
+            Assert.Equal(false, await flags.ExecuteScalarAsync());
+        await using (var maintenance = new NpgsqlCommand($"""
+            WITH changed AS (UPDATE public."Principals" SET "Enabled"=false
+              WHERE "Id"='{seed.Requester.Id}' RETURNING 1) SELECT count(*) FROM changed
+            """, connection, transaction))
+            Assert.Equal(1L, await maintenance.ExecuteScalarAsync());
+        await using (var sessions = new NpgsqlCommand($"""
+            WITH changed AS (UPDATE public."Sessions" SET "RevokedAt"=now()
+              WHERE "PrincipalId"='{seed.Requester.Id}' RETURNING 1) SELECT count(*) FROM changed
+            """, connection, transaction))
+            Assert.Equal(1L, await sessions.ExecuteScalarAsync());
+        await transaction.RollbackAsync();
+    }
+
     [Theory]
     [InlineData("unbound")]
     [InlineData("connector")]

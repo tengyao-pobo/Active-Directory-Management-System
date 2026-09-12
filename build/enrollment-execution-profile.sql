@@ -922,15 +922,40 @@ BEGIN
         UNION ALL (SELECT * FROM all_named EXCEPT SELECT * FROM expected)) differences);
     -- END exact delivery structure
 
+    -- BEGIN delivery runtime relation privileges
+    -- System catalogs have ordinary PUBLIC read privileges. Reject effective access
+    -- to application relations in every schema for every reserved delivery runtime.
+    ok := ok AND NOT EXISTS(
+      SELECT 1 FROM enrollment_execution.role_reservations reservation
+      LEFT JOIN pg_catalog.pg_roles runtime_role ON runtime_role.oid=reservation.role_oid
+        AND runtime_role.rolname=reservation.role_name
+      WHERE reservation.capability='EnrollmentGrantDelivery'
+        AND reservation.role_kind IN('StatusRuntime','DeliveryRuntime')
+        AND CASE WHEN runtime_role.oid IS NULL THEN true ELSE
+          pg_catalog.has_database_privilege(runtime_role.oid,pg_catalog.current_database(),'CREATE')
+          OR EXISTS(SELECT 1 FROM pg_catalog.pg_default_acl defaults
+            CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) acl
+            WHERE defaults.defaclobjtype IN('r','S') AND acl.grantee IN(0,runtime_role.oid))
+          OR EXISTS(SELECT 1 FROM pg_catalog.pg_namespace namespace
+            WHERE namespace.nspname NOT IN('pg_catalog','information_schema')
+              AND namespace.nspname !~ '^pg_(toast|temp_)'
+              AND pg_catalog.has_schema_privilege(runtime_role.oid,namespace.oid,'CREATE'))
+          OR EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
+            JOIN pg_catalog.pg_namespace namespace ON namespace.oid=relation.relnamespace
+            WHERE namespace.nspname NOT IN('pg_catalog','information_schema')
+              AND namespace.nspname !~ '^pg_(toast|temp_)'
+              AND CASE WHEN relation.relkind IN('r','p','v','m','f') THEN
+                pg_catalog.has_table_privilege(runtime_role.oid,relation.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+                OR pg_catalog.has_any_column_privilege(runtime_role.oid,relation.oid,'SELECT,INSERT,UPDATE,REFERENCES')
+              WHEN relation.relkind='S' THEN
+                pg_catalog.has_sequence_privilege(runtime_role.oid,relation.oid,'USAGE,SELECT,UPDATE')
+              ELSE false END)
+          END);
+    -- END delivery runtime relation privileges
+
     ok := ok
       AND (status_runtime IS NULL OR (
         NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row WHERE function_row.proowner IN(status_runtime,delivery_runtime))
-        AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
-          WHERE pg_catalog.has_table_privilege(status_runtime,relation.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-             OR pg_catalog.has_table_privilege(delivery_runtime,relation.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'))
-        AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
-          WHERE pg_catalog.has_any_column_privilege(status_runtime,relation.oid,'SELECT,INSERT,UPDATE,REFERENCES')
-             OR pg_catalog.has_any_column_privilege(delivery_runtime,relation.oid,'SELECT,INSERT,UPDATE,REFERENCES'))
         AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row
           CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(function_row.proacl,
             pg_catalog.acldefault('f',function_row.proowner))) acl

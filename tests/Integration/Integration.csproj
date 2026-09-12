@@ -37,6 +37,8 @@
     <None Include="..\..\build\audit-enrollment-delivery.sql" Link="audit-enrollment-delivery.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\enrollment-delivery-profile.sql" Link="enrollment-delivery-profile.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\enrollment-delivery-identity.sql" Link="enrollment-delivery-identity.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-delivery-identity.sql" Link="audit-enrollment-delivery-identity.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-delivery-bindings.sql" Link="audit-enrollment-delivery-bindings.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\provision-enrollment-delivery.sql" Link="provision-enrollment-delivery.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\upgrade-enrollment-execution-v3-to-v4.sql" Link="upgrade-enrollment-execution-v3-to-v4.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\enrollment-execution-queue.sql" Link="enrollment-execution-queue.sql" CopyToOutputDirectory="PreserveNewest" />
