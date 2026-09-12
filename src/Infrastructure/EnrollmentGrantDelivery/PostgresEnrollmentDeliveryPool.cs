@@ -65,16 +65,35 @@ internal sealed class PostgresEnrollmentDeliveryPool
 
     private async Task AuditAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct)
     {
-        await using var command = new NpgsqlCommand(AuditQuery.Value, connection, transaction);
-        command.Parameters.AddWithValue("runtime", _runtime);
-        command.Parameters.AddWithValue("owner", _owner);
-        command.Parameters.AddWithValue("definer", _definer);
-        command.Parameters.AddWithValue("environment", EnvironmentId);
-        command.Parameters.AddWithValue("purpose", _purpose);
-        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
-        if (reader.FieldCount != 1 || !await reader.ReadAsync(ct).ConfigureAwait(false) || reader.IsDBNull(0) ||
-            !reader.GetBoolean(0) || await reader.ReadAsync(ct).ConfigureAwait(false))
-            throw new InvalidOperationException("EnrollmentDeliveryPrivilegeAuditFailed");
+        // The deployment lock covers attestation, operation and commit on this same transaction.
+        await using (var locking = new NpgsqlCommand(
+            "SELECT pg_catalog.pg_advisory_xact_lock_shared(1162235478,1)", connection, transaction))
+            await locking.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+        await using (var command = new NpgsqlCommand(AuditQuery.Value, connection, transaction))
+        {
+            command.Parameters.AddWithValue("runtime", _runtime);
+            command.Parameters.AddWithValue("owner", _owner);
+            command.Parameters.AddWithValue("definer", _definer);
+            command.Parameters.AddWithValue("environment", EnvironmentId);
+            command.Parameters.AddWithValue("purpose", _purpose);
+            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            if (!await PostgresEnrollmentDeliveryAuditResult.ReadCatalogAsync(reader, ct).ConfigureAwait(false))
+                throw new InvalidOperationException("EnrollmentDeliveryPrivilegeAuditFailed");
+        }
+
+        // Never invoke the internal chain before its catalog/body attestation passes.
+        // The external gate remains false until profile4 and purpose-specific ACLs are complete.
+        // Internal attestation must bind SESSION_USER to this environment's exact runtime pair;
+        // the definer-only scope function is deliberately not callable by this pool.
+        await using (var command = new NpgsqlCommand(
+            "SELECT * FROM enrollment_execution.audit_delivery_privileges(@environment)", connection, transaction))
+        {
+            command.Parameters.AddWithValue("environment", EnvironmentId);
+            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            if (!await PostgresEnrollmentDeliveryAuditResult.ReadProfileAsync(reader, ct).ConfigureAwait(false))
+                throw new InvalidOperationException("EnrollmentDeliveryPrivilegeAuditFailed");
+        }
     }
 
     internal bool ValidOperation(Guid environmentId, Guid operationId) => environmentId == EnvironmentId && operationId != Guid.Empty;
