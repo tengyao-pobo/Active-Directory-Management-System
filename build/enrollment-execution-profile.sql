@@ -230,7 +230,7 @@ CREATE CONSTRAINT TRIGGER work_queue_outbox_consistent AFTER INSERT OR UPDATE ON
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
     EXECUTE FUNCTION enrollment_execution.validate_work_queue();
 
-CREATE FUNCTION enrollment_execution.audit_execution_privileges(p_environment uuid)
+CREATE OR REPLACE FUNCTION enrollment_execution.audit_execution_privileges(p_environment uuid)
 RETURNS TABLE(is_valid boolean,diagnostic_code text,profile_version smallint)
 LANGUAGE plpgsql STABLE PARALLEL UNSAFE SECURITY DEFINER
 SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
@@ -369,7 +369,7 @@ BEGIN
         WITH expected(definition) AS (VALUES
           ('PRIMARY KEY (role_name)'),('UNIQUE (role_oid)'),
           ('CHECK (capability = ANY (ARRAY[''EnrollmentGrantExecution''::text, ''EnrollmentGrantDelivery''::text]))'),('CHECK (reservation_schema_version = 1)'),
-          ('CHECK (((capability = ''EnrollmentGrantExecution''::text) AND (role_kind = ANY (ARRAY[''Runtime''::text, ''Definer''::text, ''QueueDefiner''::text]))) OR ((capability = ''EnrollmentGrantDelivery''::text) AND (role_kind = ANY (ARRAY[''DeliveryDefiner''::text, ''StatusRuntime''::text, ''DeliveryRuntime''::text]))))'),
+          ('CHECK (capability = ''EnrollmentGrantExecution''::text AND (role_kind = ANY (ARRAY[''Runtime''::text, ''Definer''::text, ''QueueDefiner''::text])) OR capability = ''EnrollmentGrantDelivery''::text AND (role_kind = ANY (ARRAY[''DeliveryDefiner''::text, ''StatusRuntime''::text, ''DeliveryRuntime''::text])))'),
           ('CHECK (btrim(role_name::text) <> ''''::text)'),('CHECK (role_oid <> 0::oid)')),
         actual AS (SELECT pg_catalog.pg_get_constraintdef(c.oid,true) definition FROM pg_catalog.pg_constraint c
           WHERE c.conrelid='enrollment_execution.role_reservations'::regclass AND c.contype IN('p','u','c') AND c.convalidated)
@@ -400,11 +400,11 @@ BEGIN
           ('enrollment_execution.store_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',table_owner,false,false,'plpgsql','v','u',false,'12047650d35da8f6b90b12de80b51cb0e79cb6ed84b1c4e63358c24e177debc0'),
           ('enrollment_execution.store_quarantine(uuid,uuid,bytea,text)',table_owner,false,false,'plpgsql','v','u',false,'7ea3dfa0ad6294076d83d0fec449cbdda1e142e4fadcf55db27f81beef704739'),
           ('enrollment_execution.worker_scope(uuid)',definer,false,false,'plpgsql','s','u',false,'98214f62b088dec4e8b97ee7d01a96c61b5d422924367b903a99ccf932c923be'),
-          ('enrollment_execution.read_execution_record(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'cd7c0975c4cb6f31725fe1151b1513e5df6d7fb51b822f1a862e54df47c9f0f6'),
-          ('enrollment_execution.read_and_lock_plan_context(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'0add6825c35e78b11019b42477581f9c893536005fde7c66e726e51e80bc14f1'),
-          ('enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'69f37bda1a514534520cadfb8431bd4efa17c487ed5e19930f5b1b7d80f8d7d6'),
-          ('enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'ca2fa2d60055e2956f59346b02450e692e63e103d180c4fa7b2444e3668bd6c2'),
-          ('enrollment_execution.quarantine_execution(uuid,uuid,bytea,text)',definer,true,false,'plpgsql','v','u',true,'a7cd12830602f399b12593e59fc4a3d221875c8efb0da666e7e0131669d99524')),
+          ('enrollment_execution.read_execution_record(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'2f3912f5ed9c772e69ced062acaadb43d7c162a3f13ae10af45086c65fc393af'),
+          ('enrollment_execution.read_and_lock_plan_context(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'65799fd04794c614c6cf323b0125ff20b490c17bac4bb9eafa528cb416097af6'),
+          ('enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'34bc89d3bfbd3cdc55e52ce7ab9cd6f6cf6735b9ac7a15ad8cee4b9b3c064449'),
+          ('enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'659c0cb518bc415193080105b9cbd504e1cb8a27592e124166b27937c4a0fdbf'),
+          ('enrollment_execution.quarantine_execution(uuid,uuid,bytea,text)',definer,true,false,'plpgsql','v','u',true,'d49af3d745e3d6878926e39a8cdc2354695350be3e1a512f996289d00b0c13f8')),
         actual AS (
           SELECT e.*,p.oid,p.proowner,p.prosecdef,p.proisstrict,l.lanname,p.provolatile,p.proparallel,p.proconfig,
             pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
@@ -629,7 +629,10 @@ BEGIN
       SELECT 1 FROM ((SELECT * FROM wanted EXCEPT SELECT * FROM actual)
                      UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM wanted)) difference)
       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy p
-        WHERE definer=ANY(p.polroles) AND p.polname NOT LIKE 'enrollment_execution_worker_%')
+        WHERE definer=ANY(p.polroles) AND p.polname NOT LIKE 'enrollment_execution_worker_%'
+          AND NOT (p.polrelid='public."Principals"'::regclass AND p.polname IN(
+            'enrollment_identity_principals_execution_read_allow','enrollment_identity_principals_execution_read_limit',
+            'enrollment_identity_principals_execution_lock_allow','enrollment_identity_principals_execution_lock_limit')))
       AND (SELECT count(*)=8 FROM pg_catalog.pg_trigger t
         WHERE NOT t.tgisinternal AND t.tgname LIKE 'enrollment_execution_worker_%'
           AND t.tgenabled='O' AND t.tgtype=19
@@ -666,9 +669,9 @@ BEGIN
           ('enrollment_execution.defer_work_claim(uuid,uuid,uuid,text)',table_owner,false,false,'v','d5dbc6f35566e700b1445369cf126cb6befb0e600a991d5cfa1425241fdb5ed2'),
           ('enrollment_execution.complete_work_claim(uuid,uuid,uuid)',table_owner,false,false,'v','8ef05062db0c3903c82d224672ec898954b11e28e4506bf8d7af1052f7f9c618'),
           ('enrollment_execution.queue_worker_scope(uuid)',queue_definer,false,false,'s','350f3dc7c48f2869848a2fc67e320f0a67e507caba08d3651e71ab9e2a1e18ea'),
-          ('enrollment_execution.claim_next(uuid,uuid)',queue_definer,true,true,'v','82e5af6d26d860170794d29f404254525c267a36ccae4d0cf1ed030e4dd6aa93'),
-          ('enrollment_execution.defer_claim(uuid,uuid,uuid,text)',queue_definer,true,true,'v','496e54664b5efa4a3656e570d0254d84ace518cac3843a24aca42614223f3379'),
-          ('enrollment_execution.complete_claim(uuid,uuid,uuid)',queue_definer,true,true,'v','9ed1b979fda3916936ad235f4466522a3b90cb871dcb6eea961d1bdf9ec18e82')),
+          ('enrollment_execution.claim_next(uuid,uuid)',queue_definer,true,true,'v','2bf10374af74a53631cc3cf49ca5915d94faceeb2f5784376a1ea149240c52d8'),
+          ('enrollment_execution.defer_claim(uuid,uuid,uuid,text)',queue_definer,true,true,'v','37f9afac59b8e9ca87d5a8bd2db4d245fae98046195c2d47e68e7117063dc216'),
+          ('enrollment_execution.complete_claim(uuid,uuid,uuid)',queue_definer,true,true,'v','25cc765b56bc15a05e01ad306c354fe5ed245c3622a3fb22589e14e35a60c37e')),
         actual AS (SELECT expected.*,p.oid,p.proowner,p.prosecdef,p.proisstrict,l.lanname,p.provolatile,p.proparallel,p.proconfig,
             pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
               pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex') actual_hash

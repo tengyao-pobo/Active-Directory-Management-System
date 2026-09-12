@@ -97,7 +97,6 @@ INSERT INTO enrollment_execution.role_reservations(role_name,role_oid,capability
  SELECT :'delivery_definer_role'::name,oid,'EnrollmentGrantDelivery','DeliveryDefiner',1
  FROM pg_catalog.pg_roles WHERE rolname=:'delivery_definer_role';
 
-DROP FUNCTION enrollment_execution.audit_execution_privileges(uuid);
 DROP FUNCTION enrollment_execution.reject_worker_update() CASCADE;
 DROP TRIGGER work_queue_outbox_consistent ON public."Outbox";
 DO $drop_policies$ DECLARE row record; BEGIN

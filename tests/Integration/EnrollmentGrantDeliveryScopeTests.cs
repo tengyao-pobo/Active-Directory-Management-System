@@ -114,7 +114,7 @@ public sealed partial class EnrollmentGrantPlanTests
             var owner = (string)(await ScalarAsync("SELECT CURRENT_USER::text"))!;
             var upgrade = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "upgrade-enrollment-execution-v3-to-v4.sql"));
             var start = upgrade.IndexOf("ALTER TABLE public.\"DirectoryDatabaseBindings\" DROP CONSTRAINT", StringComparison.Ordinal);
-            var end = upgrade.IndexOf("DROP FUNCTION enrollment_execution.audit_execution_privileges", StringComparison.Ordinal);
+            var end = upgrade.IndexOf("DROP FUNCTION enrollment_execution.reject_worker_update()", StringComparison.Ordinal);
             Assert.True(start >= 0 && end > start);
             await ExecuteAsync(upgrade[start..end].Replace(":'delivery_definer_role'", $"'{definer}'", StringComparison.Ordinal));
             await ExecuteAsync($"""

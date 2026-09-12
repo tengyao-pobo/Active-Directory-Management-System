@@ -9,9 +9,11 @@ namespace ItManagement.IntegrationTests;
 public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task DeliveryIncompleteUpgradeRollsBackToUsableV3(bool canonicalCollation)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task DeliveryUpgradePreservesV3AfterRollback(bool canonicalCollation, bool composeIdentity)
     {
         var owner = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CONSOLE_TEST_DB")!);
         Assert.Contains(owner.Host, new[] { "localhost", "127.0.0.1", "::1" });
@@ -68,12 +70,56 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         }
         var bindings = await Snapshot(false);
         var reservations = await Snapshot(true);
-        var rejected = await RunScript(owner, "upgrade-enrollment-execution-v3-to-v4.sql", variables, deadline.Token);
-        Assert.NotEqual(0, rejected.ExitCode);
-        Assert.True(rejected.Error.Contains("v4 postflight failed", StringComparison.Ordinal), rejected.Error);
+        var auditIdentity = await AuditIdentity();
+        if (composeIdentity)
+        {
+            // Compose the exact staged sources only in this disposable database. Even a
+            // successful postflight ends with ROLLBACK; the real upgrade remains uncomposed.
+            var path = Path.Combine(AppContext.BaseDirectory, "delivery-candidate-" + suffix + ".sql");
+            try
+            {
+                var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "upgrade-enrollment-execution-v3-to-v4.sql"), deadline.Token);
+                const string include = "\\ir enrollment-delivery-profile.sql";
+                const string begin = "BEGIN;";
+                const string postflight = "DO $postflight$";
+                const string commit = "COMMIT;";
+                foreach (var marker in new[] { include, begin, postflight, commit })
+                    Assert.Equal(1, script.Split(marker, StringSplitOptions.None).Length - 1);
+                script = script.Replace(include, include + "\n\\ir enrollment-delivery-identity.sql", StringComparison.Ordinal)
+                    .Replace(begin, begin + """
+
+                    CREATE TEMP TABLE delivery_upgrade_audit_identity ON COMMIT DROP AS
+                      SELECT oid,proowner,proacl FROM pg_catalog.pg_proc
+                      WHERE oid='enrollment_execution.audit_execution_privileges(uuid)'::regprocedure;
+                    """, StringComparison.Ordinal)
+                    .Replace(postflight, """
+                    DO $verify_preserved_audit$
+                    BEGIN
+                      IF NOT EXISTS(SELECT 1 FROM delivery_upgrade_audit_identity before
+                          JOIN pg_catalog.pg_proc after ON after.oid=before.oid
+                          WHERE after.proowner=before.proowner AND after.proacl IS NOT DISTINCT FROM before.proacl) THEN
+                        RAISE EXCEPTION 'Execution audit identity or ACL changed during upgrade.';
+                      END IF;
+                    END $verify_preserved_audit$;
+
+                    """ + postflight, StringComparison.Ordinal)
+                    .Replace(commit, "ROLLBACK;", StringComparison.Ordinal);
+                await File.WriteAllTextAsync(path, script, deadline.Token);
+                var candidate = await RunScript(owner, path, variables, deadline.Token);
+                Assert.True(candidate.ExitCode == 0, candidate.Error);
+            }
+            finally { File.Delete(path); }
+        }
+        else
+        {
+            var rejected = await RunScript(owner, "upgrade-enrollment-execution-v3-to-v4.sql", variables, deadline.Token);
+            Assert.NotEqual(0, rejected.ExitCode);
+            Assert.True(rejected.Error.Contains("v4 postflight failed", StringComparison.Ordinal), rejected.Error);
+        }
         Assert.Equal((short)3, await db.Database.SqlQueryRaw<short>("SELECT enrollment_execution.execution_store_profile() AS \"Value\"").SingleAsync(deadline.Token));
         Assert.Equal(bindings, await Snapshot(false));
         Assert.Equal(reservations, await Snapshot(true));
+        Assert.Equal(auditIdentity, await AuditIdentity());
         Assert.True(await db.Database.SqlQueryRaw<bool>("""
             SELECT pg_catalog.to_regprocedure('enrollment_execution.audit_delivery_privileges(uuid)') IS NULL
               AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy WHERE polname LIKE 'enrollment_delivery_%') AS "Value"
@@ -82,6 +128,11 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await using var source = NpgsqlDataSource.Create(runtime.ConnectionString);
         var store = await PostgresEnrollmentGrantWorkQueue.CreateAuditedAsync(source, environment.Id, owner.Username!, executor, queue, deadline.Token);
         Assert.Equal(EnrollmentWorkClaimOutcome.NoWork, (await store.ClaimNextAsync(Guid.NewGuid(), deadline.Token)).Outcome);
+
+        async Task<string> AuditIdentity() => await db.Database.SqlQueryRaw<string>("""
+            SELECT jsonb_build_object('oid',oid,'owner',proowner,'acl',proacl,'body',prosrc)::text AS "Value"
+            FROM pg_catalog.pg_proc WHERE oid='enrollment_execution.audit_execution_privileges(uuid)'::regprocedure
+            """).SingleAsync(deadline.Token);
 
         async Task<string[]> Snapshot(bool reservationRows) => await db.Database.SqlQueryRaw<string>(reservationRows
             ? "SELECT row_to_json(snapshot)::text AS \"Value\" FROM enrollment_execution.role_reservations snapshot ORDER BY row_to_json(snapshot)::text COLLATE \"C\""
