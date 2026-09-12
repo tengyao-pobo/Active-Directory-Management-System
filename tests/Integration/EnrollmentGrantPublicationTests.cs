@@ -125,5 +125,6 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await VerifyPublicationRejectsUnboundLoginAsync(owner, admin, executionConnection, environment, cancellationToken);
         await VerifyPublicationCommitBoundaryAsync(owner, admin, api, environment, cancellationToken);
         await VerifyProfile4ApiFunctionRootsAsync(owner, api, cancellationToken);
+        await VerifyProfile4ApiPoliciesAsync(owner, api, cancellationToken);
     }
 }
