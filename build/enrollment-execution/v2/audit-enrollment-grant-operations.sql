@@ -38,11 +38,7 @@ expected_anchor_functions(name,body_hash) AS (VALUES
  ('guard_enrollment_grant_plan_child','51754c0c18f36458af4050f84ce398cf44047e9c7f0b3cf42ddecd407d5f555a'),
  ('guard_enrollment_grant_operation_parent','ca589dc3bd8d3564edbe67d05b996c2b73d7bc726b2c22fec05dab51cef5d191'),
  ('guard_enrollment_grant_outbox_anchor','d1b1ffe039cb98aa9eefcd1d07ad9477da79350f88584a257efa6f2b62eb015f'),
- ('validate_enrollment_grant_queue_anchor',CASE WHEN
-    (SELECT pg_catalog.btrim(prosrc,E' \t\r\n') FROM pg_catalog.pg_proc
-     WHERE pronamespace=(SELECT oid FROM pg_catalog.pg_namespace WHERE nspname='enrollment_execution') AND proname='execution_store_profile' AND pronargs=0)='SELECT 3::smallint'
-    THEN 'dd8064d70027f2b4ae9070970e54aa183e1f70bb4c8798b64f751673de59ee27'
-    ELSE '7c6f273e7eb359289dc69e4e7a0d7d95efd951f93cccc464c3da56e553e61d7c' END)),
+ ('validate_enrollment_grant_queue_anchor','7c6f273e7eb359289dc69e4e7a0d7d95efd951f93cccc464c3da56e553e61d7c')),
 anchor_functions AS (SELECT p.*,l.lanname,e.body_hash FROM pg_catalog.pg_proc p
  JOIN pg_catalog.pg_language l ON l.oid=p.prolang
  JOIN expected_anchor_functions e ON p.pronamespace='public'::regnamespace AND p.proname=e.name),
@@ -70,7 +66,7 @@ reject_function AS (SELECT p.*,l.lanname FROM pg_catalog.pg_proc p JOIN pg_catal
 execution_profile AS (SELECT COALESCE((SELECT count(*)=1 AND bool_and(l.lanname='sql' AND NOT p.prosecdef
  AND p.provolatile='i' AND p.proparallel='s' AND NOT p.proretset AND p.prorettype='smallint'::regtype
  AND p.pronargs=0 AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp']
- AND p.proowner=(SELECT relowner FROM target) AND pg_catalog.btrim(p.prosrc,E' \t\r\n') IN('SELECT 2::smallint','SELECT 3::smallint'))
+ AND p.proowner=(SELECT relowner FROM target) AND pg_catalog.btrim(p.prosrc,E' \t\r\n')='SELECT 2::smallint')
  FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
  JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
  WHERE n.nspname='enrollment_execution' AND p.proname='execution_store_profile' AND p.pronargs=0)
@@ -78,11 +74,7 @@ execution_profile AS (SELECT COALESCE((SELECT count(*)=1 AND bool_and(l.lanname=
    AND p.proowner=(SELECT relowner FROM target) AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
    AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
      pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
-     =CASE (SELECT pg_catalog.btrim(marker.prosrc,E' \t\r\n') FROM pg_catalog.pg_proc marker
-              WHERE marker.pronamespace=(SELECT oid FROM pg_catalog.pg_namespace WHERE nspname='enrollment_execution') AND marker.proname='execution_store_profile' AND marker.pronargs=0)
-        WHEN 'SELECT 2::smallint' THEN '8ed83a1a4736e9caab7c0a9c32ef8b2e53b48dbdcf184824a8436d3fc33d3da3'
-        WHEN 'SELECT 3::smallint' THEN 'b25732a9b6d2e524f4263ff4826ece6625420ca522d28f3b0aeb9fe3f1df4f80'
-        ELSE '' END)
+     ='8ed83a1a4736e9caab7c0a9c32ef8b2e53b48dbdcf184824a8436d3fc33d3da3')
   FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
   JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
   WHERE n.nspname='enrollment_execution' AND p.proname='audit_execution_privileges' AND p.proargtypes='2950'::oidvector),false) installed),
@@ -91,19 +83,9 @@ execution_definer AS (SELECT r.oid FROM pg_catalog.pg_proc p
  WHERE profile.installed AND n.nspname='enrollment_execution' AND p.proname='read_execution_record'
    AND p.pronargs=2 AND p.proargtypes='2950 2950'::oidvector AND NOT r.rolcanlogin AND NOT r.rolsuper
    AND NOT r.rolbypassrls AND NOT r.rolcreatedb AND NOT r.rolcreaterole AND NOT r.rolinherit AND NOT r.rolreplication),
-execution_queue_definer AS (SELECT r.oid FROM pg_catalog.pg_proc p
- JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace JOIN pg_catalog.pg_roles r ON r.oid=p.proowner,execution_profile profile
- WHERE profile.installed AND pg_catalog.btrim((SELECT prosrc FROM pg_catalog.pg_proc
-       WHERE pronamespace=(SELECT oid FROM pg_catalog.pg_namespace WHERE nspname='enrollment_execution') AND proname='execution_store_profile' AND pronargs=0),E' \t\r\n')='SELECT 3::smallint'
-   AND n.nspname='enrollment_execution' AND p.proname='claim_next' AND p.proargtypes='2950 2950'::oidvector
-   AND NOT r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolcreatedb
-   AND NOT r.rolcreaterole AND NOT r.rolinherit AND NOT r.rolreplication),
 execution_operation_policies AS (SELECT p.* FROM pg_catalog.pg_policy p,execution_definer d,target
  WHERE p.polrelid=target.oid AND p.polroles=ARRAY[d.oid]
    AND p.polname IN('enrollment_execution_worker_operations_allow','enrollment_execution_worker_operations_limit')),
-execution_queue_operation_policies AS (SELECT p.* FROM pg_catalog.pg_policy p,execution_queue_definer d,target
- WHERE p.polrelid=target.oid AND p.polroles=ARRAY[d.oid]
-   AND p.polname IN('enrollment_execution_queue_operations_allow','enrollment_execution_queue_operations_limit')),
 verified AS (SELECT COALESCE(
  (SELECT count(*)=1 AND bool_and(rolcanlogin AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolinherit AND NOT rolreplication) FROM runtime) AND
  NOT EXISTS(SELECT 1 FROM runtime r JOIN pg_catalog.pg_auth_members m ON m.roleid=r.oid OR m.member=r.oid) AND
@@ -129,23 +111,10 @@ verified AS (SELECT COALESCE(
       difference AS ((SELECT * FROM expected EXCEPT SELECT * FROM actual) UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected))
       SELECT 1 FROM difference)
     AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a,target CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
-      WHERE a.attrelid=target.oid AND (acl.grantee NOT IN((SELECT oid FROM execution_definer),(SELECT oid FROM execution_queue_definer)) OR acl.is_grantable))
-    AND (CASE WHEN pg_catalog.btrim((SELECT prosrc FROM pg_catalog.pg_proc
-          WHERE pronamespace=(SELECT oid FROM pg_catalog.pg_namespace WHERE nspname='enrollment_execution') AND proname='execution_store_profile' AND pronargs=0),E' \t\r\n')='SELECT 3::smallint'
-      THEN NOT EXISTS(
-        WITH expected(name,privilege_type) AS (VALUES('EnvironmentId','SELECT'),('Id','SELECT'),('QueuedAt','SELECT')),
-        actual AS (SELECT a.attname::text,acl.privilege_type::text FROM pg_catalog.pg_attribute a,target
-          CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
-          WHERE a.attrelid=target.oid AND acl.grantee=(SELECT oid FROM execution_queue_definer) AND NOT acl.is_grantable)
-        SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
-          UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) difference)
-      ELSE NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a,target CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
-        WHERE a.attrelid=target.oid AND acl.grantee<>(SELECT oid FROM execution_definer)) END)
+      WHERE a.attrelid=target.oid AND (acl.grantee<>(SELECT oid FROM execution_definer) OR acl.is_grantable))
     ELSE NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a,target CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
       WHERE a.attrelid=target.oid) END FROM execution_profile profile) AND
- (SELECT count(*)=CASE WHEN pg_catalog.btrim((SELECT prosrc FROM pg_catalog.pg_proc
-       WHERE pronamespace=(SELECT oid FROM pg_catalog.pg_namespace WHERE nspname='enrollment_execution') AND proname='execution_store_profile' AND pronargs=0),E' \t\r\n')='SELECT 3::smallint' THEN 5
-      WHEN (SELECT installed FROM execution_profile) THEN 3 ELSE 1 END FROM pg_catalog.pg_policy p,target WHERE p.polrelid=target.oid) AND
+ (SELECT count(*)=CASE WHEN (SELECT installed FROM execution_profile) THEN 3 ELSE 1 END FROM pg_catalog.pg_policy p,target WHERE p.polrelid=target.oid) AND
  (SELECT count(*)=1 FROM pg_catalog.pg_policy p,target WHERE p.polrelid=target.oid AND p.polname='environment_enrollment_grant_operations'
     AND p.polcmd='*' AND p.polpermissive AND p.polroles=ARRAY[0::oid]
     AND pg_catalog.pg_get_expr(p.polqual,p.polrelid)=pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid)
@@ -157,12 +126,6 @@ verified AS (SELECT COALESCE(
       AND pg_catalog.md5(COALESCE(pg_catalog.pg_get_expr(polqual,polrelid),'')||'|'||
                          COALESCE(pg_catalog.pg_get_expr(polwithcheck,polrelid),''))='b36fd52c8f5d4554c711240c8bfbf7b1')
       FROM execution_operation_policies) FROM execution_profile) AND
- (SELECT CASE WHEN pg_catalog.btrim((SELECT prosrc FROM pg_catalog.pg_proc
-       WHERE pronamespace=(SELECT oid FROM pg_catalog.pg_namespace WHERE nspname='enrollment_execution') AND proname='execution_store_profile' AND pronargs=0),E' \t\r\n') IS DISTINCT FROM 'SELECT 3::smallint' THEN true
-   ELSE (SELECT count(*)=2 AND bool_and(polcmd='*'
-      AND ((polname='enrollment_execution_queue_operations_allow' AND polpermissive)
-        OR (polname='enrollment_execution_queue_operations_limit' AND NOT polpermissive))
-      AND polqual IS NOT NULL AND polwithcheck IS NULL) FROM execution_queue_operation_policies) END) AND
  (SELECT count(*)=CASE WHEN (SELECT installed FROM execution_profile) THEN 4 ELSE 3 END FROM pg_catalog.pg_trigger t,target
     WHERE t.tgrelid=target.oid AND NOT t.tgisinternal) AND
  (SELECT count(*)=8 FROM valid_anchor_triggers) AND
@@ -176,12 +139,7 @@ verified AS (SELECT COALESCE(
     AND NOT ((SELECT installed FROM execution_profile) AND (
       (c.relname='Plans' AND t.tgname='enrollment_execution_worker_plan_guard') OR
       (c.relname='Outbox' AND t.tgname='enrollment_execution_worker_outbox_guard') OR
-      (c.relname='EnrollmentGrantOperations' AND t.tgname='enrollment_execution_worker_operation_guard') OR
-      (c.relname='Outbox' AND t.tgname='work_queue_outbox_consistent'
-        AND pg_catalog.btrim((SELECT prosrc FROM pg_catalog.pg_proc
-          WHERE pronamespace=(SELECT oid FROM pg_catalog.pg_namespace WHERE nspname='enrollment_execution') AND proname='execution_store_profile' AND pronargs=0),E' \t\r\n')='SELECT 3::smallint'
-        AND t.tgfoid=(SELECT oid FROM pg_catalog.pg_proc WHERE pronamespace=(SELECT oid FROM pg_catalog.pg_namespace WHERE nspname='enrollment_execution') AND proname='validate_work_queue' AND pronargs=0)
-        AND t.tgtype=21 AND t.tgdeferrable AND t.tginitdeferred)))) AND
+      (c.relname='EnrollmentGrantOperations' AND t.tgname='enrollment_execution_worker_operation_guard')))) AND
  (SELECT count(*)=5 AND bool_and(lanname='plpgsql' AND NOT prosecdef AND provolatile='v' AND proparallel='u'
     AND prokind='f' AND NOT proretset AND prorettype='trigger'::regtype AND pronargs=0 AND proargtypes=''::oidvector
     AND proargnames IS NULL AND proallargtypes IS NULL AND proargmodes IS NULL

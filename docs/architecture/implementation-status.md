@@ -46,9 +46,11 @@
 - 平台註冊排隊：專用執行交易、不可變 operation、單一 outbox／audit、原 requester 的目前權限重查與歷史讀回，以及共用 catalog audit。畫面能呈現已排隊歷史；正式 processor 預設不可用，worker／單次許可持久化／密文保存與領取仍待完成，沒有啟用 grant 發行。
 - 平台註冊背景恢復基礎：獨立 execution library、固定 canonical digest、原子 permit／密文 journal、完整收據／ACK 與發行前終止／隔離紀錄。API 與後續 store 可共用既有計畫驗證；用途專用 public-store 函式與 repository、host、交付 API／畫面及正式 listener 仍待組合，readiness 未啟用。詳見[背景恢復契約](platform-grant-worker.md)。
 - 背景資料庫讀取契約：排隊後計畫／核准／通知內容的不可變防護、提交時跨表一致性、嚴格 50 欄 PostgreSQL 解碼與 SQL／C# canonical digest 對照。helper 保持 owner-only；不代表正式背景帳號或發行服務已啟用。
-- 平台註冊執行資料庫：用途專用 PostgreSQL 入口與 repository、33 欄計畫 context、目前權限重查、原子 permit／密文保存、確定結果與隔離，以及用途角色永久保留。部署與每筆交易執行精確 catalog audit；private Agent DB 與 public execution DB 分離。安裝 profile 後僅專用 definer 可呼叫必要 helper，執行 LOGIN 不直接取得表權限。背景認領／重試、host、密文領取與 ACK、正式 listener 仍待組合，readiness 未啟用。詳見[執行資料庫](platform-grant-public-store.md)。
+- 平台註冊執行資料庫：用途專用 PostgreSQL 入口與 repository、33 欄計畫 context、目前權限重查、原子 permit／密文保存、確定結果與隔離，以及用途角色永久保留。部署與每筆交易執行精確 catalog audit；private Agent DB 與 public execution DB 分離。安裝 profile 後僅專用 definer 可呼叫必要 helper，執行 LOGIN 不直接取得表權限。背景 host、密文領取與 ACK、正式 listener 仍待組合，readiness 未啟用。詳見[執行資料庫](platform-grant-public-store.md)。
 
 - 個人收藏：四種目錄物件的加入／取消、私有持久化、範圍化分頁及雙語介面；只顯示目前有權查看且仍在有效目錄快照中的物件。
+
+- 平台註冊工作認領：持久化 queue 與不可改寫 token 歷史、固定租約、過期接手、重試延後、資料庫終態確認及 outbox 原子完成；用途專用 queue definer、profile v3 首次安裝與 v2 升級，以及單次處理器。租約不取代發行授權。host、密文領取／ACK 與 listener 仍待組合，readiness 維持未啟用。詳見[工作認領與恢復](platform-grant-queue.md)。
 
 - 平台盤點：Inventory 頁籤提供基本系統／網路、九類硬體與可篩選分頁的已安裝軟體；逐來源與硬體分區區分缺失、不可用、不適用、過舊與截斷。私有投影 v2 提供精確版本稽核及交易式 v1 升降級。尚不代表正式 Agent 連線啟用或設備健康判定。
 

@@ -2,7 +2,7 @@
 -- The installer assigns restricted owners, exact policies/grants and creates the profile marker last.
 -- These entrypoints require the complete audit; there is no permissive fallback.
 
-CREATE OR REPLACE FUNCTION enrollment_execution.worker_scope(p_environment uuid)
+CREATE FUNCTION enrollment_execution.worker_scope(p_environment uuid)
 RETURNS boolean LANGUAGE plpgsql STABLE SECURITY INVOKER
     SET search_path=pg_catalog,pg_temp AS $function$
 BEGIN
@@ -32,7 +32,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.worker_scope(uuid) FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION enrollment_execution.read_execution_record(p_environment uuid,p_operation uuid)
+CREATE FUNCTION enrollment_execution.read_execution_record(p_environment uuid,p_operation uuid)
 RETURNS TABLE (
     contract_version smallint,
     outcome text,
@@ -90,7 +90,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 DECLARE audit_rows bigint; valid_rows bigint; operation public."EnrollmentGrantOperations"%ROWTYPE;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=3)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=2)
         INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution capability is unavailable.';
@@ -116,7 +116,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.read_execution_record(uuid,uuid) FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION enrollment_execution.read_and_lock_plan_context(p_environment uuid,p_operation uuid)
+CREATE FUNCTION enrollment_execution.read_and_lock_plan_context(p_environment uuid,p_operation uuid)
 RETURNS TABLE (
     contract_version smallint,
     outcome text,
@@ -157,7 +157,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 DECLARE audit_rows bigint; valid_rows bigint; operation public."EnrollmentGrantOperations"%ROWTYPE;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=3)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=2)
         INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution capability is unavailable.';
@@ -183,7 +183,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.read_and_lock_plan_context(uuid,uuid) FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION enrollment_execution.authorize_and_store_candidate(
+CREATE FUNCTION enrollment_execution.authorize_and_store_candidate(
     p_environment uuid,p_operation uuid,p_verified_plan_hash text,p_token_sha256 bytea,
     p_fingerprint bytea,p_ciphertext bytea)
 RETURNS TABLE(contract_version smallint,outcome text,stop_reason text)
@@ -192,7 +192,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 DECLARE audit_rows bigint; valid_rows bigint; operation public."EnrollmentGrantOperations"%ROWTYPE;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=3)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=2)
         INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution capability is unavailable.';
@@ -219,7 +219,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea) FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION enrollment_execution.record_execution_result(
+CREATE FUNCTION enrollment_execution.record_execution_result(
     p_environment uuid,p_operation uuid,p_permit_digest bytea,p_outcome text,p_diagnostic text,
     p_grant uuid,p_receipt_environment uuid,p_directory uuid,p_device uuid,p_mapping_at timestamptz,
     p_created_at timestamptz,p_expires_at timestamptz,p_issue_version smallint,p_permit_not_after timestamptz,
@@ -230,7 +230,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 DECLARE audit_rows bigint; valid_rows bigint; operation public."EnrollmentGrantOperations"%ROWTYPE;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=3)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=2)
         INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution capability is unavailable.';
@@ -258,7 +258,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea) FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION enrollment_execution.quarantine_execution(
+CREATE FUNCTION enrollment_execution.quarantine_execution(
     p_environment uuid,p_operation uuid,p_permit_digest bytea,p_reason text)
 RETURNS TABLE(contract_version smallint,outcome text,stop_reason text)
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER
@@ -266,7 +266,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 DECLARE audit_rows bigint; valid_rows bigint; operation public."EnrollmentGrantOperations"%ROWTYPE;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=3)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.profile_version=2)
         INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution capability is unavailable.';

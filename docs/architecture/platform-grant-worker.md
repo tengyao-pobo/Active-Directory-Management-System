@@ -1,6 +1,6 @@
 # 平台註冊授權的背景恢復基礎
 
-操作入口仍是平台設備頁。背景恢復基礎提供獨立 execution library 與封閉的資料庫 journal；後續的用途專用函式與 PostgreSQL repository 見[執行資料庫](platform-grant-public-store.md)。worker host、交付 API 與 listener 尚未組合。API readiness 維持不可用，不能以建立了資料表或配置了連線字串視為可發行授權。
+操作入口仍是平台設備頁。背景恢復基礎提供獨立 execution library 與封閉的資料庫 journal；用途專用函式與 PostgreSQL repository 見[執行資料庫](platform-grant-public-store.md)，持久化認領、重試與終態記帳見[工作認領](platform-grant-queue.md)。worker host、交付 API 與 listener 尚未組合。API readiness 維持不可用，不能以建立了資料表或配置了連線字串視為可發行授權。
 
 ## 恢復契約
 

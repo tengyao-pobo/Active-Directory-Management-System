@@ -186,7 +186,7 @@ public sealed class PostgresEnrollmentGrantExecutionStore : IEnrollmentGrantExec
         catch { return UnknownRecord(); }
     }
 
-    private async Task AuditAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken)
+    internal async Task AuditAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken)
     {
         await using (var locking = Command(connection, transaction, "SELECT pg_catalog.pg_advisory_xact_lock_shared(1162235478,1)"))
             await locking.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -207,7 +207,7 @@ public sealed class PostgresEnrollmentGrantExecutionStore : IEnrollmentGrantExec
                 reader.GetName(2) != "profile_version" || reader.GetFieldType(0) != typeof(bool) ||
                 reader.GetFieldType(1) != typeof(string) || reader.GetFieldType(2) != typeof(short) ||
                 !await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || reader.IsDBNull(0) || reader.IsDBNull(1) || reader.IsDBNull(2) ||
-                !reader.GetBoolean(0) || reader.GetString(1) != "None" || reader.GetInt16(2) != 2 ||
+                !reader.GetBoolean(0) || reader.GetString(1) != "None" || reader.GetInt16(2) != 3 ||
                 await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) throw new InvalidOperationException("EnrollmentExecutionPrivilegeAuditFailed");
         }
     }

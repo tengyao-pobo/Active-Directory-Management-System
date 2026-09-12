@@ -29,6 +29,7 @@ public sealed class EnrollmentExecutionSplitDatabaseTests(AgentPlatformGrantFixt
             var result = await RunProvision(builder, runtime, definer, fixture.EnvironmentId);
             Assert.NotEqual(0, result.ExitCode);
             Assert.Contains("55000", result.StandardError, StringComparison.Ordinal);
+            Assert.Contains("requires a database without the private capability registry", result.StandardError, StringComparison.Ordinal);
             Assert.Equal(before, await ExecutionCatalogFingerprint());
         }
         finally
@@ -74,6 +75,7 @@ public sealed class EnrollmentExecutionSplitDatabaseTests(AgentPlatformGrantFixt
             "-X", "-h", connection.Host!, "-p", connection.Port.ToString(), "-U", connection.Username!,
             "-d", connection.Database!, "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=verbose", "-v", $"execution_runtime_role={runtime}",
             "-v", $"execution_definer_role={definer}", "-v", $"expected_table_owner_role={connection.Username}",
+            "-v", "execution_queue_definer_role=unresolved_execution_queue_owner",
             "-v", $"expected_environment_id={environment}", "-v", $"DBNAME={connection.Database}",
             "-f", "provision-enrollment-execution.sql"
         }) process.ArgumentList.Add(argument);

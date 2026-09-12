@@ -4,7 +4,7 @@ using ItManagement.AgentPlatformGrants;
 
 namespace ItManagement.EnrollmentGrantExecution;
 
-public sealed class EnrollmentGrantExecutor(IEnrollmentGrantExecutionStore store, IPlatformGrantIssuer issuer)
+public sealed class EnrollmentGrantExecutor(IEnrollmentGrantExecutionStore store, IPlatformGrantIssuer issuer) : IEnrollmentGrantExecutor
 {
     public async Task<EnrollmentGrantExecutionResult> ExecuteAsync(Guid environmentId, Guid operationId,
         CancellationToken cancellationToken)

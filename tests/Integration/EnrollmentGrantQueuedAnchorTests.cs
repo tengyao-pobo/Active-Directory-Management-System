@@ -52,9 +52,9 @@ public sealed partial class EnrollmentGrantPlanTests
         await db.Database.ExecuteSqlInterpolatedAsync(
             $"DELETE FROM public.\"Outbox\" WHERE \"EnvironmentId\"={seeded.Data.Environment.Id} AND \"Id\"={unrelated}");
 
-        var delivered = operation.QueuedAt.AddSeconds(1);
         Assert.Equal(1, await db.Database.ExecuteSqlInterpolatedAsync(
-            $"UPDATE public.\"Outbox\" SET \"Attempts\"=\"Attempts\"+1,\"DeliveredAt\"={delivered} WHERE \"EnvironmentId\"={seeded.Data.Environment.Id} AND \"Id\"={operationId}"));
+            $"UPDATE public.\"Outbox\" SET \"Attempts\"=\"Attempts\"+1 WHERE \"EnvironmentId\"={seeded.Data.Environment.Id} AND \"Id\"={operationId}"));
+        Assert.Null(await db.Outbox.Where(x => x.Id == operationId).Select(x => x.DeliveredAt).SingleAsync());
     }
 
     [Fact]
