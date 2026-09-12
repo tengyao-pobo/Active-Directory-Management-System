@@ -10,6 +10,7 @@
     <Project Path="src/Infrastructure/AgentPlatformGrants/AgentPlatformGrants.csproj" />
     <Project Path="src/Infrastructure/AgentProjection/AgentProjection.csproj" />
     <Project Path="src/Infrastructure/DirectoryConnector/DirectoryConnector.csproj" />
+    <Project Path="src/Infrastructure/EnrollmentGrantExecution/EnrollmentGrantExecution.csproj" />
     <Project Path="src/Infrastructure/Persistence/Persistence.csproj" />
   </Folder>
   <Folder Name="/src/Server/">
@@ -23,6 +24,7 @@
     <Project Path="tests/AgentIngestion/AgentIngestion.Tests.csproj" />
     <Project Path="tests/AgentPlatformGrants/AgentPlatformGrants.Tests.csproj" />
     <Project Path="tests/AgentProjection/AgentProjection.Tests.csproj" />
+    <Project Path="tests/EnrollmentGrantExecution/EnrollmentGrantExecution.Tests.csproj" />
     <Project Path="tests/Agent/Agent.Tests.csproj" />
     <Project Path="tests/AgentHost/AgentHost.Tests.csproj" />
     <Project Path="tests/Integration/Integration.csproj" />

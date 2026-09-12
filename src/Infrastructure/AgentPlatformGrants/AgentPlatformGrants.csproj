@@ -6,5 +6,7 @@
   <ItemGroup>
     <PackageReference Include="Npgsql" Version="10.0.3" />
     <InternalsVisibleTo Include="AgentPlatformGrants.Tests" />
+    <InternalsVisibleTo Include="EnrollmentGrantExecution" />
+    <InternalsVisibleTo Include="EnrollmentGrantExecution.Tests" />
   </ItemGroup>
 </Project>

@@ -12,15 +12,6 @@
           "Microsoft.TestPlatform.TestHost": "18.10.0"
         }
       },
-      "Npgsql": {
-        "type": "Direct",
-        "requested": "[10.0.3, )",
-        "resolved": "10.0.3",
-        "contentHash": "7nb5YzXuvWWJxB0J8DiyL3we+X4FOctZrt0fIBnucOIaIevFEEwGQVZKtiu9olXdlNAK1eNgqSral6r/jlhI4w==",
-        "dependencies": {
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
-        }
-      },
       "xunit": {
         "type": "Direct",
         "requested": "[2.9.3, )",
@@ -69,17 +60,12 @@
           "Microsoft.TestPlatform.ObjectModel": "18.10.0"
         }
       },
-      "System.CodeDom": {
+      "Npgsql": {
         "type": "Transitive",
-        "resolved": "10.0.12",
-        "contentHash": "Kk3yEavoGHXCAFTLLegxztgSdj24JrkAHelwgWnu+YMFxezcU2DbABEOOIMdy04PExUtKQtlazaKqo0qSa1X6A=="
-      },
-      "System.Management": {
-        "type": "Transitive",
-        "resolved": "10.0.12",
-        "contentHash": "ApUsYmsNG8aPiMxsO6ROGZnqJwSZY8zeMlAQcuQg+ilPFUcIyBUC0BL8qA6wmPLNVsvL4nyhUrhhxh6qn0cx0Q==",
+        "resolved": "10.0.3",
+        "contentHash": "7nb5YzXuvWWJxB0J8DiyL3we+X4FOctZrt0fIBnucOIaIevFEEwGQVZKtiu9olXdlNAK1eNgqSral6r/jlhI4w==",
         "dependencies": {
-          "System.CodeDom": "10.0.12"
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
         }
       },
       "xunit.abstractions": {
@@ -122,29 +108,10 @@
           "xunit.extensibility.core": "[2.9.3]"
         }
       },
-      "agent": {
-        "type": "Project",
-        "dependencies": {
-          "System.Management": "[10.0.12, )"
-        }
-      },
       "agentenrollment": {
         "type": "Project",
         "dependencies": {
           "Core": "[1.0.0, )",
-          "Npgsql": "[10.0.3, )"
-        }
-      },
-      "agentenrollmenttargets": {
-        "type": "Project",
-        "dependencies": {
-          "Npgsql": "[10.0.3, )"
-        }
-      },
-      "agentingestion": {
-        "type": "Project",
-        "dependencies": {
-          "Agent": "[1.0.0, )",
           "Npgsql": "[10.0.3, )"
         }
       },
@@ -154,14 +121,15 @@
           "Npgsql": "[10.0.3, )"
         }
       },
-      "agentprojection": {
-        "type": "Project",
-        "dependencies": {
-          "Npgsql": "[10.0.3, )"
-        }
-      },
       "core": {
         "type": "Project"
+      },
+      "enrollmentgrantexecution": {
+        "type": "Project",
+        "dependencies": {
+          "AgentEnrollment": "[1.0.0, )",
+          "AgentPlatformGrants": "[1.0.0, )"
+        }
       }
     }
   }

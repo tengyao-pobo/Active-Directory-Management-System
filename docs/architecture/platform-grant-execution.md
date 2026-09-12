@@ -2,6 +2,8 @@
 
 本增量實作平台排隊交易與私有發行期限契約。背景 worker、單次許可持久化、密文保存與交付尚未接上；正式組合的 readiness 固定為不可用，不會建立新的佇列。最終操作流程在既有設備頁面完成申請、核准、執行與查看結果；底層用途隔離不增加外部工具切換。
 
+後續已新增獨立 execution library 與封閉 journal schema，詳見[背景恢復基礎](platform-grant-worker.md)。這些程式尚未與正式 public-store repository、worker host 或交付介面組合。
+
 ## 執行交易
 
 專用執行端點只接受原 requester 的 fresh step-up session 與精確 plan hash。鎖定 plan、reservation、approval 及 public context 後，重新驗證 requester 與 approver 的 Enabled、active membership、不同 OperatorId、目前 Computer scope、環境版本及目錄 generation。Requester 必須同時具 Computer.View 與 AgentEnrollmentGrant.Manage，approver 必須同時具 Computer.View 與 Change.Approve。私有 target resolver 仍須回傳計畫中的 device／mapping tuple。
@@ -14,7 +16,9 @@ Outbox 只保存版本、環境與 operation ID。它是喚醒提示，不能當
 
 ## 發行前許可與期限（worker 尚待實作）
 
-Worker 在產生 token 前重新驗證 requester、approver、目前 scope、版本、generation 及 target，再原子建立單次 mint permit。`MintPermitNotAfter = min(AuthorizationNotAfter, PermitIssuedAt + 60 seconds)`。Enqueue 後的撤權或版本漂移會阻止許可；permit 建立後至期限內的漂移是有界的剩餘時間窗，不能宣稱即時取消。
+Worker 先在記憶體產生候選封套，再於同一 SERIALIZABLE 交易鎖定並重新驗證 requester、approver、目前 scope、版本、generation 及 target，原子保存單次 mint permit 與封套。不得先提交 permit 再產生封套；這樣的中斷會留下缺少原始密文、不能判定是否能重新產生 token 的窗口。`MintPermitNotAfter = min(AuthorizationNotAfter, PermitIssuedAt + 60 seconds)`，時間由最後一次可能阻塞的檢查之後的資料庫時鐘決定。Enqueue 後的撤權或版本漂移會阻止許可；permit 建立後至期限內的漂移是有界的剩餘時間窗，不能宣稱即時取消。
+
+既有 operation 沒有保存原始 session ID。已提交的排隊授權可在固定 `AuthorizationNotAfter` 前跨登出存活，最長十分鐘；worker 仍重查帳號、會員、目前 scope、版本、generation 及 approval。不得宣稱 worker 會偵測原 session 撤銷。若未來需要登出即取消，必須用新版本 operation 明確綁定 session。領取密文每次仍需目前有效的 fresh step-up。
 
 Permit 後再次 resolve mapping；私有 issue 函式也必須在自身鎖內核對 mapping、device 與 deadline。新發行在鎖後以資料庫時間拒絕過期許可。精確 receipt 恢復保留原 deadline，不會延長 grant TTL 或要求重新 mint。
 
@@ -24,9 +28,11 @@ Authorization digest 從完整 operation／permit canonical bytes 計算，只�
 
 ## 密文與不確定結果（尚待實作）
 
-只有尚無 sealed record 且 permit 有效時才產生 token。密文、token hash、recipient fingerprint 在同一交易持久化；競爭 worker 只保留一份封套。Commit 回應不明時先讀回，無法確認便保留 OutcomeUnknown，不重新產生 token。
+只有確認尚無 permit 時才產生記憶體候選封套。密文、token hash、recipient fingerprint 與 permit 在同一交易持久化；競爭 worker 必須使用資料庫中已保存的那一份封套。Commit 回應不明時先依 operation ID 讀回，無法確認便保留 OutcomeUnknown，不發行記憶體候選、不重新產生 token。
 
 私有 issue 一律使用已持久化的 hash、deadline 與 tuple。確定未寫入的拒絕可轉為 Failed；連線中斷或矛盾回應須以同一操作調和。收據回存後才可讓原 requester 經 fresh step-up 領取同一密文；ACK、私鑰遺失與撤銷遵守既有[平台交付契約](platform-enrollment-grants.md)。
+
+即使 permit 已過期，調和仍使用相同 tuple 呼叫 private v3 issue，讓它先恢復已提交的收據；只有明確 `MintPermitExpired` 等封閉拒絕結果才能結案。矛盾收據或 OperationConflict 應隔離待查，不能歸類為可重生 token 的失敗。
 
 ## API 與資料庫部署
 
