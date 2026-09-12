@@ -16,6 +16,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <None Include="..\..\build\audit-enrollment-profile4-api-policies.sql" Link="audit-enrollment-profile4-api-policies.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-profile4-api-capabilities.sql" Link="audit-enrollment-profile4-api-capabilities.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

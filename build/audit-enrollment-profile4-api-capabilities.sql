@@ -1,0 +1,86 @@
+-- UNCONSUMED capability-function and definer-ownership slice, not a full profile verdict.
+-- Compose with roots, exact definer privileges, relation contracts and publication gates.
+WITH identities AS (
+ SELECT c.relowner owner_oid,r.oid api_oid,
+   (SELECT p.proowner FROM pg_catalog.pg_proc p WHERE p.oid=pg_catalog.to_regprocedure('public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[])')) plan_oid,
+   (SELECT p.proowner FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+     WHERE n.nspname='enrollment_execution' AND p.proname='read_execution_record' AND p.proargtypes::text='2950 2950') execution_oid,
+   (SELECT p.proowner FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+     WHERE n.nspname='enrollment_execution' AND p.proname='claim_next' AND p.proargtypes::text='2950 2950') queue_oid,
+   (SELECT p.proowner FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+     WHERE n.nspname='enrollment_execution' AND p.proname='read_grant_delivery' AND p.proargtypes::text='2950 2950 2950 25') delivery_oid
+ FROM pg_catalog.pg_class c CROSS JOIN pg_catalog.pg_roles r
+ WHERE c.oid=pg_catalog.to_regclass('public."Environments"') AND r.rolname=SESSION_USER
+), contracts(signature,owner_kind,volatility,definer,returns_set,return_oid,argument_types,argument_names,
+ all_argument_types,argument_modes,configuration,body_hash,acl_kind) AS (VALUES
+-- BEGIN generated API capability functions
+ ('public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[])','plan','v',true,false,2278::oid,'2950 2950 2951',ARRAY['p_environment_id','p_directory_object_id','p_principal_ids']::text[],NULL::oid[],NULL::"char"[],ARRAY['search_path=pg_catalog, pg_temp']::text[],'282c53c1e92a053a6dbc5c07877227bee3a68ceb735393ce1fd48fa0af6bc67f','api'),
+ ('enrollment_execution.worker_scope(uuid)','execution','s',false,false,16::oid,'2950',ARRAY['p_environment']::text[],NULL::oid[],NULL::"char"[],ARRAY['search_path=pg_catalog, pg_temp']::text[],'fa0380c047416a590183a3672e065fd7accae741d81c999ebd399d13c377d354','owner'),
+ ('enrollment_execution.queue_worker_scope(uuid)','queue','s',false,false,16::oid,'2950',ARRAY['p_environment']::text[],NULL::oid[],NULL::"char"[],ARRAY['search_path=pg_catalog, pg_temp']::text[],'b9f3b7e89355977a1ebcce42e03ec3017a0aad4803291669c856fa15cdb31af1','owner'),
+ ('enrollment_execution.read_execution_record(uuid,uuid)','execution','v',true,true,2249::oid,'2950 2950',ARRAY['p_environment','p_operation','contract_version','outcome','execution_state','op_environment_id','op_id','op_plan_id','op_request_id','op_approval_id','op_requester_id','op_approver_id','op_requester_operator_id','op_approver_operator_id','op_plan_hash','op_directory_object_id','op_server_device_id','op_mapping_created_at','op_directory_generation','op_environment_version','op_recipient_spki','op_recipient_fingerprint','op_queued_at','op_authorization_not_after','permit_version','permit_issued_at','permit_not_after','permit_token_sha256','permit_recipient_fingerprint','permit_ciphertext_sha256','permit_authorization_digest','ciphertext','result_outcome','result_diagnostic','result_recorded_at','receipt_grant_id','receipt_environment_id','receipt_directory_object_id','receipt_device_id','receipt_mapping_created_at','receipt_created_at','receipt_expires_at','receipt_contract_version','receipt_permit_not_after','receipt_token_sha256','receipt_authorization_digest','ack_requester_id','ack_token_sha256','ack_ciphertext_sha256','ack_at','stop_reason','stop_recorded_at']::text[],ARRAY[2950,2950,21,25,25,2950,2950,2950,2950,2950,2950,2950,2950,2950,25,2950,2950,1184,2950,20,17,17,1184,1184,21,1184,1184,17,17,17,17,17,25,25,1184,2950,2950,2950,2950,1184,1184,1184,21,1184,17,17,2950,17,17,1184,25,1184]::oid[],ARRAY['i','i','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'aac601a298dccd8d2158a646d5ebc7332915af0e6c6e576e3bdd1e8807cf2f30','runtime'),
+ ('enrollment_execution.read_and_lock_plan_context(uuid,uuid)','execution','v',true,true,2249::oid,'2950 2950',ARRAY['p_environment','p_operation','contract_version','outcome','plan_environment_id','plan_id','plan_requester_id','plan_action','plan_immutable_json','plan_hash','plan_policy_version','plan_expires_at','plan_state','plan_reason','item_environment_id','item_plan_id','item_id','item_target_id','item_expected_version','approval_environment_id','approval_id','approval_plan_id','approval_plan_hash','approval_approver_id','approval_approved_at','approval_expires_at','reservation_fingerprint','reservation_environment_id','reservation_plan_id','reservation_requester_id','reservation_request_id','reservation_request_digest','reservation_created_at','database_checked_at','operation_binding_sha256']::text[],ARRAY[2950,2950,21,25,2950,2950,2950,25,25,25,20,1184,23,25,2950,2950,2950,25,20,2950,2950,2950,25,2950,1184,1184,17,2950,2950,2950,2950,17,1184,1184,17]::oid[],ARRAY['i','i','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'ccf09d92cdbbf778941918a4230da49c3815d33eb6ab7a45726aa45b153c51e4','runtime'),
+ ('enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea)','execution','v',true,true,2249::oid,'2950 2950 25 17 17 17',ARRAY['p_environment','p_operation','p_verified_plan_hash','p_token_sha256','p_fingerprint','p_ciphertext','contract_version','outcome','stop_reason']::text[],ARRAY[2950,2950,25,17,17,17,21,25,25]::oid[],ARRAY['i','i','i','i','i','i','t','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'4779fb1ee6a23896c2bba7207e561dbbdfa617bea22ae668bb2d390c46c3cd35','runtime'),
+ ('enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)','execution','v',true,true,2249::oid,'2950 2950 17 25 25 2950 2950 2950 2950 1184 1184 1184 21 1184 17 17',ARRAY['p_environment','p_operation','p_permit_digest','p_outcome','p_diagnostic','p_grant','p_receipt_environment','p_directory','p_device','p_mapping_at','p_created_at','p_expires_at','p_issue_version','p_permit_not_after','p_token_sha256','p_receipt_digest','contract_version','outcome','stop_reason']::text[],ARRAY[2950,2950,17,25,25,2950,2950,2950,2950,1184,1184,1184,21,1184,17,17,21,25,25]::oid[],ARRAY['i','i','i','i','i','i','i','i','i','i','i','i','i','i','i','i','t','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'10792a62c71aa03b2bc994567ccbe8007469296875bac390ed909677953e84d4','runtime'),
+ ('enrollment_execution.quarantine_execution(uuid,uuid,bytea,text)','execution','v',true,true,2249::oid,'2950 2950 17 25',ARRAY['p_environment','p_operation','p_permit_digest','p_reason','contract_version','outcome','stop_reason']::text[],ARRAY[2950,2950,17,25,21,25,25]::oid[],ARRAY['i','i','i','i','t','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'9e367b6e41d30903262f9d8acbdc920a28614d7cde43bf4e4e0e1624f6d5f7a6','runtime'),
+ ('enrollment_execution.claim_next(uuid,uuid)','queue','v',true,true,2249::oid,'2950 2950',ARRAY['p_environment','p_token','contract_version','outcome','queried_at','environment_id','operation_id','claim_token','attempt','claimed_at','lease_until']::text[],ARRAY[2950,2950,21,25,1184,2950,2950,2950,23,1184,1184]::oid[],ARRAY['i','i','t','t','t','t','t','t','t','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'c99fe0e712736e7d55f4ada5846462afb5f63835d62689478958cbca7f4eb8c2','runtime'),
+ ('enrollment_execution.defer_claim(uuid,uuid,uuid,text)','queue','v',true,true,2249::oid,'2950 2950 2950 25',ARRAY['p_environment','p_operation','p_token','p_reason','contract_version','outcome','queried_at','next_attempt_at']::text[],ARRAY[2950,2950,2950,25,21,25,1184,1184]::oid[],ARRAY['i','i','i','i','t','t','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'1f0c54dfe0cd7d92bc5aa3d1b581ca8c6a973b52d45a18dbcb5362292be7b06a','runtime'),
+ ('enrollment_execution.complete_claim(uuid,uuid,uuid)','queue','v',true,true,2249::oid,'2950 2950 2950',ARRAY['p_environment','p_operation','p_token','contract_version','outcome','queried_at','next_attempt_at']::text[],ARRAY[2950,2950,2950,21,25,1184,1184]::oid[],ARRAY['i','i','i','t','t','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'081ec3ce1ac0909ca2ce20e1c1e0cfe01d00db1b12e22d9d045d5536f147db3c','runtime'),
+ ('enrollment_execution.read_grant_status_receipt(uuid,uuid)','delivery','v',true,true,2249::oid,'2950 2950',ARRAY['p_environment','p_operation','contract_version','outcome','environment_id','operation_id','grant_id','directory_object_id','device_id','mapping_created_at','grant_created_at','grant_expires_at','issue_contract_version','mint_permit_not_after','token_sha256','authorization_digest']::text[],ARRAY[2950,2950,21,25,2950,2950,2950,2950,2950,1184,1184,1184,21,1184,17,17]::oid[],ARRAY['i','i','t','t','t','t','t','t','t','t','t','t','t','t','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'17b99dba3e0fab631511deea07b203de2932f36b2a1d6a1ea50480c8a36ea88f','runtime'),
+ ('enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)','delivery','v',true,true,2249::oid,'2950 2950 2950 25 25 1184 1184 2950 2950 2950 1184 1184 1184 21 1184 17 17',ARRAY['p_environment','p_operation','p_observation','p_state','p_diagnostic','p_private_observed_at','p_private_state_changed_at','p_grant','p_directory_object','p_device','p_mapping_created_at','p_grant_created_at','p_grant_expires_at','p_issue_contract','p_mint_permit_not_after','p_token_sha256','p_authorization_digest','contract_version','outcome','observation_id','environment_id','operation_id','sequence','state','diagnostic','private_observed_at','private_state_changed_at','recorded_at','available_until']::text[],ARRAY[2950,2950,2950,25,25,1184,1184,2950,2950,2950,1184,1184,1184,21,1184,17,17,21,25,2950,2950,2950,20,25,25,1184,1184,1184,1184]::oid[],ARRAY['i','i','i','i','i','i','i','i','i','i','i','i','i','i','i','i','i','t','t','t','t','t','t','t','t','t','t','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'4453d4db3727fc08898da357aa71f39241b795d516ed08a17c296770d8a55387','runtime'),
+ ('enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)','delivery','v',true,true,2249::oid,'2950 2950 2950 25',ARRAY['p_environment','p_operation','p_requester','p_session_hash','contract_version','outcome','environment_id','operation_id','format_version','recipient_fingerprint','ciphertext','ciphertext_sha256','delivery_not_after','queried_at']::text[],ARRAY[2950,2950,2950,25,21,25,2950,2950,21,17,17,17,1184,1184]::oid[],ARRAY['i','i','i','i','t','t','t','t','t','t','t','t','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'6d2919719791f4527b04b6af96df4ba484ccab56ae0f1e3b1c87497358ac84ba','runtime'),
+ ('enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)','delivery','v',true,true,2249::oid,'2950 2950 2950 25 17 17',ARRAY['p_environment','p_operation','p_requester','p_session_hash','p_recipient_fingerprint','p_ciphertext_sha256','contract_version','outcome']::text[],ARRAY[2950,2950,2950,25,17,17,21,25]::oid[],ARRAY['i','i','i','i','i','i','t','t']::"char"[],ARRAY['search_path=pg_catalog, pg_temp','row_security=on']::text[],'5a7f89e8ae0f7487b4abf3e3c3642062986eae340bfb4fc66c4cd0fbe309bc6d','runtime')
+-- END generated API capability functions
+), functions AS (
+ SELECT e.*,p.*,l.lanname,CASE e.owner_kind WHEN 'plan' THEN i.plan_oid WHEN 'execution' THEN i.execution_oid
+   WHEN 'queue' THEN i.queue_oid WHEN 'delivery' THEN i.delivery_oid END expected_owner
+ FROM contracts e CROSS JOIN identities i
+ LEFT JOIN pg_catalog.pg_namespace n ON n.nspname=pg_catalog.split_part(e.signature,'.',1)
+ LEFT JOIN pg_catalog.pg_proc p ON p.pronamespace=n.oid
+   AND p.proname=pg_catalog.split_part(pg_catalog.split_part(e.signature,'.',2),'(',1) AND p.proargtypes::text=e.argument_types
+ LEFT JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+), acl AS (
+ SELECT p.oid function_oid,p.acl_kind,p.expected_owner,a.* FROM functions p
+ CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) a
+)
+SELECT COALESCE((SELECT CURRENT_USER=SESSION_USER
+ AND pg_catalog.current_setting('search_path') IN('pg_catalog,pg_temp','pg_catalog, pg_temp')
+ AND (SELECT count(*)=6 AND count(DISTINCT id)=6 FROM pg_catalog.unnest(ARRAY[i.owner_oid,i.api_oid,i.plan_oid,i.execution_oid,i.queue_oid,i.delivery_oid]) id)
+ AND (SELECT count(*)=4 AND bool_and(NOT(r.rolcanlogin OR r.rolsuper OR r.rolbypassrls OR r.rolcreatedb OR r.rolcreaterole OR r.rolinherit OR r.rolreplication))
+   FROM pg_catalog.pg_roles r WHERE r.oid IN(i.plan_oid,i.execution_oid,i.queue_oid,i.delivery_oid))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member IN(i.plan_oid,i.execution_oid,i.queue_oid,i.delivery_oid)
+   OR m.roleid IN(i.plan_oid,i.execution_oid,i.queue_oid,i.delivery_oid))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_database d WHERE d.datdba IN(i.plan_oid,i.execution_oid,i.queue_oid,i.delivery_oid))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspowner IN(i.plan_oid,i.execution_oid,i.queue_oid,i.delivery_oid))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c WHERE c.relowner IN(i.plan_oid,i.execution_oid,i.queue_oid,i.delivery_oid))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_shdepend d
+   WHERE d.refclassid='pg_catalog.pg_authid'::regclass AND d.refobjid IN(i.plan_oid,i.execution_oid,i.queue_oid,i.delivery_oid)
+     AND d.deptype='o'
+     AND NOT(d.dbid=(SELECT oid FROM pg_catalog.pg_database WHERE datname=pg_catalog.current_database())
+       AND d.classid='pg_catalog.pg_proc'::regclass AND d.objsubid=0
+       AND EXISTS(SELECT 1 FROM functions f WHERE f.oid=d.objid AND f.expected_owner=d.refobjid)))
+ AND (SELECT count(*)=15 AND bool_and(COALESCE(p.oid IS NOT NULL AND p.proowner=p.expected_owner AND p.lanname='plpgsql'
+   AND p.prokind='f' AND p.provolatile=p.volatility::"char" AND p.proparallel='u' AND p.prosecdef=p.definer
+   AND NOT p.proisstrict AND NOT p.proleakproof AND p.prosupport=0 AND p.proretset=p.returns_set AND p.prorettype=p.return_oid
+   AND p.pronargs=pg_catalog.cardinality(p.proargtypes::oid[]) AND p.proargtypes::text=p.argument_types
+   AND p.proargnames IS NOT DISTINCT FROM p.argument_names AND p.proallargtypes IS NOT DISTINCT FROM p.all_argument_types
+   AND p.proargmodes IS NOT DISTINCT FROM p.argument_modes AND p.proconfig IS NOT DISTINCT FROM p.configuration
+   AND p.pronargdefaults=0 AND p.proargdefaults IS NULL AND p.provariadic=0 AND p.protrftypes IS NULL
+   AND p.probin IS NULL AND p.prosqlbody IS NULL
+   AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.replace(p.prosrc,E'\r\n',E'\n'),'UTF8')),'hex')=p.body_hash
+   AND (SELECT count(*)=1 FROM pg_catalog.pg_proc extra WHERE extra.pronamespace=p.pronamespace AND extra.proname=p.proname),false)) FROM functions p)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p WHERE p.proowner IN(i.plan_oid,i.execution_oid,i.queue_oid,i.delivery_oid)
+   AND NOT EXISTS(SELECT 1 FROM functions f WHERE f.oid=p.oid AND f.expected_owner=p.proowner))
+ AND (SELECT count(*)=1 AND bool_and(grantor=i.plan_oid AND grantee=i.api_oid AND privilege_type='EXECUTE' AND NOT is_grantable) FROM acl WHERE acl_kind='api')
+ AND (SELECT count(*)=2 AND bool_and(grantor=expected_owner AND grantee=expected_owner AND privilege_type='EXECUTE' AND NOT is_grantable) FROM acl WHERE acl_kind='owner')
+ -- Private binding-derived exact runtime grantees remain a maintenance dependency.
+ AND NOT EXISTS(SELECT 1 FROM functions f WHERE f.acl_kind='runtime'
+   AND (pg_catalog.has_function_privilege(i.api_oid,f.oid,'EXECUTE')
+     OR NOT EXISTS(SELECT 1 FROM acl a WHERE a.function_oid=f.oid AND a.grantee=f.expected_owner)
+     OR NOT EXISTS(SELECT 1 FROM acl a JOIN pg_catalog.pg_roles r ON r.oid=a.grantee
+       WHERE a.function_oid=f.oid AND a.grantee<>f.expected_owner AND r.rolcanlogin)))
+ AND NOT EXISTS(SELECT 1 FROM acl a LEFT JOIN pg_catalog.pg_roles r ON r.oid=a.grantee WHERE a.acl_kind='runtime'
+   AND (a.grantor<>a.expected_owner OR a.grantee IN(0,i.api_oid) OR a.privilege_type<>'EXECUTE' OR a.is_grantable
+     OR r.oid IS NULL OR r.rolsuper OR r.rolbypassrls OR r.rolcreatedb OR r.rolcreaterole OR r.rolinherit OR r.rolreplication
+     OR (a.grantee<>a.expected_owner AND NOT r.rolcanlogin)
+     OR EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member=r.oid OR m.roleid=r.oid)))
+ FROM identities i),false) AS is_valid;
