@@ -1,30 +1,56 @@
 -- Included only by the profile4 upgrade/provision transaction while holding the exclusive deployment lock.
 
 CREATE FUNCTION enrollment_execution.delivery_worker_scope(p_environment uuid,p_purpose text)
-RETURNS boolean LANGUAGE sql STABLE PARALLEL UNSAFE SECURITY INVOKER
-SET search_path=pg_catalog,pg_temp AS $function$
-SELECT p_environment IS NOT NULL
-   AND p_environment<>'00000000-0000-0000-0000-000000000000'::uuid
-   AND p_purpose IN ('EnrollmentGrantStatusRefresh','EnrollmentGrantDelivery')
-   AND EXISTS (
+RETURNS boolean LANGUAGE plpgsql STABLE PARALLEL UNSAFE SECURITY DEFINER
+SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
+DECLARE runtime_oid oid; definer_oid oid; runtime_rows integer; definer_rows integer; binding_rows integer;
+BEGIN
+    IF p_environment IS NULL OR p_environment='00000000-0000-0000-0000-000000000000'::uuid
+       OR p_purpose IS NULL OR p_purpose NOT IN ('EnrollmentGrantStatusRefresh','EnrollmentGrantDelivery') THEN
+        RETURN false;
+    END IF;
+    SELECT count(*),min(role.oid) INTO runtime_rows,runtime_oid
+    FROM pg_catalog.pg_roles role
+    WHERE role.rolname=SESSION_USER AND role.rolcanlogin
+      AND NOT(role.rolsuper OR role.rolbypassrls OR role.rolcreatedb OR role.rolcreaterole
+        OR role.rolinherit OR role.rolreplication)
+      AND role.oid<>CURRENT_USER::regrole::oid
+      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership
+        WHERE membership.member=role.oid OR membership.roleid=role.oid);
+    SELECT count(*),min(role.oid) INTO definer_rows,definer_oid
+    FROM enrollment_execution.role_reservations reservation
+    JOIN pg_catalog.pg_roles role ON role.oid=reservation.role_oid AND role.rolname=reservation.role_name
+    WHERE reservation.capability='EnrollmentGrantDelivery' AND reservation.role_kind='DeliveryDefiner'
+      AND reservation.reservation_schema_version=1
+      AND NOT(role.rolcanlogin OR role.rolsuper OR role.rolbypassrls OR role.rolcreatedb OR role.rolcreaterole
+        OR role.rolinherit OR role.rolreplication)
+      AND role.oid<>CURRENT_USER::regrole::oid
+      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership
+        WHERE membership.member=role.oid OR membership.roleid=role.oid);
+    IF runtime_rows<>1 OR definer_rows<>1 OR runtime_oid=definer_oid
+       OR (SELECT count(*) FROM enrollment_execution.role_reservations
+         WHERE capability='EnrollmentGrantDelivery' AND role_kind='DeliveryDefiner')<>1 THEN
+        RETURN false;
+    END IF;
+    SELECT count(*) INTO binding_rows
+    FROM (
        SELECT 1 FROM public."DirectoryDatabaseBindings" binding
        JOIN enrollment_execution.role_reservations runtime_reservation
          ON runtime_reservation.role_name=binding."LoginRole"
-        AND runtime_reservation.role_oid=SESSION_USER::regrole::oid
+        AND runtime_reservation.role_oid=runtime_oid
         AND runtime_reservation.capability='EnrollmentGrantDelivery'
+        AND runtime_reservation.reservation_schema_version=1
         AND runtime_reservation.role_kind=CASE p_purpose
               WHEN 'EnrollmentGrantStatusRefresh' THEN 'StatusRuntime' ELSE 'DeliveryRuntime' END
        WHERE binding."EnvironmentId"=p_environment AND binding."Purpose"=p_purpose
          AND binding."ContractVersion"=1 AND binding."PrincipalId" IS NULL
-         AND binding."LoginRole"=SESSION_USER)
-   AND EXISTS (
-       SELECT 1 FROM enrollment_execution.role_reservations definer_reservation
-       WHERE definer_reservation.role_oid=CURRENT_USER::regrole::oid
-         AND definer_reservation.role_name=CURRENT_USER::name
-         AND definer_reservation.capability='EnrollmentGrantDelivery'
-         AND definer_reservation.role_kind='DeliveryDefiner')
+         AND binding."LoginRole"=SESSION_USER) matched;
+    RETURN binding_rows=1;
+END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.delivery_worker_scope(uuid,text) FROM PUBLIC;
+ALTER FUNCTION enrollment_execution.delivery_worker_scope(uuid,text) OWNER TO :"expected_table_owner_role";
+GRANT EXECUTE ON FUNCTION enrollment_execution.delivery_worker_scope(uuid,text) TO :"delivery_definer_role";
 
 CREATE FUNCTION enrollment_execution.read_grant_status_receipt(p_environment uuid,p_operation uuid)
 RETURNS TABLE(contract_version smallint,outcome text,environment_id uuid,operation_id uuid,

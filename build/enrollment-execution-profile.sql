@@ -802,16 +802,14 @@ BEGIN
     -- Profile4 delivery family: one shared NOLOGIN definer is always installed. Each environment
     -- has either no delivery bindings or one exact status/delivery LOGIN pair.
     ok := ok
-      AND (SELECT count(*)=5 FROM pg_catalog.pg_proc function_row WHERE function_row.proowner=delivery_definer
+      AND (SELECT count(*)=4 FROM pg_catalog.pg_proc function_row WHERE function_row.proowner=delivery_definer
         AND function_row.oid IN(
-          'enrollment_execution.delivery_worker_scope(uuid,text)'::regprocedure,
           'enrollment_execution.read_grant_status_receipt(uuid,uuid)'::regprocedure,
           'enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'::regprocedure,
           'enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)'::regprocedure,
           'enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)'::regprocedure))
       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row WHERE function_row.proowner=delivery_definer
         AND function_row.oid NOT IN(
-          'enrollment_execution.delivery_worker_scope(uuid,text)'::regprocedure,
           'enrollment_execution.read_grant_status_receipt(uuid,uuid)'::regprocedure,
           'enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'::regprocedure,
           'enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)'::regprocedure,
@@ -824,7 +822,7 @@ BEGIN
           ('enrollment_execution.lock_delivery_context(uuid,uuid,uuid,text)',table_owner,false,false,'v','2773f0caa2d5ccdb20d5192bcefc5ef4d848004424b52bd43c746ef2abdd806b'),
           ('enrollment_execution.get_sealed_delivery(uuid,uuid,uuid,text)',table_owner,false,false,'v','49ac0d54d67374f2e26c4bb1ad57c7ccdd15096da5b013ee1175002b04fefa53'),
           ('enrollment_execution.ack_sealed_delivery(uuid,uuid,uuid,text,bytea,bytea)',table_owner,false,false,'v','85a3d6f503a90f067a7d94cffaf3fc03f6f3b1adb84db92a40110c721454ab24'),
-          ('enrollment_execution.delivery_worker_scope(uuid,text)',delivery_definer,false,false,'s','ffa020aca5046594c4fe40536acf40c2e6bb9d79aa30363963cf045ebb333bab'),
+          ('enrollment_execution.delivery_worker_scope(uuid,text)',table_owner,true,true,'s','a2abaa5afe86cdf2b548c52e54467b96a16af011f2780bdb8b49e4e1dd7efb8c'),
           ('enrollment_execution.read_grant_status_receipt(uuid,uuid)',delivery_definer,true,true,'v','63cc9a1b50e70f66d59ed1a754a54c05aee02259341b8f7b6ed9ecf10256ed78'),
           ('enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',delivery_definer,true,true,'v','545ce0efbc1807b4104a1d5386d328326f1bfc03db98dbcec9ab531f021b03cf'),
           ('enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)',delivery_definer,true,true,'v','f80126238164f65f17e8fb933b13799aa2fd6b45a1f3eb58a8f673014fcf5e3b'),
@@ -842,6 +840,21 @@ BEGIN
           OR proisstrict OR lanname<>'plpgsql' OR provolatile::text<>volatility OR proparallel<>'u'
           OR proconfig<>CASE WHEN with_rls THEN ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
                             ELSE ARRAY['search_path=pg_catalog, pg_temp'] END OR actual_hash<>body_hash)
+      AND NOT EXISTS(
+        WITH expected(grantor,grantee,privilege_type,is_grantable) AS (VALUES
+          (table_owner,table_owner,'EXECUTE',false),(table_owner,delivery_definer,'EXECUTE',false)),
+        actual AS (SELECT acl.grantor,acl.grantee,acl.privilege_type,acl.is_grantable
+          FROM pg_catalog.pg_proc function_row CROSS JOIN LATERAL pg_catalog.aclexplode(
+            COALESCE(function_row.proacl,pg_catalog.acldefault('f',function_row.proowner))) acl
+          WHERE function_row.oid=pg_catalog.to_regprocedure('enrollment_execution.delivery_worker_scope(uuid,text)'))
+        SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
+          UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) difference)
+      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
+        WHERE relation.oid IN('public."DirectoryDatabaseBindings"'::regclass,
+            'enrollment_execution.role_reservations'::regclass)
+          AND (pg_catalog.has_table_privilege(delivery_definer,relation.oid,
+                 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+            OR pg_catalog.has_any_column_privilege(delivery_definer,relation.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
       AND (SELECT count(*)=34 FROM pg_catalog.pg_policy policy_row
         WHERE delivery_definer=ANY(policy_row.polroles) AND policy_row.polname LIKE 'enrollment_delivery_%')
       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy policy_row

@@ -113,7 +113,7 @@ DROP FUNCTION enrollment_execution.execution_store_profile();
 \ir enrollment-execution-profile.sql
 \ir enrollment-delivery-profile.sql
 
-ALTER FUNCTION enrollment_execution.delivery_worker_scope(uuid,text) OWNER TO :"delivery_definer_role";
+-- delivery_worker_scope remains table-owner SECURITY DEFINER, executable only by the delivery definer.
 ALTER FUNCTION enrollment_execution.read_grant_status_receipt(uuid,uuid) OWNER TO :"delivery_definer_role";
 ALTER FUNCTION enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea) OWNER TO :"delivery_definer_role";
 ALTER FUNCTION enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text) OWNER TO :"delivery_definer_role";
@@ -128,8 +128,6 @@ GRANT EXECUTE ON FUNCTION enrollment_execution.audit_delivery_privileges(uuid),
  enrollment_execution.ack_sealed_delivery(uuid,uuid,uuid,text,bytea,bytea),
  enrollment_execution.has_computer_permission(uuid,uuid,uuid,uuid,text),
  enrollment_execution.scope_uuid(text) TO :"delivery_definer_role";
-GRANT SELECT("LoginRole","Purpose","ContractVersion","EnvironmentId","PrincipalId")
- ON public."DirectoryDatabaseBindings" TO :"delivery_definer_role";
 GRANT SELECT("Id","Version"),UPDATE("Name") ON public."Environments" TO :"delivery_definer_role";
 GRANT SELECT("EnvironmentId","Status","Generation","CompletedAt"),UPDATE("ErrorCode") ON public."DirectorySync" TO :"delivery_definer_role";
 GRANT SELECT("EnvironmentId","Id","Generation","Kind","Department","ParentOuId","OuAncestry"),UPDATE("Name")
