@@ -17,6 +17,7 @@
     <Project Path="src/Server/Api/Api.csproj" />
     <Project Path="src/Server/ConnectorHost/ConnectorHost.csproj" />
     <Project Path="src/Server/Core/Core.csproj" />
+    <Project Path="src/Server/EnrollmentWorker/EnrollmentWorker.csproj" />
     <Project Path="src/Server/Provisioning/Provisioning.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -36,5 +37,8 @@
   </Folder>
   <Folder Name="/tests/DirectoryConnector/">
     <Project Path="tests/DirectoryConnector/DirectoryConnector.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/EnrollmentWorker/">
+    <Project Path="tests/EnrollmentWorker/EnrollmentWorker.Tests.csproj" />
   </Folder>
 </Solution>

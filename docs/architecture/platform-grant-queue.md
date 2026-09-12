@@ -26,7 +26,7 @@ profile v3 使用獨立 NOLOGIN queue definer，與執行授權的 definer 分�
 
 ## 驗證
 
-完整後端回歸為 12 個專案、1,234 項測試全部通過，含 495 項整合測試與 execution library 的 92 項單元測試；locked restore 與 Release build 零警告／錯誤。最終 SQL 在全新資料庫的 28 項定向測試通過，涵蓋首次安裝、競爭與取消、租約過期與飽和計數、不可改寫歷史、終態記帳及權限漂移。獨立 v2 升級案例核對永久角色／環境綁定保留、錯誤 owner 回復、過度授權時 installer 拒絕，以及舊 installer 不能覆蓋 v3。
+完整後端回歸為 12 個專案、1,235 項測試全部通過，含 496 項整合測試與 execution library 的 92 項單元測試；locked restore 與 Release build 零警告／錯誤。固定 constraint 稽核的 C 排序後，全新資料庫的首次安裝與 default／C 地區設定升級測試通過。完整回歸亦涵蓋首次安裝、競爭與取消、租約過期與飽和計數、不可改寫歷史、終態記帳及權限漂移。獨立 v2 升級案例核對永久角色／環境綁定保留、錯誤 owner 回復、過度授權時 installer 拒絕，以及舊 installer 不能覆蓋 v3。
 
 後續補強的升級測試清理、catalog 回讀與 installer grant-option 拒絕案例亦定向重跑通過；只清理該次測試成功建立的隔離資料庫與角色。一般覆核與 Daybreak 專項覆核均無剩餘阻擋。
 
