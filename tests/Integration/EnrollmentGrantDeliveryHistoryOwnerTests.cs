@@ -158,5 +158,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         Assert.False(await reader.ReadAsync(deadline.Token));
         await reader.DisposeAsync();
         await VerifyHistoryVisibilityAsync(ownerLogin, (NpgsqlConnection)db.Database.GetDbConnection(), historyOwner, cleanup.CreatedRoles, deadline.Token);
+        await VerifyReadinessFoundationAsync(ownerLogin, (NpgsqlConnection)db.Database.GetDbConnection(),
+            new NpgsqlConnectionStringBuilder(owner.ConnectionString) { Username = worker, Password = password, Pooling = false }.ConnectionString, deadline.Token);
     }
 }
