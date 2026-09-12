@@ -7,5 +7,6 @@
     <ProjectReference Include="..\AgentEnrollment\AgentEnrollment.csproj" />
     <ProjectReference Include="..\AgentPlatformGrants\AgentPlatformGrants.csproj" />
     <InternalsVisibleTo Include="EnrollmentGrantExecution.Tests" />
+    <InternalsVisibleTo Include="Integration" />
   </ItemGroup>
 </Project>

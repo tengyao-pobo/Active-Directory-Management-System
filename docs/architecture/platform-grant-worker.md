@@ -34,10 +34,16 @@ Digest v1 使用 SHA-256。輸入依序為 ASCII `ADGRAUTH`、大端序 uint16 �
 
 ## 下一個組合步驟
 
+新增的 `20260912100000_EnrollmentGrantQueuedAnchors` 固定排隊後的計畫、計畫項目、核准及 outbox 內容。API 先在原交易中保存 Queued，再新增 operation 與通知；deferred constraint 在提交時要求三者完整對應。PlanItems／Approvals 的新增、修改、移動及刪除都鎖定舊／新計畫，父項不存在或不可見時拒絕。Outbox 只允許 Attempts／DeliveredAt 的投遞記帳。既有 runtime audit 同時釘選必要觸發器、函式內容、屬性及權限。
+
+`20260912100100_EnrollmentGrantExecutionReadContract` 提供固定 50 欄的 typed read 契約與 SQL binary digest helper；兩者都是 owner-only SECURITY INVOKER，不授予 API 或 worker 呼叫權限。`PostgresExecutionRecordCodec` 驗證完整單列、欄名／型別、狀態形狀、密文／摘要／收據與查詢身分；損壞或矛盾資料回報 OutcomeUnknown。SQL helper 使用整數大端序及 Unix 微秒，無 JSON 計畫重新序列化，也不把摘要當成授權。
+
 Public-store repository 必須以獨立 per-environment LOGIN 及精確 profile audit 呼叫固定函式；不得沿用 API LOGIN 或直接授予表權限。在同一 SERIALIZABLE 交易先鎖定／重查 public context，以共用 `EnrollmentGrantPlanValidation` 與既有 `ChangePlanService.ComputeHash` 驗證原始計畫，再由最後一個固定函式取得 DB clock 並原子保存 permit／封套。其後組合 private target／issue pools、host、同設備頁交付與 ACK；listener 尚未完成之前，仍不能啟用正式 readiness。
+
+Anchor 遷移不會回溯修復舊資料。正式啟用前必須預檢既有 Queued 計畫的雜湊、operation、核准與完整 outbox 對應；背景授權函式每次仍要重查，不得僅相信舊狀態值。
 
 ## 驗證
 
-後端 12 個測試專案涵蓋 1,024 項通過測試：完整回歸後，最後的 worker 邊界修正重跑 22 項單元測試，資料庫測試清理修正重跑 5 項真實競爭測試。Journal 共 45 項 PostgreSQL 案例涵蓋資料綁定、原子保存／刪除、不可變歷史、終止互斥及不同提交順序。Locked restore 與 Release build 零警告／錯誤；前端 lint、正式建置、37 項單元測試與 1 項 .NET／WebCrypto 互通測試通過。一般覆核與 Daybreak 專項覆核均無剩餘阻擋。
+後端 12 個測試專案涵蓋 1,078 項測試。完整回歸先通過 1,077 項，最後一項 EF 例外包裝的測試斷言修正後，定向重跑通過；正式程式沒有因此修改。Locked restore 與 Release build 零警告／錯誤。Execution library 共 33 項單元測試；399 項整合測試包含 45 項 journal、15 項 queued anchor、12 項 SQL read/digest，以及 24 項 catalog drift 案例。一般覆核與 Daybreak 專項覆核均無剩餘阻擋。
 
 這些測試尚未驗證真實 public-store repository、per-environment worker LOGIN、跨庫執行或正式部署；這些是下一個組合步驟的驗收範圍。

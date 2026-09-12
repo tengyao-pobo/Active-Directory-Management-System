@@ -595,6 +595,12 @@
           "Npgsql": "[10.0.3, )"
         }
       },
+      "agentplatformgrants": {
+        "type": "Project",
+        "dependencies": {
+          "Npgsql": "[10.0.3, )"
+        }
+      },
       "agentprojection": {
         "type": "Project",
         "dependencies": {
@@ -626,6 +632,13 @@
         "type": "Project",
         "dependencies": {
           "System.DirectoryServices.Protocols": "[10.0.12, )"
+        }
+      },
+      "enrollmentgrantexecution": {
+        "type": "Project",
+        "dependencies": {
+          "AgentEnrollment": "[1.0.0, )",
+          "AgentPlatformGrants": "[1.0.0, )"
         }
       },
       "persistence": {

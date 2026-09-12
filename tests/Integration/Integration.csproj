@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\Server\Api\Api.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure\Persistence\Persistence.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure\AgentEnrollment\AgentEnrollment.csproj" />
+    <ProjectReference Include="..\..\src\Infrastructure\EnrollmentGrantExecution\EnrollmentGrantExecution.csproj" />
     <ProjectReference Include="..\..\src\Server\ConnectorHost\ConnectorHost.csproj" />
     <ProjectReference Include="..\..\src\Server\Provisioning\Provisioning.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>

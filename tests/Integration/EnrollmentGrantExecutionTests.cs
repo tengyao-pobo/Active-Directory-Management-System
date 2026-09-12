@@ -118,22 +118,28 @@ public sealed partial class EnrollmentGrantPlanTests
     }
 
     [Fact]
-    public async Task ExecutionMissingOutboxIsAnIntegrityFailureAndIsNotRepaired()
+    public async Task ExecutionOutboxAnchorCannotBeDeletedAndQueuedHistoryRemainsReadable()
     {
         var seeded = await Seed(); using var factory = ExecutionFactory(seeded, new Clock(seeded.Now));
         var plan = await ApprovedExecutionPlan(seeded, factory); using var requester = Client(factory, seeded.Data.RequesterToken);
         var queued = await Post(requester, ExecutionPath(seeded, plan.Id), new { planHash = plan.Hash });
         Assert.Equal(HttpStatusCode.Accepted, queued.Status);
         var operation = queued.Json.GetProperty("id").GetGuid();
-        await using (var db = Db()) await db.Outbox.Where(x => x.EnvironmentId == seeded.Data.Environment.Id && x.Id == operation).ExecuteDeleteAsync();
+        await using (var db = Db())
+        {
+            var error = await Assert.ThrowsAsync<Npgsql.PostgresException>(() =>
+                db.Database.ExecuteSqlInterpolatedAsync(
+                    $"DELETE FROM public.\"Outbox\" WHERE \"EnvironmentId\"={seeded.Data.Environment.Id} AND \"Id\"={operation}"));
+            Assert.Equal("55000", error.SqlState);
+        }
         var retry = await Post(requester, ExecutionPath(seeded, plan.Id), new { planHash = plan.Hash });
-        Assert.Equal(HttpStatusCode.Conflict, retry.Status);
+        Assert.Equal(HttpStatusCode.OK, retry.Status);
         await using var verify = Db();
-        Assert.False(await verify.Outbox.AnyAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));
+        Assert.True(await verify.Outbox.AnyAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));
         Assert.Equal(1, await verify.EnrollmentGrantOperations.CountAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));
         Assert.Equal(1, await verify.Audit.CountAsync(x => x.EnvironmentId == seeded.Data.Environment.Id && x.Action == "EnrollmentGrantExecution.Queued"));
-        using var brokenPlan = await requester.GetAsync(ReadPath(seeded, plan.Id));
-        Assert.Equal(HttpStatusCode.Conflict, brokenPlan.StatusCode);
+        using var queuedPlan = await requester.GetAsync(ReadPath(seeded, plan.Id));
+        Assert.Equal(HttpStatusCode.OK, queuedPlan.StatusCode);
     }
 
     [Fact]

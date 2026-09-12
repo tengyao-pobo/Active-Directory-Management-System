@@ -132,11 +132,12 @@ public static partial class EnrollmentGrantPlanApi
                     EnvironmentVersion = payload.EnvironmentVersion, RecipientSpki = key.GetSubjectPublicKeyInfo(),
                     RecipientKeyFingerprint = key.GetFingerprintSha256(), QueuedAt = finalNow, AuthorizationNotAfter = deadline
                 };
+                locked.State = ChangePlanState.Queued;
+                await db.SaveChangesAsync(ct);
                 db.EnrollmentGrantOperations.Add(operation);
                 db.Outbox.Add(new OutboxMessage { EnvironmentId = environmentId, Id = operation.Id,
                     EventType = EnrollmentGrantOperationContract.OutboxEvent, Version = EnrollmentGrantOperationContract.SchemaVersion,
                     Payload = JsonSerializer.Serialize(new EnrollmentGrantExecutionNotification(1, environmentId, operation.Id), StrictJson), CreatedAt = finalNow });
-                locked.State = ChangePlanState.Queued;
                 db.Audit.Add(Audit(http, finalNow, environmentId, actor, "EnrollmentGrantExecution.Queued", planId, "Queued"));
                 await db.SaveChangesAsync(ct);
                 await final.CommitAsync(ct);
