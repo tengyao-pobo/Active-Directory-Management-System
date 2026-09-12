@@ -270,5 +270,21 @@ BEGIN
 END
 $catalog_postflight$;
 DO $postflight$ DECLARE a record; BEGIN SELECT * INTO STRICT a FROM enrollment_execution.audit_execution_privileges(current_setting('app.execution_install_environment')::uuid);
- IF a.is_valid IS DISTINCT FROM TRUE OR a.diagnostic_code<>'None' OR a.profile_version<>3 THEN RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Enrollment execution profile postflight failed.'; END IF; END $postflight$;
+ IF a.is_valid IS DISTINCT FROM TRUE OR a.diagnostic_code<>'None' OR a.profile_version<>3 THEN RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Enrollment execution profile postflight failed.',DETAIL=(SELECT pg_catalog.jsonb_build_object(
+ 'function_sha256',(SELECT pg_catalog.jsonb_object_agg(p.proname,
+   pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.btrim(
+     pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex'))
+   FROM pg_catalog.pg_proc p WHERE p.pronamespace='enrollment_execution'::regnamespace
+     AND p.proname IN('guard_work_queue','validate_work_queue','claim_next_work','defer_work_claim',
+       'complete_work_claim','queue_worker_scope','claim_next','defer_claim','complete_claim')),
+ 'constraints',(SELECT pg_catalog.jsonb_object_agg(c.relname,x.definitions)
+   FROM pg_catalog.pg_class c CROSS JOIN LATERAL (
+     SELECT pg_catalog.jsonb_agg(pg_catalog.pg_get_constraintdef(k.oid,true)
+       ORDER BY pg_catalog.pg_get_constraintdef(k.oid,true) COLLATE "C") definitions
+     FROM pg_catalog.pg_constraint k WHERE k.conrelid=c.oid AND k.contype IN('p','u','f','c') AND k.convalidated) x
+   WHERE c.oid IN('enrollment_execution.work_queue'::regclass,'enrollment_execution.claim_leases'::regclass)),
+ 'policy_md5',(SELECT pg_catalog.jsonb_object_agg(p.polname,pg_catalog.md5(
+     COALESCE(pg_catalog.pg_get_expr(p.polqual,p.polrelid),'')||'|'||
+     COALESCE(pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid),'')))
+   FROM pg_catalog.pg_policy p WHERE p.polname LIKE 'enrollment_execution_queue_%'))::text); END IF; END $postflight$;
 COMMIT;
