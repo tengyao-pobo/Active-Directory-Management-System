@@ -20,18 +20,26 @@ ACK parser 限制輸入 1,024 bytes，只接受 `formatVersion`、`recipientKeyF
 
 ## 接續整合
 
-下一步在 public execution database 保存不可變狀態觀測，讓 Unknown 立即使舊 Available 失效，讓已消耗／撤銷／過期狀態持續阻止交付。領取 API 必須重新核對原 requester、有效會員、目前設備權限交集及 fresh step-up；ACK 還需要 CSRF 防護與完整密文指紋匹配。
+已在 public execution database 加入不可變狀態觀測基礎，讓 Unknown 立即使舊 Available 失效，讓已消耗／撤銷／過期狀態持續阻止交付。領取 API 必須重新核對原 requester、有效會員、目前設備權限交集及 fresh step-up；ACK 還需要 CSRF 防護與完整密文指紋匹配。
 
 Browser 必須先將解密 token 成功交給受信任的本機 listener，之後才 ACK。ACK 與密文清理要同一交易，重試不能改換 token。尚未完成的過期密文清理需要持久化處置記錄，不能直接刪除現有 journal 所要求的封套。
 
-後續狀態 journal 已確定的資料規則如下；本次尚未實作此 journal：
+狀態 journal 的資料規則如下：
 
 - Unknown 不虛構私有查詢時間，時間欄與可交付期限皆為 NULL，保留固定診斷碼。
 - Available 必須使用私有資料庫時間，晚於 public 記錄時間前 15 秒且不晚於 public 記錄時間，並落在原 grant 有效期內。可交付期限由資料庫取最早到期值，重試不延長。
-- 新 Available 的私有查詢時間不得早於最近 Unknown 的 public 記錄時間，避免較晚回來的舊查詢清除失效狀態。
+- 新 Available 的私有查詢時間不得早於所有 Unknown 中最大的 public 記錄時間，避免較晚回來的舊查詢清除失效狀態。
 - Consumed、Revoked 或 Expired 一旦記錄，後續狀態不能恢復交付。完整收據與合理的狀態變更時間仍須驗證。
 - Observation UUID 精確重試回原序號與時間；任何輸入差異視為衝突。序號與 public 記錄時間由資料庫在取得操作鎖後產生。
 
-## 本次驗證
+## 狀態紀錄的啟用界線
+
+新 migration 建立 append-only `status_observations`、插入防護與 SECURITY INVOKER 記錄 helper。每次呼叫要求 SERIALIZABLE，先鎖 observation UUID，再鎖 operation，核對完整 Issued 收據；由資料庫產生序號與時間。並行寫入遇到 serialization failure 時，呼叫端必須使用相同 observation UUID 與原始內容重試。
+
+此增量不配置新的角色或 policy，也不改既有 public profile 3。FORCE RLS 且沒有允許 policy，表示一般 owner 與 runtime 都不能使用新紀錄功能；只有合成測試的管理連線可驗證規則。下一增量必須安裝完整 profile 4 的專用 status／delivery 能力後才可接入服務，readiness 仍為 false。
+
+`Recorded` 與 `AlreadyRecorded` 綁定本次 observation UUID；`Terminal` 則回傳既有終態證據，不接受或保留新的 UUID。精確舊 UUID 重試仍回傳原始紀錄，不能把它當成目前可交付狀態。GET 必須查最新序號與固定 deadline。
+
+## 前一增量驗證
 
 Locked restore 與 Release build 零警告／錯誤；完整後端 14 個專案、1,358 項測試通過。最後加入跨環境資訊保護與配置前角色檢查後，受影響的私有授權專案再跑 220 項全部通過，包含 22 項 profile4 資料庫整合測試。新增交付契約另有 23 項測試。升級、配置及 capability 重跑直接使用 `psql`；提交前注入指定錯誤，驗證函式、constraint、binding 與角色能力保留完整回滾。一般檢查及 SQL／C# 專項檢查均無剩餘阻擋。這些是合成資料庫證據，尚未驗收正式企業部署。
