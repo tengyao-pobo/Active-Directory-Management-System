@@ -612,7 +612,7 @@ BEGIN
           ('enrollment_execution.read_grant_delivery(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text)',delivery_definer,'plpgsql','v',true,true,'f80126238164f65f17e8fb933b13799aa2fd6b45a1f3eb58a8f673014fcf5e3b',4,'2950 2950 2950 25',ARRAY[2950,2950,2950,25,21,25,2950,2950,21,17,17,17,1184,1184]::oid[],ARRAY['p_environment','p_operation','p_requester','p_session_hash','contract_version','outcome','environment_id','operation_id','format_version','recipient_fingerprint','ciphertext','ciphertext_sha256','delivery_not_after','queried_at']::text[],ARRAY['i','i','i','i','t','t','t','t','t','t','t','t','t','t']::"char"[],2249::oid,true),
           ('enrollment_execution.acknowledge_grant_delivery(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea)',delivery_definer,'plpgsql','v',true,true,'99f68247c9d723dfa7755481005aa7104f93646f6095315ea8439db444668323',6,'2950 2950 2950 25 17 17',ARRAY[2950,2950,2950,25,17,17,21,25]::oid[],ARRAY['p_environment','p_operation','p_requester','p_session_hash','p_recipient_fingerprint','p_ciphertext_sha256','contract_version','outcome']::text[],ARRAY['i','i','i','i','i','i','t','t']::"char"[],2249::oid,true),
           ('enrollment_execution.reject_delivery_update()',table_owner,'plpgsql','v',true,true,'279e969ccd38a161d13a2dad55009fd9e759ee9fd9e9b615dbb834ba4abfeb76',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
-          ('enrollment_execution.audit_delivery_privileges(pg_catalog.uuid)',table_owner,'plpgsql','s',true,true,'a37b4693ed042c9d9f69555024c87cb5c40705cc60606bff14145b24480b1d9e',1,'2950',ARRAY[2950,16,25,21]::oid[],ARRAY['p_environment','is_valid','diagnostic_code','profile_version']::text[],ARRAY['i','t','t','t']::"char"[],2249::oid,true),
+          ('enrollment_execution.audit_delivery_privileges(pg_catalog.uuid)',table_owner,'plpgsql','v',true,true,'a37b4693ed042c9d9f69555024c87cb5c40705cc60606bff14145b24480b1d9e',1,'2950',ARRAY[2950,16,25,21]::oid[],ARRAY['p_environment','is_valid','diagnostic_code','profile_version']::text[],ARRAY['i','t','t','t']::"char"[],2249::oid,true),
           ('enrollment_execution.scope_uuid(pg_catalog.text)',table_owner,'plpgsql','i',false,false,'a7dd6ec2c76752765dd101c860b90d7b27db09de8865db291e555ca1ae96e72b',1,'25',NULL::oid[],ARRAY['p_value']::text[],NULL::"char"[],2950::oid,false),
           ('enrollment_execution.has_computer_permission(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text)',table_owner,'sql','s',false,false,'c3fb51c2382305ee8d2da5b40221261edd9978c0a3c3d3eab0ac86929221d4a2',5,'2950 2950 2950 2950 25',NULL::oid[],ARRAY['p_environment','p_principal','p_directory','p_generation','p_permission']::text[],NULL::"char"[],16::oid,false),
           ('enrollment_execution.reject_history_mutation()',table_owner,'plpgsql','v',false,false,'e35b27ac9bb227452ced5ccc67f6a40faec5d609a324b3d1a1d7f455486b8edd',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
@@ -2233,6 +2233,36 @@ SELECT COALESCE((SELECT
  FROM owner_role o),false) AS is_valid
     );
     -- END generated audit-enrollment-profile4-readiness-functions.sql
+
+    -- BEGIN generated audit-enrollment-profile4-runtime-metadata.sql
+    ok := ok AND (
+WITH owner_role AS (
+ SELECT oid FROM pg_catalog.pg_roles WHERE rolname=(SELECT rolname FROM pg_catalog.pg_roles WHERE oid=table_owner)
+), expected(signature) AS (VALUES
+ ('enrollment_execution.audit_execution_privileges(uuid)'),
+ ('enrollment_execution.audit_delivery_privileges(uuid)')
+), functions AS (
+ SELECT p.*,l.lanname FROM expected e
+ LEFT JOIN pg_catalog.pg_proc p ON p.oid=pg_catalog.to_regprocedure(e.signature)
+ LEFT JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+)
+SELECT COALESCE((SELECT count(*)=2 AND bool_and(
+ p.oid IS NOT NULL AND p.proowner=o.oid AND p.lanname='plpgsql' AND p.prokind='f'
+ AND p.prosecdef AND p.provolatile='v' AND p.proparallel='u'
+ AND NOT p.proisstrict AND NOT p.proleakproof AND p.prosupport=0
+ AND p.proretset AND p.prorettype=2249 AND p.pronargs=1 AND p.proargtypes::text='2950'
+ AND p.proallargtypes IS NOT DISTINCT FROM ARRAY[2950,16,25,21]::oid[]
+ AND p.proargnames IS NOT DISTINCT FROM ARRAY['p_environment','is_valid','diagnostic_code','profile_version']::text[]
+ AND p.proargmodes IS NOT DISTINCT FROM ARRAY['i','t','t','t']::"char"[]
+ AND p.pronargdefaults=0 AND p.proargdefaults IS NULL AND p.provariadic=0 AND p.protrftypes IS NULL
+ AND p.probin IS NULL AND p.prosqlbody IS NULL
+ AND p.proconfig IS NOT DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp','row_security=on'])
+ FROM functions p CROSS JOIN owner_role o),false)
+ AND (SELECT count(*)=2 FROM pg_catalog.pg_proc p
+   WHERE p.pronamespace=pg_catalog.to_regnamespace('enrollment_execution')
+     AND p.proname IN('audit_execution_privileges','audit_delivery_privileges')) AS is_valid
+    );
+    -- END generated audit-enrollment-profile4-runtime-metadata.sql
 
     RETURN QUERY SELECT COALESCE(ok,false),CASE WHEN COALESCE(ok,false) THEN 'None' ELSE 'ProfileDrift' END,4::smallint;
 END

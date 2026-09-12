@@ -73,6 +73,9 @@ public static partial class EnrollmentGrantPlanApi
                 var resolved = await reader.ReadAsync(environmentId, payload.DirectoryObjectId, ct);
                 if (!MatchesResolved(resolved, payload, Canonical(time.GetUtcNow()))) return EnrollmentTargetUnavailable();
                 await using var final = await db.BeginEnvironment(environmentId, actor, ct);
+                // Acquire the profile lock before public-context/plan locks and retain it
+                // through publication. Database-side Pending enforcement is also required.
+                await db.Database.ExecuteSqlRawAsync("SELECT pg_catalog.pg_advisory_xact_lock_shared(1162235478,1)", ct);
                 await LockPublicContext(db, environmentId, payload.DirectoryObjectId, [actor, expectedApproval.ApproverId], ct);
                 await LockPlan(db, environmentId, planId, ct);
                 var finalNow = Canonical(time.GetUtcNow());

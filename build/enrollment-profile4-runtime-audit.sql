@@ -1,15 +1,20 @@
 -- Unconsumed candidate; CREATE OR REPLACE preserves the ordinary audit OID, owner and ACL.
 CREATE OR REPLACE FUNCTION enrollment_execution.audit_execution_privileges(p_environment uuid)
 RETURNS TABLE(is_valid boolean,diagnostic_code text,profile_version smallint)
-LANGUAGE plpgsql STABLE PARALLEL UNSAFE SECURITY DEFINER
+LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE SECURITY DEFINER
 SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
 DECLARE
-    expected_structure_hash constant text := 'b8c476078221bc98d3f82ccf523e84b110ad372bc15e8d63293b8e1195f6ce3f';
+    expected_structure_hash constant text := '6b623e8e062c5278d4705a0407de5da972066db2477010e7c997d838992c8814';
     owner_oid oid;
     row_count bigint;
     valid_count bigint;
     ready boolean;
 BEGIN
+    -- Direct audit callers must not wait behind an installer while holding other locks.
+    IF NOT pg_catalog.pg_try_advisory_xact_lock_shared(1162235478,1) THEN
+        RETURN QUERY SELECT false,'ProfileDrift'::text,4::smallint;
+        RETURN;
+    END IF;
     SELECT min(relation.relowner) INTO owner_oid FROM pg_catalog.pg_class relation
       WHERE relation.oid IN(pg_catalog.to_regclass('public."Environments"'),pg_catalog.to_regclass('enrollment_execution.role_reservations'))
       HAVING count(*)=2 AND count(DISTINCT relation.relowner)=1
@@ -40,7 +45,16 @@ BEGIN
         RETURN QUERY SELECT false,'ProfileDrift'::text,4::smallint;
         RETURN;
     END IF;
+    -- Advisory acquisition does not refresh a SERIALIZABLE snapshot. A changed
+    -- readiness row must raise 40001 before a stale Ready predicate can be trusted.
+    PERFORM singleton FROM enrollment_execution.profile4_readiness WHERE singleton FOR SHARE;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT false,'ProfileDrift'::text,4::smallint;
+        RETURN;
+    END IF;
     ready:=enrollment_execution.profile4_ready() IS TRUE;
     RETURN QUERY SELECT ready,CASE WHEN ready THEN 'None'::text ELSE 'ProfileDrift'::text END,4::smallint;
 END
 $function$;
+-- Preserve delivery audit body/OID/owner/ACL while accurately declaring its locking callee.
+ALTER FUNCTION enrollment_execution.audit_delivery_privileges(uuid) VOLATILE;

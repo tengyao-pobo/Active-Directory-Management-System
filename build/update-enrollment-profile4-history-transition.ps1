@@ -33,7 +33,7 @@ $maintenancePin=$maintenancePin.Replace('=expected_audit_hash)',@'
           AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable)
           FROM pg_catalog.aclexplode(COALESCE(function_row.proacl,pg_catalog.acldefault('f',function_row.proowner))) acl))
 '@)
-$runtimePin=$rawPin.Replace('expected_audit_hash','expected_runtime_audit_hash').Replace('History audit function contract is invalid.','History ordinary audit function contract is invalid.')
+$runtimePin=$rawPin.Replace('expected_audit_hash','expected_runtime_audit_hash').Replace('History audit function contract is invalid.','History ordinary audit function contract is invalid.').Replace("function_row.provolatile='s'","function_row.provolatile='v'")
 $source=$source.Replace($pin,$maintenancePin+$nl+'    -- Ordinary ACL is attested transitively by maintenance before any ordinary call.'+$nl+$runtimePin)
 $source=$source.Replace('FROM enrollment_execution.audit_execution_privileges(binding.environment_id) result','FROM enrollment_execution.audit_execution_profile_structure(binding.environment_id) result')
 $source=[regex]::Replace($source,"expected_audit_hash constant text := '[0-9a-f]{64}';","expected_audit_hash constant text := '$maintenanceHash';")
@@ -80,7 +80,7 @@ $transition=@'
         AND ready_at IS NULL AND ready_by IS NULL;
     GET DIAGNOSTICS row_count=ROW_COUNT;
     IF row_count<>1 THEN RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='History ready transition did not match one installation.'; END IF;
-    -- Separate statement: STABLE audit must see this transaction's preceding Ready update.
+    -- Separate statement: the locking audit must see this transaction's preceding Ready update.
     FOR binding IN SELECT "EnvironmentId" environment_id FROM public."DirectoryDatabaseBindings" WHERE "Purpose"='EnrollmentGrantExecution'
     LOOP
       SELECT count(*),bool_and(result.is_valid IS TRUE AND result.diagnostic_code='None' AND result.profile_version=4)

@@ -23,14 +23,18 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         const string final = "    RETURN QUERY SELECT COALESCE(ok,false),CASE WHEN COALESCE(ok,false) THEN 'None' ELSE 'ProfileDrift' END,4::smallint;";
         Assert.Equal(1, original.Groups["body"].Value.Split(final, StringSplitOptions.None).Length - 1);
         var blocks = new List<string>();
-        foreach (var name in new[] { "audit-enrollment-profile4-readiness-structure.sql", "audit-enrollment-profile4-readiness-functions.sql" })
+        foreach (var name in new[] { "audit-enrollment-profile4-readiness-structure.sql", "audit-enrollment-profile4-readiness-functions.sql", "audit-enrollment-profile4-runtime-metadata.sql" })
         {
             var source = await Read(name);
             var query = source[source.IndexOf("WITH ", StringComparison.Ordinal)..].Trim().TrimEnd(';')
                 .Replace(":'expected_table_owner_role'", "(SELECT rolname FROM pg_catalog.pg_roles WHERE oid=table_owner)", StringComparison.Ordinal);
             blocks.Add($"    -- BEGIN generated {name}\n    ok := ok AND (\n{query}\n    );\n    -- END generated {name}\n");
         }
-        Assert.Equal(original.Groups["body"].Value.Replace(final, string.Join("\n", blocks) + "\n" + final, StringComparison.Ordinal), candidate.Groups["body"].Value);
+        const string deliveryContract = "('enrollment_execution.audit_delivery_privileges(pg_catalog.uuid)',table_owner,'plpgsql','s',true,true,";
+        Assert.Equal(1, original.Groups["body"].Value.Split(deliveryContract, StringSplitOptions.None).Length - 1);
+        Assert.Equal(original.Groups["body"].Value
+            .Replace(deliveryContract, deliveryContract.Replace("'s'", "'v'", StringComparison.Ordinal), StringComparison.Ordinal)
+            .Replace(final, string.Join("\n", blocks) + "\n" + final, StringComparison.Ordinal), candidate.Groups["body"].Value);
         Assert.DoesNotContain(":'expected_table_owner_role'", candidateSource, StringComparison.Ordinal);
         Assert.EndsWith("REVOKE ALL ON FUNCTION enrollment_execution.audit_execution_profile_structure(uuid) FROM PUBLIC;\n", candidateSource, StringComparison.Ordinal);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(candidate.Groups["body"].Value))).ToLowerInvariant();

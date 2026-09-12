@@ -53,6 +53,7 @@
     <None Include="..\..\build\enrollment-profile4-runtime-audit.sql" Link="enrollment-profile4-runtime-audit.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-profile4-history-transition.sql" Link="audit-enrollment-profile4-history-transition.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\activate-enrollment-profile4-candidate.sql" Link="activate-enrollment-profile4-candidate.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-profile4-runtime-metadata.sql" Link="audit-enrollment-profile4-runtime-metadata.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\enrollment-profile4-readiness.sql" Link="enrollment-profile4-readiness.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-delivery-history.sql" Link="audit-enrollment-delivery-history.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-delivery-status.sql" Link="audit-enrollment-delivery-status.sql" CopyToOutputDirectory="PreserveNewest" />

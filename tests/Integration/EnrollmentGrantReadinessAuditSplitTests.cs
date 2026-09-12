@@ -126,6 +126,17 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         await Audit(runtime, "audit_execution_privileges", true);
         await Audit(status, "audit_delivery_privileges", true);
         await Audit(delivery, "audit_delivery_privileges", true);
+        await using (var closing = await owner.BeginTransactionAsync(cancellationToken))
+        {
+            await Execute(owner, "SELECT pg_catalog.pg_advisory_xact_lock(1162235478,1)");
+            await using var direct = await runtime.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+            // A direct audit must fail without waiting or holding the readiness row.
+            await Audit(runtime, "audit_execution_privileges", false);
+            await using var close = new NpgsqlCommand("UPDATE enrollment_execution.profile4_readiness SET state='PendingHistoryAudit',generation=generation+1,installation_nonce='33333333-3333-3333-3333-333333333333',pending_at=statement_timestamp(),ready_at=NULL,ready_by=NULL", owner) { CommandTimeout = 3 };
+            await close.ExecuteNonQueryAsync(cancellationToken);
+            await closing.RollbackAsync(cancellationToken);
+            await direct.RollbackAsync(cancellationToken);
+        }
         await using (var transaction = await runtime.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken))
         {
             await using var command = new NpgsqlCommand("SELECT outcome FROM enrollment_execution.claim_next(@environment,@token)", runtime);
@@ -135,6 +146,10 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             await transaction.RollbackAsync(cancellationToken);
         }
         foreach (var mutation in new[] {
+            "ALTER FUNCTION enrollment_execution.audit_execution_privileges(uuid) STABLE",
+            "ALTER FUNCTION enrollment_execution.audit_delivery_privileges(uuid) STABLE",
+            "ALTER FUNCTION enrollment_execution.audit_execution_privileges(uuid) RESET ALL",
+            "CREATE FUNCTION enrollment_execution.audit_execution_privileges(integer) RETURNS boolean LANGUAGE sql AS 'SELECT true'",
             "ALTER FUNCTION enrollment_execution.audit_execution_profile_structure(uuid) RENAME TO missing_structure_audit",
             "ALTER FUNCTION enrollment_execution.audit_execution_profile_structure(uuid) SECURITY DEFINER",
             "ALTER FUNCTION enrollment_execution.audit_execution_profile_structure(uuid) VOLATILE",

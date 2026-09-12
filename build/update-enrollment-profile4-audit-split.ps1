@@ -6,10 +6,13 @@ $matchesSource=[regex]::Matches($profile,'CREATE OR REPLACE FUNCTION enrollment_
 if($matchesSource.Count -ne 1){throw 'Expected one source execution audit.'}
 $header=$matchesSource[0].Groups['header'].Value.Replace('SECURITY DEFINER','SECURITY INVOKER')
 $body=$matchesSource[0].Groups['body'].Value
+$deliveryContract="('enrollment_execution.audit_delivery_privileges(pg_catalog.uuid)',table_owner,'plpgsql','s',true,true,"
+if([regex]::Matches($body,[regex]::Escape($deliveryContract)).Count -ne 1){throw 'Expected one delivery audit volatility contract.'}
+$body=$body.Replace($deliveryContract,$deliveryContract.Replace("'s'","'v'"))
 $end='    RETURN QUERY SELECT COALESCE(ok,false),CASE WHEN COALESCE(ok,false) THEN ''None'' ELSE ''ProfileDrift'' END,4::smallint;'
 if([regex]::Matches($body,[regex]::Escape($end)).Count -ne 1){throw 'Expected one final structure verdict.'}
 $blocks=[Collections.Generic.List[string]]::new()
-foreach($file in @('audit-enrollment-profile4-readiness-structure.sql','audit-enrollment-profile4-readiness-functions.sql')){
+foreach($file in @('audit-enrollment-profile4-readiness-structure.sql','audit-enrollment-profile4-readiness-functions.sql','audit-enrollment-profile4-runtime-metadata.sql')){
  $source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot $file)).Replace("`r`n","`n")
  $start=$source.IndexOf('WITH ',[StringComparison]::Ordinal)
  if($start -lt 0){throw 'Missing readiness catalog query.'}

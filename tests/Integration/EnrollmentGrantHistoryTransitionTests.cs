@@ -67,7 +67,7 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
             if (mode == "final")
             {
                 // Test-only fault after Ready UPDATE; final ordinary audit must reject and roll everything back.
-                const string marker = "    -- Separate statement: STABLE audit must see this transaction's preceding Ready update.";
+                const string marker = "    -- Separate statement: the locking audit must see this transaction's preceding Ready update.";
                 Assert.Equal(1, candidate.Split(marker, StringSplitOptions.None).Length - 1);
                 candidate = candidate.Replace(marker, """
                     ALTER TABLE enrollment_execution.profile4_readiness DISABLE TRIGGER profile4_readiness_transition;

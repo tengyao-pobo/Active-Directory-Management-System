@@ -5,10 +5,10 @@
 DO $delivery_history_audit$
 DECLARE
     -- BEGIN generated history audit hash
-    expected_audit_hash constant text := 'b8c476078221bc98d3f82ccf523e84b110ad372bc15e8d63293b8e1195f6ce3f';
+    expected_audit_hash constant text := '6b623e8e062c5278d4705a0407de5da972066db2477010e7c997d838992c8814';
     -- END generated history audit hash
     canonical_operation_policy constant text := $policy$((("EnvironmentId")::text = current_setting('app.environment_id'::text, true)) AND ("RequesterId" = (NULLIF(current_setting('app.principal_id'::text, true), ''::text))::uuid) AND public.has_environment_membership("EnvironmentId", (NULLIF(current_setting('app.principal_id'::text, true), ''::text))::uuid))$policy$;
-    expected_runtime_audit_hash constant text := '1d49a3cdaa37c4a3932e06cea0bde205d6a77407148095a315b30179a4fde448';
+    expected_runtime_audit_hash constant text := '6bfa71bb3eb83232a9838e07238c057ac2062d62620ca4229110847fb1933853';
     expected_manifest constant bytea := decode('2f5386a0255f2b859393ceccc8edc8e36097d6a86ba401f4977eaf98d3e82579','hex');
     expected_input record;
     installed_state record;
@@ -76,7 +76,7 @@ BEGIN
     IF NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row JOIN pg_catalog.pg_language language_row ON language_row.oid=function_row.prolang
       WHERE function_row.oid=pg_catalog.to_regprocedure('enrollment_execution.audit_execution_privileges(pg_catalog.uuid)')
         AND function_row.proowner=owner_oid AND language_row.lanname='plpgsql' AND function_row.prokind='f' AND function_row.prosecdef
-        AND function_row.provolatile='s' AND function_row.proparallel='u' AND NOT function_row.proisstrict AND NOT function_row.proleakproof
+        AND function_row.provolatile='v' AND function_row.proparallel='u' AND NOT function_row.proisstrict AND NOT function_row.proleakproof
         AND function_row.prosupport=0 AND function_row.proretset AND function_row.prorettype=2249 AND function_row.pronargs=1
         AND function_row.proargtypes::text='2950' AND function_row.proallargtypes IS NOT DISTINCT FROM ARRAY[2950,16,25,21]::oid[]
         AND function_row.proargnames IS NOT DISTINCT FROM ARRAY['p_environment','is_valid','diagnostic_code','profile_version']::text[]
@@ -265,7 +265,7 @@ SELECT
         AND ready_at IS NULL AND ready_by IS NULL;
     GET DIAGNOSTICS row_count=ROW_COUNT;
     IF row_count<>1 THEN RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='History ready transition did not match one installation.'; END IF;
-    -- Separate statement: STABLE audit must see this transaction's preceding Ready update.
+    -- Separate statement: the locking audit must see this transaction's preceding Ready update.
     FOR binding IN SELECT "EnvironmentId" environment_id FROM public."DirectoryDatabaseBindings" WHERE "Purpose"='EnrollmentGrantExecution'
     LOOP
       SELECT count(*),bool_and(result.is_valid IS TRUE AND result.diagnostic_code='None' AND result.profile_version=4)

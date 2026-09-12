@@ -170,5 +170,6 @@ public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
         Assert.Equal(true, await state.ExecuteScalarAsync(cancellationToken));
         await VerifyReadinessAuditSplitAsync(owner, runtime, statusConnection, deliveryConnection, environment, cancellationToken);
         await VerifyHistoryTransitionAsync(owner, admin, runtimeConnection, environment, cancellationToken);
+        await VerifyReadinessSnapshotAsync(owner, runtimeConnection, statusConnection, deliveryConnection, environment, cancellationToken);
     }
 }
