@@ -5,13 +5,41 @@ namespace ItManagement.EnrollmentGrantDelivery;
 
 internal static class PostgresEnrollmentDeliveryCodec
 {
+    private static readonly (string Name, Type Type)[] ReceiptSchema =
+    [
+        ("contract_version", typeof(short)), ("outcome", typeof(string)),
+        ("environment_id", typeof(Guid)), ("operation_id", typeof(Guid)),
+        ("grant_id", typeof(Guid)), ("directory_object_id", typeof(Guid)), ("device_id", typeof(Guid)),
+        ("mapping_created_at", typeof(DateTimeOffset)), ("grant_created_at", typeof(DateTimeOffset)),
+        ("grant_expires_at", typeof(DateTimeOffset)), ("issue_contract_version", typeof(short)),
+        ("mint_permit_not_after", typeof(DateTimeOffset)), ("token_sha256", typeof(byte[])),
+        ("authorization_digest", typeof(byte[]))
+    ];
+    private static readonly (string Name, Type Type)[] ObservationSchema =
+    [
+        ("contract_version", typeof(short)), ("outcome", typeof(string)),
+        ("observation_id", typeof(Guid)), ("environment_id", typeof(Guid)), ("operation_id", typeof(Guid)),
+        ("sequence", typeof(long)), ("state", typeof(string)), ("diagnostic", typeof(string)),
+        ("private_observed_at", typeof(DateTimeOffset)), ("private_state_changed_at", typeof(DateTimeOffset)),
+        ("recorded_at", typeof(DateTimeOffset)), ("available_until", typeof(DateTimeOffset))
+    ];
+    private static readonly (string Name, Type Type)[] DeliverySchema =
+    [
+        ("contract_version", typeof(short)), ("outcome", typeof(string)),
+        ("environment_id", typeof(Guid)), ("operation_id", typeof(Guid)), ("format_version", typeof(short)),
+        ("recipient_fingerprint", typeof(byte[])), ("ciphertext", typeof(byte[])), ("ciphertext_sha256", typeof(byte[])),
+        ("delivery_not_after", typeof(DateTimeOffset)), ("queried_at", typeof(DateTimeOffset))
+    ];
+    private static readonly (string Name, Type Type)[] AcknowledgementSchema =
+        [("contract_version", typeof(short)), ("outcome", typeof(string))];
+
     internal static EnrollmentGrantStatusReceiptResult UnknownReceipt() => new(EnrollmentGrantStatusReceiptOutcome.OutcomeUnknown, null);
     internal static EnrollmentGrantDeliveryResponse UnknownDelivery() => new(EnrollmentGrantDeliveryOutcome.OutcomeUnknown, null);
 
     internal static async Task<EnrollmentGrantStatusReceiptResult> ReadReceiptAsync(DbDataReader reader,
         Guid environment, Guid operation, CancellationToken ct)
     {
-        if (reader.FieldCount != 14 || !await reader.ReadAsync(ct).ConfigureAwait(false) || reader.IsDBNull(0) || reader.GetInt16(0) != 1)
+        if (!HasSchema(reader, ReceiptSchema) || !await reader.ReadAsync(ct).ConfigureAwait(false) || reader.IsDBNull(0) || reader.GetInt16(0) != 1)
             return UnknownReceipt();
         EnrollmentGrantStatusReceiptResult result;
         if (!reader.IsDBNull(1) && reader.GetString(1) == "NotFound" && AllNull(reader, 2, 14))
@@ -25,7 +53,7 @@ internal static class PostgresEnrollmentDeliveryCodec
                 ? new(EnrollmentGrantStatusReceiptOutcome.Found, receipt) : UnknownReceipt();
         }
         else result = UnknownReceipt();
-        return await reader.ReadAsync(ct).ConfigureAwait(false) ? UnknownReceipt() : result;
+        return await HasTrailingDataAsync(reader, ct).ConfigureAwait(false) ? UnknownReceipt() : result;
     }
 
     internal static bool ValidReceipt(PlatformGrantReceipt receipt) => receipt.EnvironmentId != Guid.Empty &&
@@ -41,19 +69,19 @@ internal static class PostgresEnrollmentDeliveryCodec
     internal static async Task<EnrollmentGrantStatusObservationWriteResult> ReadObservationAsync(DbDataReader reader,
         EnrollmentGrantStatusObservationCandidate expected, CancellationToken ct)
     {
-        if (reader.FieldCount != 12 || !await reader.ReadAsync(ct).ConfigureAwait(false) || reader.IsDBNull(0))
+        if (!HasSchema(reader, ObservationSchema) || !await reader.ReadAsync(ct).ConfigureAwait(false) || reader.IsDBNull(0))
             return EnrollmentGrantStatusObservationWriteResult.Unknown();
         var result = EnrollmentGrantStatusObservationWriteResult.Normalize(expected, reader.GetInt16(0),
             NullableString(reader, 1), NullableGuid(reader, 2), NullableGuid(reader, 3), NullableGuid(reader, 4),
             reader.IsDBNull(5) ? null : reader.GetInt64(5), NullableString(reader, 6), NullableString(reader, 7),
             NullableTime(reader, 8), NullableTime(reader, 9), NullableTime(reader, 10), NullableTime(reader, 11));
-        return await reader.ReadAsync(ct).ConfigureAwait(false) ? EnrollmentGrantStatusObservationWriteResult.Unknown() : result;
+        return await HasTrailingDataAsync(reader, ct).ConfigureAwait(false) ? EnrollmentGrantStatusObservationWriteResult.Unknown() : result;
     }
 
     internal static async Task<EnrollmentGrantDeliveryResponse> ReadDeliveryAsync(DbDataReader reader,
         Guid environment, Guid operation, CancellationToken ct)
     {
-        if (reader.FieldCount != 10 || !await reader.ReadAsync(ct).ConfigureAwait(false) || reader.IsDBNull(0) || reader.GetInt16(0) != 1)
+        if (!HasSchema(reader, DeliverySchema) || !await reader.ReadAsync(ct).ConfigureAwait(false) || reader.IsDBNull(0) || reader.GetInt16(0) != 1)
             return UnknownDelivery();
         var state = NullableString(reader, 1);
         EnrollmentGrantDeliveryResponse result;
@@ -75,12 +103,12 @@ internal static class PostgresEnrollmentDeliveryCodec
             };
             result = AllNull(reader, 2, 10) ? EnrollmentGrantDeliveryResponseFactory.Create(environment, operation, outcome, null) : UnknownDelivery();
         }
-        return await reader.ReadAsync(ct).ConfigureAwait(false) ? UnknownDelivery() : result;
+        return await HasTrailingDataAsync(reader, ct).ConfigureAwait(false) ? UnknownDelivery() : result;
     }
 
     internal static async Task<EnrollmentGrantAcknowledgementOutcome> ReadAcknowledgementAsync(DbDataReader reader, CancellationToken ct)
     {
-        if (reader.FieldCount != 2 || !await reader.ReadAsync(ct).ConfigureAwait(false) || reader.IsDBNull(0) || reader.GetInt16(0) != 1)
+        if (!HasSchema(reader, AcknowledgementSchema) || !await reader.ReadAsync(ct).ConfigureAwait(false) || reader.IsDBNull(0) || reader.GetInt16(0) != 1)
             return EnrollmentGrantAcknowledgementOutcome.OutcomeUnknown;
         var result = NullableString(reader, 1) switch
         {
@@ -90,8 +118,26 @@ internal static class PostgresEnrollmentDeliveryCodec
             "Conflict" => EnrollmentGrantAcknowledgementOutcome.Conflict,
             _ => EnrollmentGrantAcknowledgementOutcome.OutcomeUnknown
         };
-        return await reader.ReadAsync(ct).ConfigureAwait(false) ? EnrollmentGrantAcknowledgementOutcome.OutcomeUnknown : result;
+        return await HasTrailingDataAsync(reader, ct).ConfigureAwait(false) ? EnrollmentGrantAcknowledgementOutcome.OutcomeUnknown : result;
     }
+
+    private static bool HasSchema(DbDataReader reader, (string Name, Type Type)[] expected)
+    {
+        if (reader.FieldCount != expected.Length) return false;
+        for (var i = 0; i < expected.Length; i++)
+        {
+            if (!string.Equals(reader.GetName(i), expected[i].Name, StringComparison.Ordinal)) return false;
+            var actual = reader.GetFieldType(i);
+            // Npgsql reports DateTime for timestamptz metadata but also supports the
+            // explicit UTC DateTimeOffset getter used below. Synthetic readers may report DateTimeOffset.
+            if (actual != expected[i].Type && !(expected[i].Type == typeof(DateTimeOffset) && actual == typeof(DateTime)))
+                return false;
+        }
+        return true;
+    }
+
+    private static async Task<bool> HasTrailingDataAsync(DbDataReader reader, CancellationToken ct) =>
+        await reader.ReadAsync(ct).ConfigureAwait(false) || await reader.NextResultAsync(ct).ConfigureAwait(false);
 
     private static bool AllNull(DbDataReader reader, int from, int end) => Enumerable.Range(from, end - from).All(reader.IsDBNull);
     private static bool AllPresent(DbDataReader reader, int from, int end) => Enumerable.Range(from, end - from).All(i => !reader.IsDBNull(i));

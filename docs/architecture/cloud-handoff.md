@@ -12,6 +12,10 @@ Cloud shell and public Git clone/fetch work. The checked workspace lacks dotnet/
 
 ## Objective and authorization
 
+The user subsequently supplied the global working agreement as attachments (`00-給雲端AI.md`, `AGENTS.md`, `config.portable.toml`, `README.md`); all four were read in the cloud session. Follow the supplied Root-led delegation gate, at most three ordinary subagents, read-only Daybreak-only specialist security analysis, and existing human approval boundaries. Reading portable TOML is not installation or a model switch. The uploaded personal configuration is not copied into this public repository.
+
+Cloud PR run 34688824376 for commit `9bafbd60bfc073449cfacce8f23e40523c4815a6` completed the backend locked restore/build and 14 backend projects with 1,442 passing tests (including 542 integration tests and 59 delivery tests), plus successful frontend and Windows jobs. This evidence applies only to that closed-gate checkpoint, not complete profile4 or real enterprise acceptance. The following codec hardening increment adds exact field names/types and rejects additional result sets, with synthetic readers and an owner-helper PostgreSQL integration test; it needs its own exact-head CI evidence.
+
 Continue the IT Management Console implementation against all 100 requirements in `docs/requirements/original-request.md`. The latest user instruction is to continue every stage automatically, build/test/fix/document each stage, and merge verified GitHub PRs without asking again. The user now requests cloud execution so their Windows PC need not stay on. Keep the user-facing workflow in the platform: RSAT was background information about their company, not a separate product workflow.
 
 This repository is deliberately public and authorized: `tengyao-pobo/Active-Directory-Management-System`. Publish code and synthetic fixtures only. Never copy local database credentials, databases, certificates, session tokens, or `.local`/`.tools` contents. Do not perform real AD, Entra, IAM, CA, production database, or enterprise changes; these still require exact approval and environment verification. Windows/enterprise-only checks remain explicitly pending while cloud-compatible implementation continues.
@@ -83,6 +87,12 @@ Each wrapper validates exact SESSION_USER purpose/environment binding, acquires 
 - Unknown status has no invented private timestamp. New Available must be >= maximum Unknown recorded time; terminal status latches. Exact old observation retries are historical evidence, not current delivery permission.
 
 ## Cloud verification and next stages
+
+### Public profile4 trust-chain repair required before activation
+
+Daybreak's follow-up identified that `delivery_worker_scope` is currently an invoker function that reads the owner-only `role_reservations` table. Granting SELECT alone would not solve its FORCE RLS restriction. Preserve that owner-only boundary: implement a separately pinned, table-owner SECURITY DEFINER scope attestor with fixed search_path and row_security=on, PUBLIC revoked, and EXECUTE only for the delivery definer. Validate SESSION_USER's exact purpose/environment/binding/reservation there; do not use CURRENT_USER as the delivery-definer identity after changing ownership. Update the expected owned-function counts (five to four for the delivery definer), function metadata, ACL sets and body pins together. This is design guidance, not an implemented or verified migration.
+
+The external audit must read pg_catalog only, validate both audit function bodies/metadata before trusting the internal chain, and use to_regprocedure for absent objects. The internal owner audit must prove the complete global structure and per-environment absent-or-exact status/delivery pair before wrappers attest their hard-coded purpose and set transaction-local context. Required negative cases include missing wrapper, altered transitive audit body, purpose crossover, wrong environment, partial pair, altered scope attestor and zero direct runtime table access. The external closed gate must remain until these tests pass on PostgreSQL.
 
 Use the existing `.github/workflows/verify.yml` as the portable environment reference: .NET SDK from global.json, Node/pnpm from workflow, PostgreSQL 18 with psql. Run database projects sequentially because fixtures mutate shared catalogs. Use fresh synthetic public DB and isolated private fixtures; do not recreate local secrets. Backend verification is build/verify.ps1 or equivalent locked restore/build/test -m:1. Frontend has lint, tests, enrollment interop, build, Playwright.
 
