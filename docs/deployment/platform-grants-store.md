@@ -58,6 +58,20 @@ v2→v3 升級參數為 `agent_table_owner_role`、`agent_platform_grant_definer
 
 完整平台操作與未完成的 worker／密文交付契約見[排隊與恢復](../architecture/platform-grant-execution.md)。
 
+## 唯讀狀態 profile 4
+
+此版本讓後續領取流程以專用狀態查詢 LOGIN 讀回 grant，不必取得 revoker 的撤銷權限。平台使用者仍在同一設備頁操作；用途隔離由服務內部處理。
+
+先部署接受精確 profile 3／4 的 issuer 與 revoker 程式，再停止相關呼叫、備份資料庫並執行 `build/upgrade-agent-platform-grants-v3-to-v4.sql`。參數沿用 table owner、platform definer、既有 issuer 與 revoker；升級檢查全部既有 binding，單一交易加入唯讀函式、purpose 與 profile4 audit。升級時可以尚未有 status LOGIN，讓既有簽發／撤銷程式繼續通過稽核。
+
+每個環境另備妥唯一的 LOGIN，使用 `build/provision-agent-platform-grant-status-reader.sql`，傳入 `agent_table_owner_role`、`agent_platform_grant_definer_role`、該環境既有 `agent_platform_grant_role`、`agent_platform_grant_revoker_role`、新的 `agent_platform_grant_status_role`、`environment_id` 與 psql 目前的 `DBNAME`。不可重用 issuer、revoker、Web、其他 Agent capability 或 owner／definer 的角色。
+
+新的 `PostgresPlatformGrantStatusReader` 僅接受 profile 4。以三個實際 LOGIN 分別完成 repository 啟動稽核：issuer 只簽發，revoker 只讀回／撤銷，status reader 只使用兩個 `read_initial_enrollment_grant_status` overload；共同保留 audit EXECUTE。狀態查詢綁定完整收據，不能只送 grant ID。
+
+根目錄原有 v3 provision 仍是歷史 profile3 配置腳本，不能在 profile4 重跑它來修復 ACL。Capability isolation v2 的升級／重跑需使用本次一併更新的版本，以識別並保留 profile4；capability marker 本身仍為 2。
+
+沒有提供 v4 自動降級。回復程式時保留 profile4 與歷史收據，先停用新增 status reader，使用可接受 3／4 的 issuer／revoker 程式調和。不要重寫 audit 版本、刪除新函式或修改歷史 receipt。此增量不會啟用領取 API、listener 或正式企業設備註冊；其交付限制見[領取契約](../architecture/platform-grant-delivery.md)。
+
 ## 平台整合待辦
 
 已提供唯讀 [EnrollmentTargetRead 與平台設備註冊準備狀態](enrollment-target-read.md)，先驗證有效會員、目前 Computer 與同一物件的 `Computer.View`／`AgentEnrollmentGrant.Manage` 交集，再解析 server-owned mapping tuple。Browser 不提供 server Device ID。沒有 mapping 或設備非 Active 時回明確資格狀態，不建立 outbox，也不自動新增 mapping；未配置 pool 時顯示不可用。安裝此能力需再完成 capability isolation v2 升級；完成後不得重跑會還原舊稽核的 v1 升級或 Projection 降級腳本。

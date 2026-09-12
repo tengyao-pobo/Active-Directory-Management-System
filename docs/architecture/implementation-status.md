@@ -71,6 +71,10 @@
 ## Worker 設定與驗證入口
 
 獨立 EnrollmentWorker 已有 typed 多環境設定、public/private 兩池 profile audit、全有或全無的初始化、反向清理、固定併發與取消／退避迴圈。CLI 目前僅提供 `--verify`，不認領、不發行，API readiness 仍為 false；Windows Service 啟動、密文領取／ACK 與 listener 還待組合。此次 62 項合成設定／生命週期測試通過；完整 TLS、撤銷與正式服務驗收另留證據。部署說明見 [Worker 驗證](../deployment/enrollment-worker.md)。
+## 授權狀態與領取資料契約
+
+新增私有 lifecycle profile4 的專用唯讀 status LOGIN、完整收據讀回與 v3→v4 原子升級；issuer／revoker 支援先部署程式再升級資料庫，capability isolation 重跑保留 profile4。密文交付 library 有有限結果型別、七欄 DTO、UTC 微秒與 15 秒期限檢查，以及嚴格 ACK parser。這些元件仍未接到領取 API；public 狀態 journal、原 requester 目前授權、ACK 原子清理、Browser handoff 與 listener 為下一部分。詳見[領取契約](platform-grant-delivery.md)。
+
 ## 必須另留實際證據的驗收
 
 隔離 Windows / IIS Kerberos、AD delegated rights / 真實變更 readback、Agent 憑證生命週期與簽章套件、Helper 原生啟動、Graph / Exchange tenant、容量及故障還原、正式 DNS / TLS / CA 與企業 pilot。沒有環境或授權時持續開發其他程式項目，不偽造成功或將 unavailable adapter 計為完成。
