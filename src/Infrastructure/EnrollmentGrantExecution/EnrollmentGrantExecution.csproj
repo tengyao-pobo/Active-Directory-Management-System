@@ -4,6 +4,7 @@
     <RootNamespace>ItManagement.EnrollmentGrantExecution</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="..\..\..\build\audit-enrollment-execution.sql" LogicalName="EnrollmentExecutionCatalogAudit" />
     <ProjectReference Include="..\AgentEnrollment\AgentEnrollment.csproj" />
     <ProjectReference Include="..\AgentPlatformGrants\AgentPlatformGrants.csproj" />
     <InternalsVisibleTo Include="EnrollmentGrantExecution.Tests" />

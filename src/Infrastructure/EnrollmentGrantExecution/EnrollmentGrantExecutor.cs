@@ -173,12 +173,12 @@ public sealed class EnrollmentGrantExecutor(IEnrollmentGrantExecutionStore store
         EnrollmentGrantExecutionOperation.Canonical(result.RecordedAt) && result.RecordedAt >= permit.PermitIssuedAt &&
         (result.Diagnostic != PlatformGrantDiagnostic.MintPermitExpired || result.RecordedAt >= permit.MintPermitNotAfter);
 
-    private static bool PermanentDiagnostic(PlatformGrantDiagnostic diagnostic) => diagnostic is
+    internal static bool PermanentDiagnostic(PlatformGrantDiagnostic diagnostic) => diagnostic is
         PlatformGrantDiagnostic.MappingUnavailable or PlatformGrantDiagnostic.DeviceUnavailable or
         PlatformGrantDiagnostic.EnrollmentAlreadyExists or PlatformGrantDiagnostic.EnrollmentInProgress or
         PlatformGrantDiagnostic.GrantAlreadyAvailable or PlatformGrantDiagnostic.MintPermitExpired;
 
-    private static bool ReceiptMatches(PlatformGrantReceipt receipt, EnrollmentGrantExecutionOperation operation,
+    internal static bool ReceiptMatches(PlatformGrantReceipt receipt, EnrollmentGrantExecutionOperation operation,
         PersistedEnrollmentGrantPermit permit) => receipt.GrantId != Guid.Empty &&
         receipt.EnvironmentId == operation.EnvironmentId &&
         receipt.OperationId == operation.Id && receipt.DirectoryObjectId == operation.DirectoryObjectId &&

@@ -23,6 +23,10 @@ SELECT CASE WHEN btrim(:'runtime_role')<>'' AND btrim(:'enrollment_plan_lock_own
         AND NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.relowner=r.oid)
         AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.proowner=r.oid)
     ) THEN 1 ELSE 1/(pg_catalog.pg_backend_pid()-pg_catalog.pg_backend_pid()) END AS enrollment_plan_lock_owner_preflight;
+SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM enrollment_execution.role_reservations
+    WHERE role_name IN (:'runtime_role'::name,:'enrollment_plan_lock_owner_role'::name)
+       OR role_oid IN (:'runtime_role'::regrole::oid,:'enrollment_plan_lock_owner_role'::regrole::oid))
+ THEN 1 ELSE 1/(pg_catalog.pg_backend_pid()-pg_catalog.pg_backend_pid()) END AS enrollment_execution_role_isolation_preflight;
 -- Existing identities and grants may be absent or within this exact capability; never repurpose another login.
 -- Anchor drift must fail before broad provisioning can remove the evidence.
 SELECT CASE WHEN NOT EXISTS(
@@ -182,6 +186,26 @@ actual_reservation_acl AS (
     SELECT 1 FROM reservation r CROSS JOIN LATERAL aclexplode(coalesce((SELECT relacl FROM pg_class WHERE oid=r.oid),acldefault('r',r.relowner))) a
     LEFT JOIN pg_roles role ON role.oid=a.grantee
     WHERE a.grantee<>r.relowner AND (a.grantee=0 OR role.rolname IS DISTINCT FROM :'runtime_role')
+), execution_marker AS (
+    SELECT p.*,l.lanname FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname='enrollment_execution' AND p.proname='execution_store_profile' AND p.pronargs=0
+), execution_audit AS (
+    SELECT p.*,l.lanname FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname='enrollment_execution' AND p.proname='audit_execution_privileges' AND p.proargtypes='2950'::oidvector
+), execution_definer AS (
+    SELECT r.* FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_roles r ON r.oid=p.proowner
+    WHERE n.nspname='enrollment_execution' AND p.proname='read_execution_record' AND p.proargtypes='2950 2950'::oidvector
+), execution_profile AS (
+    SELECT COALESCE(
+      (SELECT count(*)=1 AND bool_and(lanname='sql' AND NOT prosecdef AND provolatile='i' AND proparallel='s'
+        AND proowner=(SELECT relowner FROM reservation) AND proconfig=ARRAY['search_path=pg_catalog, pg_temp']
+        AND btrim(prosrc,E' \t\r\n')='SELECT 2::smallint') FROM execution_marker)
+      AND (SELECT count(*)=1 AND bool_and(lanname='plpgsql' AND prosecdef AND provolatile='s' AND proparallel='u'
+        AND proowner=(SELECT relowner FROM reservation) AND proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
+        AND encode(sha256(convert_to(btrim(regexp_replace(prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
+          ='8ed83a1a4736e9caab7c0a9c32ef8b2e53b48dbdcf184824a8436d3fc33d3da3') FROM execution_audit)
+      AND (SELECT count(*)=1 AND bool_and(NOT rolcanlogin AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreatedb
+        AND NOT rolcreaterole AND NOT rolinherit AND NOT rolreplication) FROM execution_definer),false) installed
 ), reject_function AS (
     SELECT p.*,l.lanname FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang
     WHERE p.oid='public.reject_enrollment_grant_reservation_mutation()'::regprocedure
@@ -225,7 +249,13 @@ SELECT valid AS "IsValid", CASE WHEN valid THEN 'None' ELSE 'PrivilegeAuditFaile
     NOT EXISTS (SELECT * FROM expected_reservation_acl EXCEPT SELECT * FROM actual_reservation_acl) AND
     NOT EXISTS (SELECT * FROM actual_reservation_acl EXCEPT SELECT * FROM expected_reservation_acl) AND
     NOT EXISTS (SELECT 1 FROM unexpected_reservation_acl) AND
-    NOT EXISTS (SELECT 1 FROM reservation r JOIN pg_attribute a ON a.attrelid=r.oid CROSS JOIN LATERAL aclexplode(a.attacl) acl) AND
+    (SELECT CASE WHEN profile.installed THEN
+      (SELECT count(*)=7 AND bool_and(acl.grantee=(SELECT oid FROM execution_definer)
+          AND acl.privilege_type='SELECT' AND NOT acl.is_grantable
+          AND a.attname IN('Fingerprint','EnvironmentId','PlanId','RequesterId','RequestId','RequestDigest','CreatedAt'))
+       FROM reservation r JOIN pg_attribute a ON a.attrelid=r.oid CROSS JOIN LATERAL aclexplode(a.attacl) acl)
+      ELSE NOT EXISTS(SELECT 1 FROM reservation r JOIN pg_attribute a ON a.attrelid=r.oid
+          CROSS JOIN LATERAL aclexplode(a.attacl) acl) END FROM execution_profile profile) AND
     (SELECT count(*)=1 FROM pg_constraint c JOIN reservation r ON r.oid=c.conrelid
         WHERE c.contype='p' AND c.conkey=ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid=r.oid AND attname='Fingerprint')]::smallint[]) AND
     (SELECT count(*)=1 FROM pg_index i JOIN reservation r ON r.oid=i.indrelid
@@ -250,10 +280,20 @@ SELECT valid AS "IsValid", CASE WHEN valid THEN 'None' ELSE 'PrivilegeAuditFaile
             ('enrollment_grant_reservation_ids_nonempty','CHECK ("EnvironmentId" <> ''00000000-0000-0000-0000-000000000000''::uuid AND "PlanId" <> ''00000000-0000-0000-0000-000000000000''::uuid AND "RequesterId" <> ''00000000-0000-0000-0000-000000000000''::uuid AND "RequestId" <> ''00000000-0000-0000-0000-000000000000''::uuid)'))) AND
     EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid='public."Plans"'::regclass AND c.conname='enrollment_grant_plan_never_executed' AND c.contype='c' AND c.convalidated AND
         pg_get_constraintdef(c.oid,true)='CHECK ("Action" <> ''agent-enrollment.initial-grant.v1''::text OR "State" <> 2)') AND
-    (SELECT count(*)=1 FROM pg_policy p JOIN reservation r ON r.oid=p.polrelid) AND
+    (SELECT count(*)=CASE WHEN (SELECT installed FROM execution_profile) THEN 3 ELSE 1 END
+       FROM pg_policy p JOIN reservation r ON r.oid=p.polrelid) AND
     (SELECT count(*)=1 FROM pg_policy p JOIN reservation r ON r.oid=p.polrelid WHERE p.polname='environment_enrollment_grant_recipient_reservations' AND p.polcmd='*' AND p.polpermissive AND p.polroles=ARRAY[0::oid] AND
         pg_get_expr(p.polqual,p.polrelid)=pg_get_expr(p.polwithcheck,p.polrelid) AND
         pg_get_expr(p.polqual,p.polrelid)='((("EnvironmentId")::text = current_setting(''app.environment_id''::text, true)) AND has_environment_membership("EnvironmentId", (NULLIF(current_setting(''app.principal_id''::text, true), ''''::text))::uuid))') AND
+    (SELECT NOT profile.installed OR (SELECT count(*)=2 AND bool_and(p.polcmd='r' AND p.polroles=ARRAY[(SELECT oid FROM execution_definer)]
+        AND ((p.polname='enrollment_execution_worker_reservations_allow' AND p.polpermissive)
+          OR (p.polname='enrollment_execution_worker_reservations_limit' AND NOT p.polpermissive))
+        AND p.polwithcheck IS NULL
+        AND md5(COALESCE(pg_get_expr(p.polqual,p.polrelid),'')||'|'||COALESCE(pg_get_expr(p.polwithcheck,p.polrelid),''))
+          ='158b72978f11ad4651c98e8dbe14e0c0')
+      FROM pg_policy p JOIN reservation r ON r.oid=p.polrelid
+      WHERE p.polname IN('enrollment_execution_worker_reservations_allow','enrollment_execution_worker_reservations_limit'))
+     FROM execution_profile profile) AND
     (SELECT count(*)=1 FROM pg_trigger tg JOIN reservation r ON r.oid=tg.tgrelid WHERE NOT tg.tgisinternal) AND
     (SELECT count(*)=1 FROM pg_trigger tg JOIN reservation r ON r.oid=tg.tgrelid WHERE NOT tg.tgisinternal AND tg.tgenabled='O' AND tg.tgname='enrollment_grant_recipient_reservations_immutable' AND
         tg.tgfoid='public.reject_enrollment_grant_reservation_mutation()'::regprocedure AND (tg.tgtype & 1)=1 AND (tg.tgtype & 2)=2 AND (tg.tgtype & 8)=8 AND (tg.tgtype & 16)=16 AND (tg.tgtype & 4)=0) AND

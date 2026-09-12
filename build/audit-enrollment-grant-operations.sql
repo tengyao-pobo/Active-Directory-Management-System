@@ -63,6 +63,29 @@ valid_anchor_triggers AS (SELECT e.* FROM expected_anchor_triggers e
      ELSE t.tgconstraint=0 END)),
 reject_function AS (SELECT p.*,l.lanname FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
  WHERE p.oid='public.reject_enrollment_grant_operation_mutation()'::regprocedure),
+execution_profile AS (SELECT COALESCE((SELECT count(*)=1 AND bool_and(l.lanname='sql' AND NOT p.prosecdef
+ AND p.provolatile='i' AND p.proparallel='s' AND NOT p.proretset AND p.prorettype='smallint'::regtype
+ AND p.pronargs=0 AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp']
+ AND p.proowner=(SELECT relowner FROM target) AND pg_catalog.btrim(p.prosrc,E' \t\r\n')='SELECT 2::smallint')
+ FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+ JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+ WHERE n.nspname='enrollment_execution' AND p.proname='execution_store_profile' AND p.pronargs=0)
+ AND (SELECT count(*)=1 AND bool_and(l.lanname='plpgsql' AND p.prosecdef AND p.provolatile='s' AND p.proparallel='u'
+   AND p.proowner=(SELECT relowner FROM target) AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
+   AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+     pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
+     ='8ed83a1a4736e9caab7c0a9c32ef8b2e53b48dbdcf184824a8436d3fc33d3da3')
+  FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+  JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+  WHERE n.nspname='enrollment_execution' AND p.proname='audit_execution_privileges' AND p.proargtypes='2950'::oidvector),false) installed),
+execution_definer AS (SELECT r.oid FROM pg_catalog.pg_proc p
+ JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace JOIN pg_catalog.pg_roles r ON r.oid=p.proowner,execution_profile profile
+ WHERE profile.installed AND n.nspname='enrollment_execution' AND p.proname='read_execution_record'
+   AND p.pronargs=2 AND p.proargtypes='2950 2950'::oidvector AND NOT r.rolcanlogin AND NOT r.rolsuper
+   AND NOT r.rolbypassrls AND NOT r.rolcreatedb AND NOT r.rolcreaterole AND NOT r.rolinherit AND NOT r.rolreplication),
+execution_operation_policies AS (SELECT p.* FROM pg_catalog.pg_policy p,execution_definer d,target
+ WHERE p.polrelid=target.oid AND p.polroles=ARRAY[d.oid]
+   AND p.polname IN('enrollment_execution_worker_operations_allow','enrollment_execution_worker_operations_limit')),
 verified AS (SELECT COALESCE(
  (SELECT count(*)=1 AND bool_and(rolcanlogin AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolinherit AND NOT rolreplication) FROM runtime) AND
  NOT EXISTS(SELECT 1 FROM runtime r JOIN pg_catalog.pg_auth_members m ON m.roleid=r.oid OR m.member=r.oid) AND
@@ -80,13 +103,31 @@ verified AS (SELECT COALESCE(
  (SELECT count(*)=4 FROM pg_catalog.pg_index i,target WHERE i.indrelid=target.oid AND i.indisunique) AND
  (SELECT count(*)=2 AND bool_and(grantee=(SELECT oid FROM runtime) AND privilege_type IN ('SELECT','INSERT') AND NOT is_grantable) FROM actual_acl) AND
  (SELECT count(DISTINCT privilege_type)=2 FROM actual_acl) AND
- NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a,target CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl WHERE a.attrelid=target.oid) AND
- (SELECT count(*)=1 FROM pg_catalog.pg_policy p,target WHERE p.polrelid=target.oid) AND
+ (SELECT CASE WHEN profile.installed THEN NOT EXISTS(
+      WITH expected(name,privilege_type) AS (SELECT name,'SELECT' FROM expected_columns UNION ALL VALUES('PlanHash','UPDATE')),
+      actual AS (SELECT a.attname::text name,acl.privilege_type::text privilege_type
+        FROM pg_catalog.pg_attribute a,target CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
+        WHERE a.attrelid=target.oid AND acl.grantee=(SELECT oid FROM execution_definer) AND NOT acl.is_grantable),
+      difference AS ((SELECT * FROM expected EXCEPT SELECT * FROM actual) UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected))
+      SELECT 1 FROM difference)
+    AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a,target CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
+      WHERE a.attrelid=target.oid AND (acl.grantee<>(SELECT oid FROM execution_definer) OR acl.is_grantable))
+    ELSE NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a,target CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
+      WHERE a.attrelid=target.oid) END FROM execution_profile profile) AND
+ (SELECT count(*)=CASE WHEN (SELECT installed FROM execution_profile) THEN 3 ELSE 1 END FROM pg_catalog.pg_policy p,target WHERE p.polrelid=target.oid) AND
  (SELECT count(*)=1 FROM pg_catalog.pg_policy p,target WHERE p.polrelid=target.oid AND p.polname='environment_enrollment_grant_operations'
     AND p.polcmd='*' AND p.polpermissive AND p.polroles=ARRAY[0::oid]
     AND pg_catalog.pg_get_expr(p.polqual,p.polrelid)=pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid)
     AND pg_catalog.pg_get_expr(p.polqual,p.polrelid)='((("EnvironmentId")::text = current_setting(''app.environment_id''::text, true)) AND ("RequesterId" = (NULLIF(current_setting(''app.principal_id''::text, true), ''''::text))::uuid) AND has_environment_membership("EnvironmentId", (NULLIF(current_setting(''app.principal_id''::text, true), ''''::text))::uuid))') AND
- (SELECT count(*)=3 FROM pg_catalog.pg_trigger t,target WHERE t.tgrelid=target.oid AND NOT t.tgisinternal) AND
+ (SELECT NOT installed OR (SELECT count(*)=2 AND bool_and(polcmd='*'
+      AND ((polname='enrollment_execution_worker_operations_allow' AND polpermissive)
+        OR (polname='enrollment_execution_worker_operations_limit' AND NOT polpermissive))
+      AND pg_catalog.pg_get_expr(polqual,polrelid)=pg_catalog.pg_get_expr(polwithcheck,polrelid)
+      AND pg_catalog.md5(COALESCE(pg_catalog.pg_get_expr(polqual,polrelid),'')||'|'||
+                         COALESCE(pg_catalog.pg_get_expr(polwithcheck,polrelid),''))='b36fd52c8f5d4554c711240c8bfbf7b1')
+      FROM execution_operation_policies) FROM execution_profile) AND
+ (SELECT count(*)=CASE WHEN (SELECT installed FROM execution_profile) THEN 4 ELSE 3 END FROM pg_catalog.pg_trigger t,target
+    WHERE t.tgrelid=target.oid AND NOT t.tgisinternal) AND
  (SELECT count(*)=8 FROM valid_anchor_triggers) AND
  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c,runtime r
     WHERE c.relnamespace='public'::regnamespace AND c.relname IN ('Plans','PlanItems','Approvals','Outbox')
@@ -94,7 +135,11 @@ verified AS (SELECT COALESCE(
  NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
     WHERE c.relnamespace='public'::regnamespace AND c.relname IN ('Plans','PlanItems','Approvals','Outbox')
     AND NOT t.tgisinternal AND NOT EXISTS(SELECT 1 FROM expected_anchor_triggers e
-        WHERE e.table_name=c.relname AND e.name=t.tgname)) AND
+        WHERE e.table_name=c.relname AND e.name=t.tgname)
+    AND NOT ((SELECT installed FROM execution_profile) AND (
+      (c.relname='Plans' AND t.tgname='enrollment_execution_worker_plan_guard') OR
+      (c.relname='Outbox' AND t.tgname='enrollment_execution_worker_outbox_guard') OR
+      (c.relname='EnrollmentGrantOperations' AND t.tgname='enrollment_execution_worker_operation_guard')))) AND
  (SELECT count(*)=5 AND bool_and(lanname='plpgsql' AND NOT prosecdef AND provolatile='v' AND proparallel='u'
     AND prokind='f' AND NOT proretset AND prorettype='trigger'::regtype AND pronargs=0 AND proargtypes=''::oidvector
     AND proargnames IS NULL AND proallargtypes IS NULL AND proargmodes IS NULL

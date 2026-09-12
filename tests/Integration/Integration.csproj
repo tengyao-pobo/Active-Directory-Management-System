@@ -29,5 +29,9 @@
   <ItemGroup>
     <None Include="..\..\build\provision-runtime.sql" Link="provision-runtime.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-grant-operations.sql" Link="audit-enrollment-grant-operations.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\enrollment-execution-functions.sql" Link="enrollment-execution-functions.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\enrollment-execution-profile.sql" Link="enrollment-execution-profile.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\provision-enrollment-execution.sql" Link="provision-enrollment-execution.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-execution.sql" Link="audit-enrollment-execution.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

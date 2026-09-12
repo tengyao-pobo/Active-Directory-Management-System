@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Npgsql;
 using ItManagement.AgentEnrollmentTargets;
 using ItManagement.Api;
 using ItManagement.Core;
@@ -294,47 +295,54 @@ public sealed partial class EnrollmentGrantPlanTests
     {
         await using var db = Db();
         var databaseName = QuoteIdentifier(db.Database.GetDbConnection().Database);
+        var runtimeRole = QuoteIdentifier(new NpgsqlConnectionStringBuilder(
+            Environment.GetEnvironmentVariable("CONSOLE_TEST_RUNTIME_DB")!).Username!);
+        var lockerRole = QuoteIdentifier(await db.Database.SqlQueryRaw<string>("""
+            SELECT owner.rolname::text AS "Value" FROM pg_catalog.pg_proc helper
+            JOIN pg_catalog.pg_roles owner ON owner.oid=helper.proowner
+            WHERE helper.oid='public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[])'::regprocedure
+            """).SingleAsync());
         var apply = drift switch
         {
-            "runtime-update" => "GRANT UPDATE ON public.\"EnrollmentGrantRecipientReservations\" TO console_runtime",
+            "runtime-update" => $"GRANT UPDATE ON public.\"EnrollmentGrantRecipientReservations\" TO {runtimeRole}",
             "public-column" => "GRANT SELECT (\"RequestDigest\") ON public.\"EnrollmentGrantRecipientReservations\" TO PUBLIC",
             "no-force-rls" => "ALTER TABLE public.\"EnrollmentGrantRecipientReservations\" NO FORCE ROW LEVEL SECURITY",
             "disabled-trigger" => "ALTER TABLE public.\"EnrollmentGrantRecipientReservations\" DISABLE TRIGGER enrollment_grant_recipient_reservations_immutable",
             "extra-policy" => "CREATE POLICY enrollment_grant_recipient_extra ON public.\"EnrollmentGrantRecipientReservations\" USING (true) WITH CHECK (true)",
             "extra-trigger" => "CREATE TRIGGER enrollment_grant_recipient_extra BEFORE INSERT ON public.\"EnrollmentGrantRecipientReservations\" FOR EACH ROW EXECUTE FUNCTION public.reject_enrollment_grant_reservation_mutation()",
             "duplicate-unique" => "DROP INDEX public.\"IX_EnrollmentGrantRecipientReservations_EnvironmentId_Requeste~\"; CREATE UNIQUE INDEX enrollment_grant_duplicate_plan ON public.\"EnrollmentGrantRecipientReservations\" (\"EnvironmentId\",\"PlanId\")",
-            "runtime-inherit" => "ALTER ROLE console_runtime INHERIT",
-            "dependency-grant-option" => "GRANT EXECUTE ON FUNCTION public.directory_database_access(uuid,uuid) TO console_enrollment_plan_locker WITH GRANT OPTION",
+            "runtime-inherit" => $"ALTER ROLE {runtimeRole} INHERIT",
+            "dependency-grant-option" => $"GRANT EXECUTE ON FUNCTION public.directory_database_access(uuid,uuid) TO {lockerRole} WITH GRANT OPTION",
             "public-helper-execute" => "GRANT EXECUTE ON FUNCTION public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[]) TO PUBLIC",
-            "runtime-other-schema" => "CREATE SCHEMA enrollment_plan_runtime_drift; CREATE TABLE enrollment_plan_runtime_drift.hidden(value integer); GRANT SELECT ON enrollment_plan_runtime_drift.hidden TO console_runtime",
-            "runtime-directory-column-update" => "GRANT UPDATE (\"Generation\") ON public.\"DirectorySync\" TO console_runtime",
-            "runtime-directory-table-insert" => "GRANT INSERT ON public.\"DirectoryObjects\" TO console_runtime",
-            "runtime-directory-column-insert" => "GRANT INSERT (\"Generation\") ON public.\"DirectorySync\" TO console_runtime",
-            "runtime-database-create" => $"GRANT CREATE ON DATABASE {databaseName} TO console_runtime",
-            "locker-database-create" => $"GRANT CREATE ON DATABASE {databaseName} TO console_enrollment_plan_locker",
-            "runtime-public-schema-create" => "GRANT CREATE ON SCHEMA public TO console_runtime",
-            _ => "CREATE SCHEMA enrollment_plan_audit_drift; GRANT USAGE ON SCHEMA enrollment_plan_audit_drift TO console_enrollment_plan_locker",
+            "runtime-other-schema" => $"CREATE SCHEMA enrollment_plan_runtime_drift; CREATE TABLE enrollment_plan_runtime_drift.hidden(value integer); GRANT SELECT ON enrollment_plan_runtime_drift.hidden TO {runtimeRole}",
+            "runtime-directory-column-update" => $"GRANT UPDATE (\"Generation\") ON public.\"DirectorySync\" TO {runtimeRole}",
+            "runtime-directory-table-insert" => $"GRANT INSERT ON public.\"DirectoryObjects\" TO {runtimeRole}",
+            "runtime-directory-column-insert" => $"GRANT INSERT (\"Generation\") ON public.\"DirectorySync\" TO {runtimeRole}",
+            "runtime-database-create" => $"GRANT CREATE ON DATABASE {databaseName} TO {runtimeRole}",
+            "locker-database-create" => $"GRANT CREATE ON DATABASE {databaseName} TO {lockerRole}",
+            "runtime-public-schema-create" => $"GRANT CREATE ON SCHEMA public TO {runtimeRole}",
+            _ => $"CREATE SCHEMA enrollment_plan_audit_drift; GRANT USAGE ON SCHEMA enrollment_plan_audit_drift TO {lockerRole}",
         };
         var restore = drift switch
         {
-            "runtime-update" => "REVOKE UPDATE ON public.\"EnrollmentGrantRecipientReservations\" FROM console_runtime",
+            "runtime-update" => $"REVOKE UPDATE ON public.\"EnrollmentGrantRecipientReservations\" FROM {runtimeRole}",
             "public-column" => "REVOKE SELECT (\"RequestDigest\") ON public.\"EnrollmentGrantRecipientReservations\" FROM PUBLIC",
             "no-force-rls" => "ALTER TABLE public.\"EnrollmentGrantRecipientReservations\" FORCE ROW LEVEL SECURITY",
             "disabled-trigger" => "ALTER TABLE public.\"EnrollmentGrantRecipientReservations\" ENABLE TRIGGER enrollment_grant_recipient_reservations_immutable",
             "extra-policy" => "DROP POLICY enrollment_grant_recipient_extra ON public.\"EnrollmentGrantRecipientReservations\"",
             "extra-trigger" => "DROP TRIGGER enrollment_grant_recipient_extra ON public.\"EnrollmentGrantRecipientReservations\"",
             "duplicate-unique" => "DROP INDEX public.enrollment_grant_duplicate_plan; CREATE UNIQUE INDEX \"IX_EnrollmentGrantRecipientReservations_EnvironmentId_Requeste~\" ON public.\"EnrollmentGrantRecipientReservations\" (\"EnvironmentId\",\"RequesterId\",\"RequestId\")",
-            "runtime-inherit" => "ALTER ROLE console_runtime NOINHERIT",
-            "dependency-grant-option" => "REVOKE ALL ON FUNCTION public.directory_database_access(uuid,uuid) FROM console_enrollment_plan_locker; GRANT EXECUTE ON FUNCTION public.directory_database_access(uuid,uuid) TO console_enrollment_plan_locker",
+            "runtime-inherit" => $"ALTER ROLE {runtimeRole} NOINHERIT",
+            "dependency-grant-option" => $"REVOKE ALL ON FUNCTION public.directory_database_access(uuid,uuid) FROM {lockerRole}; GRANT EXECUTE ON FUNCTION public.directory_database_access(uuid,uuid) TO {lockerRole}",
             "public-helper-execute" => "REVOKE ALL ON FUNCTION public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[]) FROM PUBLIC",
-            "runtime-other-schema" => "REVOKE ALL ON enrollment_plan_runtime_drift.hidden FROM console_runtime; DROP SCHEMA enrollment_plan_runtime_drift CASCADE",
-            "runtime-directory-column-update" => "REVOKE UPDATE (\"Generation\") ON public.\"DirectorySync\" FROM console_runtime",
-            "runtime-directory-table-insert" => "REVOKE INSERT ON public.\"DirectoryObjects\" FROM console_runtime",
-            "runtime-directory-column-insert" => "REVOKE INSERT (\"Generation\") ON public.\"DirectorySync\" FROM console_runtime",
-            "runtime-database-create" => $"REVOKE CREATE ON DATABASE {databaseName} FROM console_runtime",
-            "locker-database-create" => $"REVOKE CREATE ON DATABASE {databaseName} FROM console_enrollment_plan_locker",
-            "runtime-public-schema-create" => "REVOKE CREATE ON SCHEMA public FROM console_runtime",
-            _ => "REVOKE USAGE ON SCHEMA enrollment_plan_audit_drift FROM console_enrollment_plan_locker; DROP SCHEMA enrollment_plan_audit_drift",
+            "runtime-other-schema" => $"REVOKE ALL ON enrollment_plan_runtime_drift.hidden FROM {runtimeRole}; DROP SCHEMA enrollment_plan_runtime_drift CASCADE",
+            "runtime-directory-column-update" => $"REVOKE UPDATE (\"Generation\") ON public.\"DirectorySync\" FROM {runtimeRole}",
+            "runtime-directory-table-insert" => $"REVOKE INSERT ON public.\"DirectoryObjects\" FROM {runtimeRole}",
+            "runtime-directory-column-insert" => $"REVOKE INSERT (\"Generation\") ON public.\"DirectorySync\" FROM {runtimeRole}",
+            "runtime-database-create" => $"REVOKE CREATE ON DATABASE {databaseName} FROM {runtimeRole}",
+            "locker-database-create" => $"REVOKE CREATE ON DATABASE {databaseName} FROM {lockerRole}",
+            "runtime-public-schema-create" => $"REVOKE CREATE ON SCHEMA public FROM {runtimeRole}",
+            _ => $"REVOKE USAGE ON SCHEMA enrollment_plan_audit_drift FROM {lockerRole}; DROP SCHEMA enrollment_plan_audit_drift",
         };
         await db.Database.ExecuteSqlRawAsync(apply);
         try

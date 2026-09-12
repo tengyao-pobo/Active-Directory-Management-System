@@ -93,16 +93,20 @@ public sealed partial class EnrollmentGrantPlanTests
     }
 
     [Fact]
-    public async Task ExecutionReadHelpersRemainInvokerAndOwnerOnly()
+    public async Task ExecutionReadHelpersRemainInvokerWithExactExecutionDefinerAccess()
     {
+        var seed = await _fixture.SeedAsync();
+        await using var profile = await ProvisionExecutionRuntime(seed.Environment.Id);
         await using var db = Db();
         Assert.Equal(2, await db.Database.SqlQuery<int>($"""
             SELECT count(*)::int AS "Value" FROM pg_catalog.pg_proc p
             WHERE p.pronamespace='enrollment_execution'::regnamespace
                 AND p.proname IN ('read_record','authorization_digest') AND NOT p.prosecdef
                 AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp']
-                AND NOT EXISTS (SELECT 1 FROM pg_catalog.aclexplode(
-                    coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) a WHERE a.grantee<>p.proowner)
+                AND (SELECT count(*)=2 AND count(DISTINCT a.grantee)=2
+                    AND bool_and(a.grantee IN(p.proowner,(SELECT oid FROM pg_catalog.pg_roles WHERE rolname={profile.DefinerRole}))
+                        AND a.privilege_type='EXECUTE' AND NOT a.is_grantable)
+                    FROM pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) a)
             """).SingleAsync());
         await using var runtime = new NpgsqlConnection(Environment.GetEnvironmentVariable("CONSOLE_TEST_RUNTIME_DB"));
         await runtime.OpenAsync();

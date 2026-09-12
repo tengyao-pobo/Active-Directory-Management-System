@@ -33,5 +33,10 @@
     <None Include="..\..\build\agent-platform-grants\v2\provision-agent-platform-grants.sql" Link="v2-provision-agent-platform-grants.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\agent-projection\downgrade-v2-to-v1.sql" Link="downgrade-v2-to-v1.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\agent-projection\upgrade-v1-to-v2.sql" Link="upgrade-v1-to-v2.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\provision-enrollment-execution.sql" Link="provision-enrollment-execution.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-execution.sql" Link="audit-enrollment-execution.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-grant-operations.sql" Link="audit-enrollment-grant-operations.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\enrollment-execution-functions.sql" Link="enrollment-execution-functions.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\enrollment-execution-profile.sql" Link="enrollment-execution-profile.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

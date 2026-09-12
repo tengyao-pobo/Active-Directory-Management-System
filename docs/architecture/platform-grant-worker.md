@@ -1,6 +1,6 @@
 # 平台註冊授權的背景恢復基礎
 
-操作入口仍是平台設備頁。此增量提供獨立 execution library 與封閉的資料庫 journal；尚未提供正式 public-store repository、用途專用 SECURITY DEFINER 函式、worker host、交付 API 或 listener。API readiness 維持不可用，不能以建立了資料表或配置了連線字串視為可發行授權。
+操作入口仍是平台設備頁。背景恢復基礎提供獨立 execution library 與封閉的資料庫 journal；後續的用途專用函式與 PostgreSQL repository 見[執行資料庫](platform-grant-public-store.md)。worker host、交付 API 與 listener 尚未組合。API readiness 維持不可用，不能以建立了資料表或配置了連線字串視為可發行授權。
 
 ## 恢復契約
 
@@ -42,8 +42,8 @@ Public-store repository 必須以獨立 per-environment LOGIN 及精確 profile 
 
 Anchor 遷移不會回溯修復舊資料。正式啟用前必須預檢既有 Queued 計畫的雜湊、operation、核准與完整 outbox 對應；背景授權函式每次仍要重查，不得僅相信舊狀態值。
 
-## 驗證
+## 已合併基礎的驗證
 
 後端 12 個測試專案涵蓋 1,078 項測試。完整回歸先通過 1,077 項，最後一項 EF 例外包裝的測試斷言修正後，定向重跑通過；正式程式沒有因此修改。Locked restore 與 Release build 零警告／錯誤。Execution library 共 33 項單元測試；399 項整合測試包含 45 項 journal、15 項 queued anchor、12 項 SQL read/digest，以及 24 項 catalog drift 案例。一般覆核與 Daybreak 專項覆核均無剩餘阻擋。
 
-這些測試尚未驗證真實 public-store repository、per-environment worker LOGIN、跨庫執行或正式部署；這些是下一個組合步驟的驗收範圍。
+以上為背景恢復基礎的歷史驗證紀錄。後續 public-store repository 與 per-environment LOGIN 的驗證另記於[執行資料庫](platform-grant-public-store.md)；跨庫 host 與正式部署仍須獨立驗收。
