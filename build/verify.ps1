@@ -6,6 +6,21 @@ if (-not (Test-Path -LiteralPath $dotnet)) { $dotnet = 'dotnet' }
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 Push-Location $root
 try {
+    & (Join-Path $PSScriptRoot 'update-enrollment-delivery-catalog-slices.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-delivery-internal-functions.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-delivery-catalog-functions.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-delivery-history.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-manifest.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-function-contracts.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-membership.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-publication-template.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-audit-split.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-publication.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-history-transition.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-api-functions.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-api-capabilities.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-api-relations.ps1') -Check
+    & (Join-Path $PSScriptRoot 'update-enrollment-profile4-api-triggers.ps1') -Check
     & $dotnet restore ITManagement.slnx --locked-mode
     if ($LASTEXITCODE -ne 0) { throw 'Restore failed' }
     & $dotnet build ITManagement.slnx -c $Configuration --no-restore

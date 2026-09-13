@@ -641,6 +641,12 @@
           "AgentPlatformGrants": "[1.0.0, )"
         }
       },
+      "enrollmentgrantdelivery": {
+        "type": "Project",
+        "dependencies": {
+          "AgentPlatformGrants": "[1.0.0, )"
+        }
+      },
       "persistence": {
         "type": "Project",
         "dependencies": {

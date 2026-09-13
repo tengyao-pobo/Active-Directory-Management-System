@@ -230,7 +230,7 @@ CREATE CONSTRAINT TRIGGER work_queue_outbox_consistent AFTER INSERT OR UPDATE ON
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
     EXECUTE FUNCTION enrollment_execution.validate_work_queue();
 
-CREATE FUNCTION enrollment_execution.audit_execution_privileges(p_environment uuid)
+CREATE OR REPLACE FUNCTION enrollment_execution.audit_execution_privileges(p_environment uuid)
 RETURNS TABLE(is_valid boolean,diagnostic_code text,profile_version smallint)
 LANGUAGE plpgsql STABLE PARALLEL UNSAFE SECURITY DEFINER
 SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
@@ -239,6 +239,9 @@ DECLARE
     definer oid;
     runtime oid;
     queue_definer oid;
+    delivery_definer oid;
+    status_runtime oid;
+    delivery_runtime oid;
     ok boolean;
     private_registry oid;
     private_marker oid;
@@ -249,6 +252,8 @@ BEGIN
         WHERE r.capability='EnrollmentGrantExecution' AND r.role_kind='Definer';
     SELECT r.role_oid INTO queue_definer FROM enrollment_execution.role_reservations r
         WHERE r.capability='EnrollmentGrantExecution' AND r.role_kind='QueueDefiner';
+    SELECT r.role_oid INTO delivery_definer FROM enrollment_execution.role_reservations r
+        WHERE r.capability='EnrollmentGrantDelivery' AND r.role_kind='DeliveryDefiner';
     SELECT role.oid INTO runtime
     FROM public."DirectoryDatabaseBindings" b JOIN pg_catalog.pg_roles role ON role.rolname=b."LoginRole"
     JOIN enrollment_execution.role_reservations reservation
@@ -256,22 +261,43 @@ BEGIN
       AND reservation.capability='EnrollmentGrantExecution' AND reservation.role_kind='Runtime'
     WHERE b."Purpose"='EnrollmentGrantExecution' AND b."ContractVersion"=2
       AND b."EnvironmentId"=p_environment AND b."PrincipalId" IS NULL;
+    SELECT role.oid INTO status_runtime FROM public."DirectoryDatabaseBindings" binding
+    JOIN pg_catalog.pg_roles role ON role.rolname=binding."LoginRole"
+    JOIN enrollment_execution.role_reservations reservation
+      ON reservation.role_name=binding."LoginRole" AND reservation.role_oid=role.oid
+      AND reservation.capability='EnrollmentGrantDelivery' AND reservation.role_kind='StatusRuntime'
+    WHERE binding."Purpose"='EnrollmentGrantStatusRefresh' AND binding."ContractVersion"=1
+      AND binding."EnvironmentId"=p_environment AND binding."PrincipalId" IS NULL;
+    SELECT role.oid INTO delivery_runtime FROM public."DirectoryDatabaseBindings" binding
+    JOIN pg_catalog.pg_roles role ON role.rolname=binding."LoginRole"
+    JOIN enrollment_execution.role_reservations reservation
+      ON reservation.role_name=binding."LoginRole" AND reservation.role_oid=role.oid
+      AND reservation.capability='EnrollmentGrantDelivery' AND reservation.role_kind='DeliveryRuntime'
+    WHERE binding."Purpose"='EnrollmentGrantDelivery' AND binding."ContractVersion"=1
+      AND binding."EnvironmentId"=p_environment AND binding."PrincipalId" IS NULL;
 
     ok := p_environment IS NOT NULL AND p_environment<>'00000000-0000-0000-0000-000000000000'::uuid
+      AND pg_catalog.current_setting('session_replication_role')='origin'
+      AND pg_catalog.current_setting('lo_compat_privileges')='off'
       AND table_owner IS NOT NULL AND definer IS NOT NULL AND queue_definer IS NOT NULL AND runtime IS NOT NULL
+      AND delivery_definer IS NOT NULL AND (status_runtime IS NULL)=(delivery_runtime IS NULL)
       AND (SELECT count(*)=1 FROM enrollment_execution.role_reservations
            WHERE capability='EnrollmentGrantExecution' AND role_kind='Definer')
       AND (SELECT count(*)=1 FROM enrollment_execution.role_reservations
            WHERE capability='EnrollmentGrantExecution' AND role_kind='QueueDefiner')
+      AND (SELECT count(*)=1 FROM enrollment_execution.role_reservations
+           WHERE capability='EnrollmentGrantDelivery' AND role_kind='DeliveryDefiner')
       AND (SELECT count(*)=1 FROM public."DirectoryDatabaseBindings"
            WHERE "Purpose"='EnrollmentGrantExecution' AND "ContractVersion"=2
              AND "EnvironmentId"=p_environment AND "PrincipalId" IS NULL)
       AND NOT EXISTS (
           SELECT 1 FROM enrollment_execution.role_reservations reservation
           LEFT JOIN pg_catalog.pg_roles role ON role.oid=reservation.role_oid AND role.rolname=reservation.role_name
-          WHERE role.oid IS NULL OR reservation.capability<>'EnrollmentGrantExecution'
+          WHERE role.oid IS NULL OR reservation.capability NOT IN('EnrollmentGrantExecution','EnrollmentGrantDelivery')
              OR reservation.reservation_schema_version<>1
-             OR (reservation.role_kind='Runtime') IS DISTINCT FROM role.rolcanlogin
+             OR (reservation.role_kind IN('Runtime','StatusRuntime','DeliveryRuntime')) IS DISTINCT FROM role.rolcanlogin
+             OR (reservation.capability='EnrollmentGrantExecution') IS DISTINCT FROM (reservation.role_kind IN('Runtime','Definer','QueueDefiner'))
+             OR (reservation.capability='EnrollmentGrantDelivery') IS DISTINCT FROM (reservation.role_kind IN('DeliveryDefiner','StatusRuntime','DeliveryRuntime'))
              OR role.rolsuper OR role.rolbypassrls OR role.rolcreatedb OR role.rolcreaterole
              OR role.rolinherit OR role.rolreplication OR role.oid=table_owner
              OR EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.roleid=role.oid OR m.member=role.oid))
@@ -283,11 +309,37 @@ BEGIN
           WHERE binding."Purpose"='EnrollmentGrantExecution' AND NOT EXISTS(SELECT 1 FROM enrollment_execution.role_reservations reservation
             WHERE reservation.role_name=binding."LoginRole" AND reservation.role_kind='Runtime'
               AND reservation.capability='EnrollmentGrantExecution' AND reservation.reservation_schema_version=1))
+      AND NOT EXISTS(SELECT 1 FROM enrollment_execution.role_reservations reservation
+          WHERE reservation.role_kind IN('StatusRuntime','DeliveryRuntime') AND NOT EXISTS(
+            SELECT 1 FROM public."DirectoryDatabaseBindings" binding
+            WHERE binding."LoginRole"=reservation.role_name
+              AND binding."Purpose"=CASE reservation.role_kind WHEN 'StatusRuntime' THEN 'EnrollmentGrantStatusRefresh'
+                    ELSE 'EnrollmentGrantDelivery' END
+              AND binding."ContractVersion"=1 AND binding."EnvironmentId" IS NOT NULL AND binding."PrincipalId" IS NULL))
+      AND NOT EXISTS(SELECT 1 FROM public."DirectoryDatabaseBindings" binding
+          WHERE binding."Purpose" IN('EnrollmentGrantStatusRefresh','EnrollmentGrantDelivery') AND NOT EXISTS(
+            SELECT 1 FROM enrollment_execution.role_reservations reservation
+            WHERE reservation.role_name=binding."LoginRole" AND reservation.capability='EnrollmentGrantDelivery'
+              AND reservation.role_kind=CASE binding."Purpose" WHEN 'EnrollmentGrantStatusRefresh' THEN 'StatusRuntime'
+                    ELSE 'DeliveryRuntime' END AND reservation.reservation_schema_version=1))
+      AND NOT EXISTS(SELECT 1 FROM public."DirectoryDatabaseBindings" binding
+          WHERE binding."Purpose" IN('EnrollmentGrantStatusRefresh','EnrollmentGrantDelivery')
+          GROUP BY binding."EnvironmentId" HAVING count(*)<>2)
       AND EXISTS(SELECT 1 FROM pg_catalog.pg_index index_row JOIN pg_catalog.pg_class index_class ON index_class.oid=index_row.indexrelid
           WHERE index_class.relname='enrollment_execution_environment_login'
             AND index_row.indrelid='public."DirectoryDatabaseBindings"'::regclass AND index_row.indisunique
             AND index_row.indisvalid AND index_row.indisready AND index_row.indpred IS NOT NULL
             AND pg_catalog.pg_get_expr(index_row.indpred,index_row.indrelid)='("Purpose" = ''EnrollmentGrantExecution''::text)')
+      AND EXISTS(SELECT 1 FROM pg_catalog.pg_index index_row JOIN pg_catalog.pg_class index_class ON index_class.oid=index_row.indexrelid
+          WHERE index_class.relname='enrollment_grant_status_environment_login'
+            AND index_row.indrelid='public."DirectoryDatabaseBindings"'::regclass AND index_row.indisunique
+            AND index_row.indisvalid AND index_row.indisready AND index_row.indpred IS NOT NULL
+            AND pg_catalog.pg_get_expr(index_row.indpred,index_row.indrelid)='("Purpose" = ''EnrollmentGrantStatusRefresh''::text)')
+      AND EXISTS(SELECT 1 FROM pg_catalog.pg_index index_row JOIN pg_catalog.pg_class index_class ON index_class.oid=index_row.indexrelid
+          WHERE index_class.relname='enrollment_grant_delivery_environment_login'
+            AND index_row.indrelid='public."DirectoryDatabaseBindings"'::regclass AND index_row.indisunique
+            AND index_row.indisvalid AND index_row.indisready AND index_row.indpred IS NOT NULL
+            AND pg_catalog.pg_get_expr(index_row.indpred,index_row.indrelid)='("Purpose" = ''EnrollmentGrantDelivery''::text)')
       ;
 
     SELECT c.oid INTO private_registry FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -318,8 +370,8 @@ BEGIN
       AND NOT EXISTS(
         WITH expected(definition) AS (VALUES
           ('PRIMARY KEY (role_name)'),('UNIQUE (role_oid)'),
-          ('CHECK (capability = ''EnrollmentGrantExecution''::text)'),('CHECK (reservation_schema_version = 1)'),
-          ('CHECK (role_kind = ANY (ARRAY[''Runtime''::text, ''Definer''::text, ''QueueDefiner''::text]))'),
+          ('CHECK (capability = ANY (ARRAY[''EnrollmentGrantExecution''::text, ''EnrollmentGrantDelivery''::text]))'),('CHECK (reservation_schema_version = 1)'),
+          ('CHECK (capability = ''EnrollmentGrantExecution''::text AND (role_kind = ANY (ARRAY[''Runtime''::text, ''Definer''::text, ''QueueDefiner''::text])) OR capability = ''EnrollmentGrantDelivery''::text AND (role_kind = ANY (ARRAY[''DeliveryDefiner''::text, ''StatusRuntime''::text, ''DeliveryRuntime''::text])))'),
           ('CHECK (btrim(role_name::text) <> ''''::text)'),('CHECK (role_oid <> 0::oid)')),
         actual AS (SELECT pg_catalog.pg_get_constraintdef(c.oid,true) definition FROM pg_catalog.pg_constraint c
           WHERE c.conrelid='enrollment_execution.role_reservations'::regclass AND c.contype IN('p','u','c') AND c.convalidated)
@@ -332,7 +384,7 @@ BEGIN
             AND p.proowner=table_owner AND l.lanname='sql' AND NOT p.prosecdef AND p.provolatile='i'
             AND p.proparallel='s' AND p.prokind='f' AND NOT p.proretset AND p.prorettype='smallint'::regtype
             AND p.pronargs=0 AND p.proargnames IS NULL AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp']
-            AND pg_catalog.btrim(p.prosrc,E' \t\r\n')='SELECT 3::smallint')
+            AND pg_catalog.btrim(p.prosrc,E' \t\r\n')='SELECT 4::smallint')
       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p
           CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
           WHERE p.oid='enrollment_execution.execution_store_profile()'::regprocedure
@@ -350,11 +402,11 @@ BEGIN
           ('enrollment_execution.store_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',table_owner,false,false,'plpgsql','v','u',false,'12047650d35da8f6b90b12de80b51cb0e79cb6ed84b1c4e63358c24e177debc0'),
           ('enrollment_execution.store_quarantine(uuid,uuid,bytea,text)',table_owner,false,false,'plpgsql','v','u',false,'7ea3dfa0ad6294076d83d0fec449cbdda1e142e4fadcf55db27f81beef704739'),
           ('enrollment_execution.worker_scope(uuid)',definer,false,false,'plpgsql','s','u',false,'98214f62b088dec4e8b97ee7d01a96c61b5d422924367b903a99ccf932c923be'),
-          ('enrollment_execution.read_execution_record(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'cd7c0975c4cb6f31725fe1151b1513e5df6d7fb51b822f1a862e54df47c9f0f6'),
-          ('enrollment_execution.read_and_lock_plan_context(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'0add6825c35e78b11019b42477581f9c893536005fde7c66e726e51e80bc14f1'),
-          ('enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'69f37bda1a514534520cadfb8431bd4efa17c487ed5e19930f5b1b7d80f8d7d6'),
-          ('enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'ca2fa2d60055e2956f59346b02450e692e63e103d180c4fa7b2444e3668bd6c2'),
-          ('enrollment_execution.quarantine_execution(uuid,uuid,bytea,text)',definer,true,false,'plpgsql','v','u',true,'a7cd12830602f399b12593e59fc4a3d221875c8efb0da666e7e0131669d99524')),
+          ('enrollment_execution.read_execution_record(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'2f3912f5ed9c772e69ced062acaadb43d7c162a3f13ae10af45086c65fc393af'),
+          ('enrollment_execution.read_and_lock_plan_context(uuid,uuid)',definer,true,false,'plpgsql','v','u',true,'65799fd04794c614c6cf323b0125ff20b490c17bac4bb9eafa528cb416097af6'),
+          ('enrollment_execution.authorize_and_store_candidate(uuid,uuid,text,bytea,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'34bc89d3bfbd3cdc55e52ce7ab9cd6f6cf6735b9ac7a15ad8cee4b9b3c064449'),
+          ('enrollment_execution.record_execution_result(uuid,uuid,bytea,text,text,uuid,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',definer,true,false,'plpgsql','v','u',true,'659c0cb518bc415193080105b9cbd504e1cb8a27592e124166b27937c4a0fdbf'),
+          ('enrollment_execution.quarantine_execution(uuid,uuid,bytea,text)',definer,true,false,'plpgsql','v','u',true,'d49af3d745e3d6878926e39a8cdc2354695350be3e1a512f996289d00b0c13f8')),
         actual AS (
           SELECT e.*,p.oid,p.proowner,p.prosecdef,p.proisstrict,l.lanname,p.provolatile,p.proparallel,p.proconfig,
             pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
@@ -456,11 +508,11 @@ BEGIN
     ok := ok
       AND NOT EXISTS(
         WITH expected(table_oid,privilege_type) AS (VALUES
-          ('enrollment_execution.mint_permits'::regclass::oid,'SELECT'),('enrollment_execution.mint_permits'::regclass::oid,'INSERT'),
-          ('enrollment_execution.sealed_envelopes'::regclass::oid,'SELECT'),('enrollment_execution.sealed_envelopes'::regclass::oid,'INSERT'),('enrollment_execution.sealed_envelopes'::regclass::oid,'DELETE'),
-          ('enrollment_execution.issue_results'::regclass::oid,'SELECT'),('enrollment_execution.issue_results'::regclass::oid,'INSERT'),
-          ('enrollment_execution.delivery_acks'::regclass::oid,'SELECT'),
-          ('enrollment_execution.execution_stops'::regclass::oid,'SELECT'),('enrollment_execution.execution_stops'::regclass::oid,'INSERT')),
+          (pg_catalog.to_regclass('enrollment_execution.mint_permits')::oid,'SELECT'),(pg_catalog.to_regclass('enrollment_execution.mint_permits')::oid,'INSERT'),
+          (pg_catalog.to_regclass('enrollment_execution.sealed_envelopes')::oid,'SELECT'),(pg_catalog.to_regclass('enrollment_execution.sealed_envelopes')::oid,'INSERT'),(pg_catalog.to_regclass('enrollment_execution.sealed_envelopes')::oid,'DELETE'),
+          (pg_catalog.to_regclass('enrollment_execution.issue_results')::oid,'SELECT'),(pg_catalog.to_regclass('enrollment_execution.issue_results')::oid,'INSERT'),
+          (pg_catalog.to_regclass('enrollment_execution.delivery_acks')::oid,'SELECT'),
+          (pg_catalog.to_regclass('enrollment_execution.execution_stops')::oid,'SELECT'),(pg_catalog.to_regclass('enrollment_execution.execution_stops')::oid,'INSERT')),
         actual AS (SELECT c.oid table_oid,acl.privilege_type::text FROM pg_catalog.pg_class c
           CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) acl WHERE acl.grantee=definer AND NOT acl.is_grantable)
         SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
@@ -497,16 +549,25 @@ BEGIN
         CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
         WHERE acl.grantee=definer AND (acl.privilege_type<>'EXECUTE' OR acl.is_grantable));
 
+    -- BEGIN delivery policy callee metadata
     ok := ok AND (SELECT count(*)=2 AND bool_and(p.proowner=table_owner AND l.lanname='sql'
         AND p.prosecdef AND p.provolatile='s' AND p.proparallel='u' AND NOT p.proretset
-        AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=off']
+        AND p.prokind='f' AND p.prorettype='boolean'::regtype
+        AND p.proisstrict=(p.proname='has_environment_membership') AND NOT p.proleakproof
+        AND p.pronargs=2 AND p.proargtypes='2950 2950'::oidvector
+        AND p.proargnames IS NOT DISTINCT FROM CASE p.proname WHEN 'has_environment_membership' THEN ARRAY['p_environment_id','p_principal_id']
+          ELSE ARRAY['p_environment','p_principal'] END
+        AND p.proallargtypes IS NULL AND p.proargmodes IS NULL AND p.pronargdefaults=0 AND p.provariadic=0
+        AND p.prosupport=0 AND p.probin IS NULL AND p.prosqlbody IS NULL AND p.proargdefaults IS NULL
+        AND p.proconfig IS NOT DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp','row_security=off']
         AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
           pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
           =CASE p.proname WHEN 'has_environment_membership' THEN 'c9529f8fad835c8125509e539be576a576a94e7d03660e67023392b7e951ae4c'
                           ELSE '9822d3a40ee96593c8aad915ac6ca454868274347f5a6e30fab61eeca60752a4' END)
       FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
-      WHERE p.oid IN('public.has_environment_membership(uuid,uuid)'::regprocedure,
-                     'public.directory_database_access(uuid,uuid)'::regprocedure));
+      WHERE p.oid IN(pg_catalog.to_regprocedure('public.has_environment_membership(uuid,uuid)'),
+                     pg_catalog.to_regprocedure('public.directory_database_access(uuid,uuid)')));
+    -- END delivery policy callee metadata
 
     ok := ok AND NOT EXISTS(
       WITH specification AS (SELECT '{
@@ -570,7 +631,10 @@ BEGIN
       SELECT 1 FROM ((SELECT * FROM wanted EXCEPT SELECT * FROM actual)
                      UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM wanted)) difference)
       AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy p
-        WHERE definer=ANY(p.polroles) AND p.polname NOT LIKE 'enrollment_execution_worker_%')
+        WHERE definer=ANY(p.polroles) AND p.polname NOT LIKE 'enrollment_execution_worker_%'
+          AND NOT (p.polrelid='public."Principals"'::regclass AND p.polname IN(
+            'enrollment_identity_principals_execution_read_allow','enrollment_identity_principals_execution_read_limit',
+            'enrollment_identity_principals_execution_lock_allow','enrollment_identity_principals_execution_lock_limit')))
       AND (SELECT count(*)=8 FROM pg_catalog.pg_trigger t
         WHERE NOT t.tgisinternal AND t.tgname LIKE 'enrollment_execution_worker_%'
           AND t.tgenabled='O' AND t.tgtype=19
@@ -607,9 +671,9 @@ BEGIN
           ('enrollment_execution.defer_work_claim(uuid,uuid,uuid,text)',table_owner,false,false,'v','d5dbc6f35566e700b1445369cf126cb6befb0e600a991d5cfa1425241fdb5ed2'),
           ('enrollment_execution.complete_work_claim(uuid,uuid,uuid)',table_owner,false,false,'v','8ef05062db0c3903c82d224672ec898954b11e28e4506bf8d7af1052f7f9c618'),
           ('enrollment_execution.queue_worker_scope(uuid)',queue_definer,false,false,'s','350f3dc7c48f2869848a2fc67e320f0a67e507caba08d3651e71ab9e2a1e18ea'),
-          ('enrollment_execution.claim_next(uuid,uuid)',queue_definer,true,true,'v','82e5af6d26d860170794d29f404254525c267a36ccae4d0cf1ed030e4dd6aa93'),
-          ('enrollment_execution.defer_claim(uuid,uuid,uuid,text)',queue_definer,true,true,'v','496e54664b5efa4a3656e570d0254d84ace518cac3843a24aca42614223f3379'),
-          ('enrollment_execution.complete_claim(uuid,uuid,uuid)',queue_definer,true,true,'v','9ed1b979fda3916936ad235f4466522a3b90cb871dcb6eea961d1bdf9ec18e82')),
+          ('enrollment_execution.claim_next(uuid,uuid)',queue_definer,true,true,'v','2bf10374af74a53631cc3cf49ca5915d94faceeb2f5784376a1ea149240c52d8'),
+          ('enrollment_execution.defer_claim(uuid,uuid,uuid,text)',queue_definer,true,true,'v','37f9afac59b8e9ca87d5a8bd2db4d245fae98046195c2d47e68e7117063dc216'),
+          ('enrollment_execution.complete_claim(uuid,uuid,uuid)',queue_definer,true,true,'v','25cc765b56bc15a05e01ad306c354fe5ed245c3622a3fb22589e14e35a60c37e')),
         actual AS (SELECT expected.*,p.oid,p.proowner,p.prosecdef,p.proisstrict,l.lanname,p.provolatile,p.proparallel,p.proconfig,
             pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
               pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex') actual_hash
@@ -691,8 +755,8 @@ BEGIN
           ('enrollment_execution.work_queue'::regclass::oid,'UPDATE'),
           ('enrollment_execution.claim_leases'::regclass::oid,'SELECT'),
           ('enrollment_execution.claim_leases'::regclass::oid,'INSERT'),
-          ('enrollment_execution.issue_results'::regclass::oid,'SELECT'),
-          ('enrollment_execution.execution_stops'::regclass::oid,'SELECT')),
+          (pg_catalog.to_regclass('enrollment_execution.issue_results')::oid,'SELECT'),
+          (pg_catalog.to_regclass('enrollment_execution.execution_stops')::oid,'SELECT')),
         actual AS (SELECT c.oid,acl.privilege_type::text FROM pg_catalog.pg_class c
           CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) acl
           WHERE acl.grantee=queue_definer AND NOT acl.is_grantable)
@@ -705,9 +769,9 @@ BEGIN
           ('public."DirectoryDatabaseBindings"'::regclass::oid,'ContractVersion','SELECT'),
           ('public."DirectoryDatabaseBindings"'::regclass::oid,'EnvironmentId','SELECT'),
           ('public."DirectoryDatabaseBindings"'::regclass::oid,'PrincipalId','SELECT'),
-          ('public."EnrollmentGrantOperations"'::regclass::oid,'EnvironmentId','SELECT'),
-          ('public."EnrollmentGrantOperations"'::regclass::oid,'Id','SELECT'),
-          ('public."EnrollmentGrantOperations"'::regclass::oid,'QueuedAt','SELECT'),
+          (pg_catalog.to_regclass('public."EnrollmentGrantOperations"')::oid,'EnvironmentId','SELECT'),
+          (pg_catalog.to_regclass('public."EnrollmentGrantOperations"')::oid,'Id','SELECT'),
+          (pg_catalog.to_regclass('public."EnrollmentGrantOperations"')::oid,'QueuedAt','SELECT'),
           ('public."Outbox"'::regclass::oid,'EnvironmentId','SELECT'),
           ('public."Outbox"'::regclass::oid,'Id','SELECT'),
           ('public."Outbox"'::regclass::oid,'EventType','SELECT'),
@@ -749,6 +813,1519 @@ BEGIN
         CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) acl
         WHERE acl.grantee=queue_definer AND acl.is_grantable);
 
+    -- Profile4 delivery family: one shared NOLOGIN definer is always installed. Each environment
+    -- has either no delivery bindings or one exact status/delivery LOGIN pair.
+    ok := ok
+      AND (SELECT count(*)=4 FROM pg_catalog.pg_proc function_row WHERE function_row.proowner=delivery_definer
+        AND function_row.oid IN(
+          'enrollment_execution.read_grant_status_receipt(uuid,uuid)'::regprocedure,
+          'enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'::regprocedure,
+          'enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)'::regprocedure,
+          'enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)'::regprocedure))
+      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row WHERE function_row.proowner=delivery_definer
+        AND function_row.oid NOT IN(
+          'enrollment_execution.read_grant_status_receipt(uuid,uuid)'::regprocedure,
+          'enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'::regprocedure,
+          'enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)'::regprocedure,
+          'enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)'::regprocedure))
+      -- BEGIN generated delivery internal functions
+      AND NOT EXISTS(
+        WITH expected(signature,owner_oid,language,volatility,security_definer,with_rls,body_hash,input_count,input_types,all_types,arg_names,arg_modes,return_type,returns_set) AS (VALUES
+          ('enrollment_execution.guard_status_observation()',table_owner,'plpgsql','v',false,false,'205fb0e014963548e6ed954ef2680df39de239c5a94893e79079009986c63c17',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
+          ('enrollment_execution.record_status_observation(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text,pg_catalog.text,pg_catalog.timestamptz,pg_catalog.timestamptz,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.timestamptz,pg_catalog.timestamptz,pg_catalog.timestamptz,pg_catalog.int2,pg_catalog.timestamptz,pg_catalog.bytea,pg_catalog.bytea)',table_owner,'plpgsql','v',false,false,'16e7ce5bada9c6ad5cd54a083fc2f5064300bfa0f1b1591ec5d7a1f328b83e10',17,'2950 2950 2950 25 25 1184 1184 2950 2950 2950 1184 1184 1184 21 1184 17 17',ARRAY[2950,2950,2950,25,25,1184,1184,2950,2950,2950,1184,1184,1184,21,1184,17,17,21,25,2950,2950,2950,20,25,25,1184,1184,1184,1184]::oid[],ARRAY['p_environment','p_operation','p_observation','p_state','p_diagnostic','p_private_observed_at','p_private_state_changed_at','p_grant','p_directory_object','p_device','p_mapping_created_at','p_grant_created_at','p_grant_expires_at','p_issue_contract','p_mint_permit_not_after','p_token_sha256','p_authorization_digest','contract_version','outcome','observation_id','environment_id','operation_id','sequence','state','diagnostic','private_observed_at','private_state_changed_at','recorded_at','available_until']::text[],ARRAY['i','i','i','i','i','i','i','i','i','i','i','i','i','i','i','i','i','t','t','t','t','t','t','t','t','t','t','t','t']::"char"[],2249::oid,true),
+          ('enrollment_execution.read_status_refresh_receipt(pg_catalog.uuid,pg_catalog.uuid)',table_owner,'plpgsql','v',false,false,'b140b5dbe814117c4a1214fe4f86d2b595069b35f81a74f94afb061108d9e26f',2,'2950 2950',ARRAY[2950,2950,21,25,2950,2950,2950,2950,2950,1184,1184,1184,21,1184,17,17]::oid[],ARRAY['p_environment','p_operation','contract_version','outcome','environment_id','operation_id','grant_id','directory_object_id','device_id','mapping_created_at','grant_created_at','grant_expires_at','issue_contract_version','mint_permit_not_after','token_sha256','authorization_digest']::text[],ARRAY['i','i','t','t','t','t','t','t','t','t','t','t','t','t','t','t']::"char"[],2249::oid,true),
+          ('enrollment_execution.lock_delivery_context(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text)',table_owner,'plpgsql','v',false,false,'2773f0caa2d5ccdb20d5192bcefc5ef4d848004424b52bd43c746ef2abdd806b',4,'2950 2950 2950 25',ARRAY[2950,2950,2950,25,16,1184]::oid[],ARRAY['p_environment','p_operation','p_requester','p_session_hash','authorized','checked_at']::text[],ARRAY['i','i','i','i','t','t']::"char"[],2249::oid,true),
+          ('enrollment_execution.get_sealed_delivery(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text)',table_owner,'plpgsql','v',false,false,'49ac0d54d67374f2e26c4bb1ad57c7ccdd15096da5b013ee1175002b04fefa53',4,'2950 2950 2950 25',ARRAY[2950,2950,2950,25,21,25,2950,2950,21,17,17,17,1184,1184]::oid[],ARRAY['p_environment','p_operation','p_requester','p_session_hash','contract_version','outcome','environment_id','operation_id','format_version','recipient_fingerprint','ciphertext','ciphertext_sha256','delivery_not_after','queried_at']::text[],ARRAY['i','i','i','i','t','t','t','t','t','t','t','t','t','t']::"char"[],2249::oid,true),
+          ('enrollment_execution.ack_sealed_delivery(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea)',table_owner,'plpgsql','v',false,false,'85a3d6f503a90f067a7d94cffaf3fc03f6f3b1adb84db92a40110c721454ab24',6,'2950 2950 2950 25 17 17',ARRAY[2950,2950,2950,25,17,17,21,25]::oid[],ARRAY['p_environment','p_operation','p_requester','p_session_hash','p_recipient_fingerprint','p_ciphertext_sha256','contract_version','outcome']::text[],ARRAY['i','i','i','i','i','i','t','t']::"char"[],2249::oid,true),
+          ('enrollment_execution.delivery_worker_scope(pg_catalog.uuid,pg_catalog.text)',table_owner,'plpgsql','s',true,true,'a2abaa5afe86cdf2b548c52e54467b96a16af011f2780bdb8b49e4e1dd7efb8c',2,'2950 25',NULL::oid[],ARRAY['p_environment','p_purpose']::text[],NULL::"char"[],16::oid,false),
+          ('enrollment_execution.read_grant_status_receipt(pg_catalog.uuid,pg_catalog.uuid)',delivery_definer,'plpgsql','v',true,true,'63cc9a1b50e70f66d59ed1a754a54c05aee02259341b8f7b6ed9ecf10256ed78',2,'2950 2950',ARRAY[2950,2950,21,25,2950,2950,2950,2950,2950,1184,1184,1184,21,1184,17,17]::oid[],ARRAY['p_environment','p_operation','contract_version','outcome','environment_id','operation_id','grant_id','directory_object_id','device_id','mapping_created_at','grant_created_at','grant_expires_at','issue_contract_version','mint_permit_not_after','token_sha256','authorization_digest']::text[],ARRAY['i','i','t','t','t','t','t','t','t','t','t','t','t','t','t','t']::"char"[],2249::oid,true),
+          ('enrollment_execution.append_grant_status_observation(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text,pg_catalog.text,pg_catalog.timestamptz,pg_catalog.timestamptz,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.timestamptz,pg_catalog.timestamptz,pg_catalog.timestamptz,pg_catalog.int2,pg_catalog.timestamptz,pg_catalog.bytea,pg_catalog.bytea)',delivery_definer,'plpgsql','v',true,true,'545ce0efbc1807b4104a1d5386d328326f1bfc03db98dbcec9ab531f021b03cf',17,'2950 2950 2950 25 25 1184 1184 2950 2950 2950 1184 1184 1184 21 1184 17 17',ARRAY[2950,2950,2950,25,25,1184,1184,2950,2950,2950,1184,1184,1184,21,1184,17,17,21,25,2950,2950,2950,20,25,25,1184,1184,1184,1184]::oid[],ARRAY['p_environment','p_operation','p_observation','p_state','p_diagnostic','p_private_observed_at','p_private_state_changed_at','p_grant','p_directory_object','p_device','p_mapping_created_at','p_grant_created_at','p_grant_expires_at','p_issue_contract','p_mint_permit_not_after','p_token_sha256','p_authorization_digest','contract_version','outcome','observation_id','environment_id','operation_id','sequence','state','diagnostic','private_observed_at','private_state_changed_at','recorded_at','available_until']::text[],ARRAY['i','i','i','i','i','i','i','i','i','i','i','i','i','i','i','i','i','t','t','t','t','t','t','t','t','t','t','t','t']::"char"[],2249::oid,true),
+          ('enrollment_execution.read_grant_delivery(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text)',delivery_definer,'plpgsql','v',true,true,'f80126238164f65f17e8fb933b13799aa2fd6b45a1f3eb58a8f673014fcf5e3b',4,'2950 2950 2950 25',ARRAY[2950,2950,2950,25,21,25,2950,2950,21,17,17,17,1184,1184]::oid[],ARRAY['p_environment','p_operation','p_requester','p_session_hash','contract_version','outcome','environment_id','operation_id','format_version','recipient_fingerprint','ciphertext','ciphertext_sha256','delivery_not_after','queried_at']::text[],ARRAY['i','i','i','i','t','t','t','t','t','t','t','t','t','t']::"char"[],2249::oid,true),
+          ('enrollment_execution.acknowledge_grant_delivery(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea)',delivery_definer,'plpgsql','v',true,true,'99f68247c9d723dfa7755481005aa7104f93646f6095315ea8439db444668323',6,'2950 2950 2950 25 17 17',ARRAY[2950,2950,2950,25,17,17,21,25]::oid[],ARRAY['p_environment','p_operation','p_requester','p_session_hash','p_recipient_fingerprint','p_ciphertext_sha256','contract_version','outcome']::text[],ARRAY['i','i','i','i','i','i','t','t']::"char"[],2249::oid,true),
+          ('enrollment_execution.reject_delivery_update()',table_owner,'plpgsql','v',true,true,'279e969ccd38a161d13a2dad55009fd9e759ee9fd9e9b615dbb834ba4abfeb76',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
+          ('enrollment_execution.audit_delivery_privileges(pg_catalog.uuid)',table_owner,'plpgsql','s',true,true,'a37b4693ed042c9d9f69555024c87cb5c40705cc60606bff14145b24480b1d9e',1,'2950',ARRAY[2950,16,25,21]::oid[],ARRAY['p_environment','is_valid','diagnostic_code','profile_version']::text[],ARRAY['i','t','t','t']::"char"[],2249::oid,true),
+          ('enrollment_execution.scope_uuid(pg_catalog.text)',table_owner,'plpgsql','i',false,false,'a7dd6ec2c76752765dd101c860b90d7b27db09de8865db291e555ca1ae96e72b',1,'25',NULL::oid[],ARRAY['p_value']::text[],NULL::"char"[],2950::oid,false),
+          ('enrollment_execution.has_computer_permission(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text)',table_owner,'sql','s',false,false,'c3fb51c2382305ee8d2da5b40221261edd9978c0a3c3d3eab0ac86929221d4a2',5,'2950 2950 2950 2950 25',NULL::oid[],ARRAY['p_environment','p_principal','p_directory','p_generation','p_permission']::text[],NULL::"char"[],16::oid,false),
+          ('enrollment_execution.reject_history_mutation()',table_owner,'plpgsql','v',false,false,'e35b27ac9bb227452ced5ccc67f6a40faec5d609a324b3d1a1d7f455486b8edd',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
+          ('enrollment_execution.validate_journal()',table_owner,'plpgsql','v',false,false,'abbd382feeb041caef7c2e3c65e9ecb7788d9d2957f90d3372ed5a26146a350a',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
+          ('enrollment_execution.validate_execution_stop()',table_owner,'plpgsql','v',false,false,'4ad5be7fac42bcf38185493246160f21b20f9f2c697b25d2fd1ab56c759d8b47',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false),
+          ('enrollment_execution.lock_execution_stop_boundary()',table_owner,'plpgsql','v',false,false,'927270395474475368a9c838ce22c09e0be8b6a749d03848ab1cd4c8e6e61918',0,'',NULL::oid[],NULL::text[],NULL::"char"[],2279::oid,false)),
+        actual AS (SELECT expected.*,function_row.*,language_row.lanname
+          FROM expected LEFT JOIN pg_catalog.pg_proc function_row ON function_row.oid=pg_catalog.to_regprocedure(expected.signature)
+          LEFT JOIN pg_catalog.pg_language language_row ON language_row.oid=function_row.prolang)
+        SELECT 1 FROM actual WHERE oid IS NULL OR proowner<>owner_oid OR lanname<>language
+          OR prokind<>'f' OR prosecdef<>security_definer OR proisstrict OR proleakproof OR prosupport<>0
+          OR provolatile::text<>volatility OR proparallel<>'u' OR proretset<>returns_set OR prorettype<>return_type
+          OR pronargs<>input_count OR proargtypes::text<>input_types
+          OR proallargtypes IS DISTINCT FROM all_types OR proargnames IS DISTINCT FROM arg_names OR proargmodes IS DISTINCT FROM arg_modes
+          OR pronargdefaults<>0 OR proargdefaults IS NOT NULL OR provariadic<>0 OR probin IS NOT NULL OR prosqlbody IS NOT NULL
+          OR proconfig IS DISTINCT FROM CASE WHEN with_rls THEN ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
+                                            ELSE ARRAY['search_path=pg_catalog, pg_temp'] END
+          OR pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.btrim(
+               pg_catalog.regexp_replace(prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')<>body_hash
+        UNION ALL
+        SELECT 1 FROM pg_catalog.pg_proc extra JOIN pg_catalog.pg_namespace ns ON ns.oid=extra.pronamespace
+        WHERE ns.nspname='enrollment_execution'
+          AND extra.proname IN(SELECT pg_catalog.split_part(pg_catalog.split_part(signature,'.',2),'(',1) FROM expected)
+          AND NOT EXISTS(SELECT 1 FROM expected WHERE pg_catalog.to_regprocedure(signature)=extra.oid))
+      -- END generated delivery internal functions
+      AND NOT EXISTS(
+        WITH expected(grantor,grantee,privilege_type,is_grantable) AS (VALUES
+          (table_owner,table_owner,'EXECUTE',false),(table_owner,delivery_definer,'EXECUTE',false)),
+        actual AS (SELECT acl.grantor,acl.grantee,acl.privilege_type,acl.is_grantable
+          FROM pg_catalog.pg_proc function_row CROSS JOIN LATERAL pg_catalog.aclexplode(
+            COALESCE(function_row.proacl,pg_catalog.acldefault('f',function_row.proowner))) acl
+          WHERE function_row.oid=pg_catalog.to_regprocedure('enrollment_execution.delivery_worker_scope(uuid,text)'))
+        SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
+          UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) difference)
+      -- Every owned wrapper grants EXECUTE only to its owner and the registered runtime purpose.
+      AND NOT EXISTS(
+        WITH wrappers(signature,purpose,role_kind) AS (VALUES
+          ('enrollment_execution.read_grant_status_receipt(uuid,uuid)','EnrollmentGrantStatusRefresh','StatusRuntime'),
+          ('enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)','EnrollmentGrantStatusRefresh','StatusRuntime'),
+          ('enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)','EnrollmentGrantDelivery','DeliveryRuntime'),
+          ('enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)','EnrollmentGrantDelivery','DeliveryRuntime')),
+        expected AS (
+          SELECT pg_catalog.to_regprocedure(signature)::oid function_oid,delivery_definer grantor,delivery_definer grantee,'EXECUTE'::text privilege,false grantable FROM wrappers
+          UNION ALL SELECT pg_catalog.to_regprocedure(wrapper.signature)::oid,delivery_definer,role.oid,'EXECUTE',false
+          FROM wrappers wrapper JOIN enrollment_execution.role_reservations reservation
+            ON reservation.capability='EnrollmentGrantDelivery' AND reservation.role_kind=wrapper.role_kind
+          JOIN pg_catalog.pg_roles role ON role.oid=reservation.role_oid AND role.rolname=reservation.role_name
+          JOIN public."DirectoryDatabaseBindings" binding ON binding."LoginRole"=role.rolname
+            AND binding."Purpose"=wrapper.purpose AND binding."ContractVersion"=1 AND binding."PrincipalId" IS NULL),
+        actual AS (
+          SELECT function.oid function_oid,acl.grantor,acl.grantee,acl.privilege_type privilege,acl.is_grantable grantable
+          FROM wrappers wrapper JOIN pg_catalog.pg_proc function ON function.oid=pg_catalog.to_regprocedure(wrapper.signature)
+          CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(function.proacl,pg_catalog.acldefault('f',function.proowner))) acl)
+        SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
+          UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) differences)
+      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
+        WHERE relation.oid IN('public."DirectoryDatabaseBindings"'::regclass,
+            'enrollment_execution.role_reservations'::regclass)
+          AND (pg_catalog.has_table_privilege(delivery_definer,relation.oid,
+                 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+            OR pg_catalog.has_any_column_privilege(delivery_definer,relation.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
+      ;
+
+    -- BEGIN exact delivery structure
+    -- Compare complete sets, including relation identity, rather than trusting counts or names.
+    ok := ok AND NOT EXISTS(
+      WITH relations(schema_name,relation_name,suffix,command,expression_hash) AS (VALUES
+        ('public','Environments','environment','*','5029fb82c8841b4be18f827b6ff65014'),
+        ('public','DirectorySync','sync','*','5805dc21c720e17a48c0383e19d23d8c'),
+        ('public','DirectoryObjects','directory','*','5805dc21c720e17a48c0383e19d23d8c'),
+        ('public','Principals','principals','*','0f4a674f4193404082084f1ce226feca'),
+        ('public','Memberships','memberships','*','c822931371f49937c75216d468de40b6'),
+        ('public','EnrollmentGrantOperations','operations','*','398cc8e9984a655fc7a95d8ffa62f33f'),
+        ('public','Sessions','sessions','r','7423ae3d79d4de92662ecb4bd3658c57'),
+        ('public','Roles','roles','r','dd406c6c90bc4ad9cb66f14eb686cf93'),
+        ('public','RolePermissions','role_permissions','r','dd406c6c90bc4ad9cb66f14eb686cf93'),
+        ('public','Assignments','assignments','r','dd406c6c90bc4ad9cb66f14eb686cf93'),
+        ('public','Scopes','scopes','r','dd406c6c90bc4ad9cb66f14eb686cf93'),
+        ('public','DeviceTagAssignments','tag_assignments','r','dd406c6c90bc4ad9cb66f14eb686cf93'),
+        ('enrollment_execution','issue_results','results','r','16061f7fe3d1e9c443f8c14c547153db'),
+        ('enrollment_execution','mint_permits','permits','r','5fe22733f49093eedfbf3801bc66cdf5'),
+        ('enrollment_execution','execution_stops','stops','r','5fe22733f49093eedfbf3801bc66cdf5'),
+        ('enrollment_execution','sealed_envelopes','envelopes','*','5fe22733f49093eedfbf3801bc66cdf5'),
+        ('enrollment_execution','delivery_acks','acks','*','52b42cd1fccdb1036665767ed5daa164'),
+        ('enrollment_execution','status_observations','status','*','2c6961144391bc85dbfa6ef17383a52b')),
+      expected AS (
+        SELECT pg_catalog.to_regclass(pg_catalog.format('%I.%I',r.schema_name,r.relation_name))::oid relation_oid,
+          'enrollment_delivery_'||r.suffix||'_'||variant.suffix policy_name,
+          r.command,variant.permissive,ARRAY[delivery_definer] roles,r.expression_hash
+        FROM relations r CROSS JOIN (VALUES('allow',true),('limit',false)) variant(suffix,permissive)),
+      actual AS (
+        SELECT p.polrelid relation_oid,p.polname::text policy_name,p.polcmd::text command,
+          p.polpermissive permissive,p.polroles roles,
+          pg_catalog.md5(COALESCE(pg_catalog.pg_get_expr(p.polqual,p.polrelid),'')||'|'||
+            COALESCE(pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid),'')) expression_hash
+        FROM pg_catalog.pg_policy p
+        WHERE p.polname LIKE 'enrollment_delivery_%' OR delivery_definer=ANY(p.polroles)),
+      differences AS (
+        (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+        UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected))
+      SELECT 1 FROM differences
+      UNION ALL
+      SELECT 1 FROM relations r LEFT JOIN pg_catalog.pg_class c
+        ON c.oid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',r.schema_name,r.relation_name))
+      WHERE c.oid IS NULL OR c.relowner IS DISTINCT FROM table_owner OR c.relkind<>'r'
+        OR NOT c.relrowsecurity OR NOT c.relforcerowsecurity)
+    AND NOT EXISTS(
+      WITH expected(relation_oid,trigger_name) AS (VALUES
+        (pg_catalog.to_regclass('public."Environments"')::oid,'enrollment_delivery_environment_guard'),
+        (pg_catalog.to_regclass('public."DirectorySync"')::oid,'enrollment_delivery_sync_guard'),
+        (pg_catalog.to_regclass('public."DirectoryObjects"')::oid,'enrollment_delivery_directory_guard'),
+        (pg_catalog.to_regclass('public."Principals"')::oid,'enrollment_delivery_principal_guard'),
+        (pg_catalog.to_regclass('public."Memberships"')::oid,'enrollment_delivery_membership_guard'),
+        (pg_catalog.to_regclass('public."EnrollmentGrantOperations"')::oid,'enrollment_delivery_operation_guard')),
+      actual AS (
+        SELECT t.tgrelid relation_oid,t.tgname::text trigger_name FROM pg_catalog.pg_trigger t
+        WHERE t.tgname LIKE 'enrollment_delivery_%'
+          AND NOT t.tgisinternal AND t.tgenabled='O' AND t.tgtype=19
+          AND t.tgfoid=pg_catalog.to_regprocedure('enrollment_execution.reject_delivery_update()')
+          AND t.tgqual IS NULL AND t.tgnargs=0 AND t.tgattr=''::int2vector
+          AND t.tgoldtable IS NULL AND t.tgnewtable IS NULL AND t.tgconstraint=0
+          AND NOT t.tgdeferrable AND NOT t.tginitdeferred AND t.tgparentid=0),
+      all_named AS (SELECT t.tgrelid relation_oid,t.tgname::text trigger_name
+        FROM pg_catalog.pg_trigger t WHERE t.tgname LIKE 'enrollment_delivery_%'
+          OR t.tgfoid=pg_catalog.to_regprocedure('enrollment_execution.reject_delivery_update()'))
+      SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
+        UNION ALL (SELECT * FROM all_named EXCEPT SELECT * FROM expected)) differences);
+    -- END exact delivery structure
+
+    -- BEGIN generated delivery catalog slices
+    -- Source: audit-enrollment-delivery-bindings.sql
+    ok := ok AND (
+WITH target AS (
+  SELECT c.* FROM pg_catalog.pg_class c
+  WHERE c.oid=pg_catalog.to_regclass('public."DirectoryDatabaseBindings"')
+), owner_role AS (
+  SELECT oid FROM pg_catalog.pg_roles WHERE rolname=pg_catalog.pg_get_userbyid(table_owner)
+), expected_columns(position,name,type_oid,required,collation_oid,default_expression) AS (VALUES
+  (1,'LoginRole','name'::regtype::oid,true,'pg_catalog."C"'::regcollation::oid,NULL::text),
+  (2,'Purpose','text'::regtype::oid,true,'pg_catalog."default"'::regcollation::oid,NULL::text),
+  (3,'EnvironmentId','uuid'::regtype::oid,false,0::oid,NULL::text),
+  (4,'PrincipalId','uuid'::regtype::oid,false,0::oid,NULL::text),
+  (5,'ContractVersion','smallint'::regtype::oid,true,0::oid,'1')),
+actual_columns AS (
+  SELECT a.attnum::integer position,a.attname::text name,a.atttypid type_oid,a.attnotnull required,
+    a.attcollation collation_oid,pg_catalog.pg_get_expr(d.adbin,d.adrelid) default_expression
+  FROM pg_catalog.pg_attribute a JOIN target t ON t.oid=a.attrelid
+  LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+  WHERE a.attnum>0 AND NOT a.attisdropped
+), expected_indexes(name,definition) AS (VALUES
+  ('DirectoryDatabaseBindings_pkey','CREATE UNIQUE INDEX "DirectoryDatabaseBindings_pkey" ON public."DirectoryDatabaseBindings" USING btree ("LoginRole")'),
+  ('enrollment_execution_environment_login','CREATE UNIQUE INDEX enrollment_execution_environment_login ON public."DirectoryDatabaseBindings" USING btree ("EnvironmentId") WHERE ("Purpose" = ''EnrollmentGrantExecution''::text)'),
+  ('enrollment_grant_status_environment_login','CREATE UNIQUE INDEX enrollment_grant_status_environment_login ON public."DirectoryDatabaseBindings" USING btree ("EnvironmentId") WHERE ("Purpose" = ''EnrollmentGrantStatusRefresh''::text)'),
+  ('enrollment_grant_delivery_environment_login','CREATE UNIQUE INDEX enrollment_grant_delivery_environment_login ON public."DirectoryDatabaseBindings" USING btree ("EnvironmentId") WHERE ("Purpose" = ''EnrollmentGrantDelivery''::text)')),
+actual_indexes AS (
+  SELECT c.relname::text name,pg_catalog.pg_get_indexdef(c.oid) definition
+  FROM pg_catalog.pg_index i JOIN target t ON t.oid=i.indrelid
+  JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid
+), expected_constraints(name,definition) AS (VALUES
+  ('DirectoryDatabaseBindings_LoginRole_not_null','NOT NULL "LoginRole"'),
+  ('DirectoryDatabaseBindings_Purpose_not_null','NOT NULL "Purpose"'),
+  ('DirectoryDatabaseBindings_ContractVersion_not_null','NOT NULL "ContractVersion"'),
+  ('DirectoryDatabaseBindings_pkey','PRIMARY KEY ("LoginRole")'),
+  ('DirectoryDatabaseBindings_EnvironmentId_fkey','FOREIGN KEY ("EnvironmentId") REFERENCES public."Environments"("Id")'),
+  ('DirectoryDatabaseBindings_PrincipalId_fkey','FOREIGN KEY ("PrincipalId") REFERENCES public."Principals"("Id")'),
+  ('directory_database_binding_purpose',$definition$CHECK (("Purpose" = ANY (ARRAY['Api'::text, 'Connector'::text, 'EnrollmentGrantExecution'::text, 'EnrollmentGrantStatusRefresh'::text, 'EnrollmentGrantDelivery'::text])))$definition$),
+  ('directory_database_binding_shape',$definition$CHECK (((("Purpose" = 'Api'::text) AND ("ContractVersion" = 1) AND ("EnvironmentId" IS NULL) AND ("PrincipalId" IS NULL)) OR (("Purpose" = 'Connector'::text) AND ("ContractVersion" = 1) AND ("EnvironmentId" IS NOT NULL) AND ("PrincipalId" IS NOT NULL)) OR (("Purpose" = 'EnrollmentGrantExecution'::text) AND ("ContractVersion" = 2) AND ("EnvironmentId" IS NOT NULL) AND ("PrincipalId" IS NULL) AND ("EnvironmentId" <> '00000000-0000-0000-0000-000000000000'::uuid)) OR (("Purpose" = ANY (ARRAY['EnrollmentGrantStatusRefresh'::text, 'EnrollmentGrantDelivery'::text])) AND ("ContractVersion" = 1) AND ("EnvironmentId" IS NOT NULL) AND ("PrincipalId" IS NULL) AND ("EnvironmentId" <> '00000000-0000-0000-0000-000000000000'::uuid))))$definition$)),
+actual_constraints AS (
+  SELECT c.conname::text name,pg_catalog.pg_get_constraintdef(c.oid) definition
+  FROM pg_catalog.pg_constraint c JOIN target t ON t.oid=c.conrelid
+)
+SELECT COALESCE((SELECT
+  pg_catalog.current_setting('search_path') IN('pg_catalog,pg_temp','pg_catalog, pg_temp')
+  AND t.relowner=o.oid AND t.relkind='r' AND t.relpersistence='p' AND NOT t.relispartition
+  AND t.relam=(SELECT oid FROM pg_catalog.pg_am WHERE amname='heap')
+  AND NOT t.relrowsecurity AND NOT t.relforcerowsecurity AND t.relreplident='d'
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhrelid=t.oid OR i.inhparent=t.oid)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=t.oid AND a.attnum>0
+    AND (a.attisdropped OR a.atttypmod<>-1 OR a.attndims<>0 OR a.attidentity<>'' OR a.attgenerated<>'' OR NOT a.attislocal OR a.attinhcount<>0
+      OR a.atthasdef IS DISTINCT FROM (a.attnum=5)))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.conrelid=t.oid
+    AND (NOT c.convalidated OR NOT c.conenforced OR c.condeferrable OR c.condeferred OR NOT c.conislocal OR c.coninhcount<>0 OR c.conparentid<>0
+      OR c.conperiod OR c.connoinherit IS DISTINCT FROM (c.contype IN('p','f'))
+      OR c.contype IS DISTINCT FROM CASE
+        WHEN c.conname IN('DirectoryDatabaseBindings_LoginRole_not_null','DirectoryDatabaseBindings_Purpose_not_null','DirectoryDatabaseBindings_ContractVersion_not_null') THEN 'n'::"char"
+        WHEN c.conname='DirectoryDatabaseBindings_pkey' THEN 'p'::"char"
+        WHEN c.conname IN('DirectoryDatabaseBindings_EnvironmentId_fkey','DirectoryDatabaseBindings_PrincipalId_fkey') THEN 'f'::"char"
+        ELSE 'c'::"char" END
+      OR c.confdelsetcols IS NOT NULL
+      OR c.conkey IS DISTINCT FROM CASE c.conname
+        WHEN 'DirectoryDatabaseBindings_LoginRole_not_null' THEN ARRAY[1]::smallint[]
+        WHEN 'DirectoryDatabaseBindings_Purpose_not_null' THEN ARRAY[2]::smallint[]
+        WHEN 'DirectoryDatabaseBindings_ContractVersion_not_null' THEN ARRAY[5]::smallint[]
+        WHEN 'DirectoryDatabaseBindings_pkey' THEN ARRAY[1]::smallint[]
+        WHEN 'DirectoryDatabaseBindings_EnvironmentId_fkey' THEN ARRAY[3]::smallint[]
+        WHEN 'DirectoryDatabaseBindings_PrincipalId_fkey' THEN ARRAY[4]::smallint[]
+        WHEN 'directory_database_binding_purpose' THEN ARRAY[2]::smallint[]
+        WHEN 'directory_database_binding_shape' THEN ARRAY[2,5,3,4]::smallint[] END
+      OR (c.contype='p' AND c.conindid IS DISTINCT FROM pg_catalog.to_regclass('public."DirectoryDatabaseBindings_pkey"'))
+      OR (c.contype IN('c','n') AND c.conindid<>0)
+      OR (c.contype<>'f' AND (c.confrelid<>0 OR c.confkey IS NOT NULL
+        OR c.confmatchtype<>' ' OR c.confupdtype<>' ' OR c.confdeltype<>' '
+        OR c.conpfeqop IS NOT NULL OR c.conppeqop IS NOT NULL OR c.conffeqop IS NOT NULL))
+      OR (c.contype='f' AND (c.confmatchtype<>'s' OR c.confupdtype<>'a' OR c.confdeltype<>'a'
+        OR c.conpfeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+        OR c.conppeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+        OR c.conffeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+        OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_index referenced_index
+          WHERE referenced_index.indexrelid=c.conindid AND referenced_index.indrelid=c.confrelid AND referenced_index.indisprimary
+            AND referenced_index.indnkeyatts=1 AND referenced_index.indnatts=1)
+        OR c.confrelid IS DISTINCT FROM CASE c.conname WHEN 'DirectoryDatabaseBindings_EnvironmentId_fkey'
+          THEN pg_catalog.to_regclass('public."Environments"') ELSE pg_catalog.to_regclass('public."Principals"') END
+        OR c.confkey IS DISTINCT FROM ARRAY[(SELECT a.attnum FROM pg_catalog.pg_attribute a
+          WHERE a.attrelid=c.confrelid AND a.attname='Id' AND NOT a.attisdropped)]::smallint[]))))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid
+    WHERE i.indrelid=t.oid AND (NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive OR NOT i.indisunique
+      OR NOT i.indimmediate OR i.indisexclusion OR i.indnullsnotdistinct OR i.indisreplident OR i.indnkeyatts<>1 OR i.indnatts<>1
+      OR c.relowner<>o.oid OR c.relnamespace<>t.relnamespace OR c.relkind<>'i' OR c.relpersistence<>'p' OR c.relispartition
+      OR c.relam<>(SELECT oid FROM pg_catalog.pg_am WHERE amname='btree')
+      OR i.indisprimary IS DISTINCT FROM (c.relname='DirectoryDatabaseBindings_pkey')
+      OR i.indkey[0]<>CASE WHEN c.relname='DirectoryDatabaseBindings_pkey' THEN 1 ELSE 3 END
+      OR i.indexprs IS NOT NULL OR i.indoption[0]<>0
+      OR i.indcollation[0]<>CASE WHEN c.relname='DirectoryDatabaseBindings_pkey' THEN 'pg_catalog."C"'::regcollation::oid ELSE 0::oid END
+      OR i.indclass[0] IS DISTINCT FROM (SELECT op.oid FROM pg_catalog.pg_opclass op
+        JOIN pg_catalog.pg_namespace n ON n.oid=op.opcnamespace
+        WHERE n.nspname='pg_catalog' AND op.opcmethod=c.relam
+          AND op.opcname=CASE WHEN c.relname='DirectoryDatabaseBindings_pkey' THEN 'name_ops' ELSE 'uuid_ops' END)))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_rewrite r WHERE r.ev_class=t.oid)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid=t.oid)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint incoming WHERE incoming.confrelid=t.oid)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgrelid=t.oid
+    AND (NOT trigger.tgisinternal OR trigger.tgenabled<>'O'))
+  AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_columns EXCEPT SELECT * FROM actual_columns)
+    UNION ALL (SELECT * FROM actual_columns EXCEPT SELECT * FROM expected_columns)) difference)
+  AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_indexes EXCEPT SELECT * FROM actual_indexes)
+    UNION ALL (SELECT * FROM actual_indexes EXCEPT SELECT * FROM expected_indexes)) difference)
+  AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_constraints EXCEPT SELECT * FROM actual_constraints)
+    UNION ALL (SELECT * FROM actual_constraints EXCEPT SELECT * FROM expected_constraints)) difference)
+  FROM target t CROSS JOIN owner_role o),false) AS is_valid
+    );
+    -- Source: audit-enrollment-delivery-identity.sql
+    ok := ok AND (
+WITH plan_helper AS (
+  SELECT p.*,l.lanname FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+  WHERE p.oid=pg_catalog.to_regprocedure('public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[])')
+), plan_acl AS (
+  SELECT acl.* FROM plan_helper p CROSS JOIN LATERAL pg_catalog.aclexplode(
+    COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+), api_role AS (
+  SELECT r.* FROM pg_catalog.pg_roles r JOIN plan_acl acl ON acl.grantee=r.oid
+  WHERE (SELECT count(*)=1 FROM plan_acl) AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable
+    AND acl.grantor=(SELECT proowner FROM plan_helper)
+), identities AS (
+  SELECT owner_role.oid owner_oid,plan_role.oid plan_oid,execution_role.oid execution_oid,delivery_role.oid delivery_oid,api_role.oid api_oid
+  FROM pg_catalog.pg_roles owner_role,pg_catalog.pg_roles plan_role,
+    pg_catalog.pg_roles execution_role,pg_catalog.pg_roles delivery_role,api_role
+  WHERE owner_role.rolname=pg_catalog.pg_get_userbyid(table_owner)
+    AND plan_role.rolname=(SELECT pg_catalog.pg_get_userbyid(plan_helper.proowner) FROM pg_catalog.pg_proc plan_helper WHERE plan_helper.oid=pg_catalog.to_regprocedure('public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[])'))
+    AND execution_role.rolname=pg_catalog.pg_get_userbyid(definer) AND delivery_role.rolname=pg_catalog.pg_get_userbyid(delivery_definer)
+), helper AS (
+  SELECT p.*,l.lanname FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+  WHERE p.oid=pg_catalog.to_regprocedure('public.api_database_session()')
+), policy_contract(relation_name,policy_name,command,permissive,role_kind,expression_hash) AS (VALUES
+  ('Principals','enrollment_identity_principals_owner','*',true,'owner','fe2e7aa3a94b94b876d7713f1517686d'),
+  ('Sessions','enrollment_identity_sessions_owner','*',true,'owner','fe2e7aa3a94b94b876d7713f1517686d'),
+  ('Principals','enrollment_identity_principals_api_read','r',true,'public','708e22a476d7e00ff3ef7fe1441d8797'),
+  ('Sessions','enrollment_identity_sessions_api','*',true,'public','1531f6d3d3ecc2ac56c17328212a0876'),
+  ('Principals','enrollment_identity_principals_plan_read','r',true,'plan','ce24367043032e870e44adf501cef04d'),
+  ('Principals','enrollment_identity_principals_plan_lock','w',true,'plan','84083a1a51bc3bc63ab584fc5a6d9a90'),
+  ('Principals','enrollment_identity_principals_execution_read_allow','r',true,'execution','7950fb8cacb9394a69dade55f05249c1'),
+  ('Principals','enrollment_identity_principals_execution_read_limit','r',false,'execution','7950fb8cacb9394a69dade55f05249c1'),
+  ('Principals','enrollment_identity_principals_execution_lock_allow','w',true,'execution','de5073f7dedeff82c0ba31a4b0af9e3c'),
+  ('Principals','enrollment_identity_principals_execution_lock_limit','w',false,'execution','de5073f7dedeff82c0ba31a4b0af9e3c'),
+  ('Principals','enrollment_delivery_principals_allow','*',true,'delivery','0f4a674f4193404082084f1ce226feca'),
+  ('Principals','enrollment_delivery_principals_limit','*',false,'delivery','0f4a674f4193404082084f1ce226feca'),
+  ('Sessions','enrollment_delivery_sessions_allow','r',true,'delivery','7423ae3d79d4de92662ecb4bd3658c57'),
+  ('Sessions','enrollment_delivery_sessions_limit','r',false,'delivery','7423ae3d79d4de92662ecb4bd3658c57')
+), expected AS (
+  SELECT pg_catalog.to_regclass(pg_catalog.format('public.%I',p.relation_name))::oid relation_oid,
+    p.policy_name,p.command,p.permissive,
+    ARRAY[CASE p.role_kind WHEN 'owner' THEN i.owner_oid WHEN 'plan' THEN i.plan_oid
+      WHEN 'execution' THEN i.execution_oid WHEN 'delivery' THEN i.delivery_oid ELSE 0::oid END] roles,
+    p.expression_hash FROM policy_contract p CROSS JOIN identities i
+), actual AS (
+  SELECT p.polrelid relation_oid,p.polname::text policy_name,p.polcmd::text command,
+    p.polpermissive permissive,p.polroles roles,
+    pg_catalog.md5(COALESCE(pg_catalog.pg_get_expr(p.polqual,p.polrelid),'')||'|'||
+      COALESCE(pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid),'')) expression_hash
+  FROM pg_catalog.pg_policy p WHERE p.polrelid IN(
+    pg_catalog.to_regclass('public."Principals"'),pg_catalog.to_regclass('public."Sessions"'))
+    OR p.polname LIKE 'enrollment_identity_%'
+), expected_acl AS (
+  SELECT owner_oid grantor,owner_oid grantee,'EXECUTE'::text privilege_type,false is_grantable FROM identities
+  UNION ALL SELECT owner_oid,0::oid,'EXECUTE',false FROM identities
+), actual_acl AS (
+  SELECT acl.grantor,acl.grantee,acl.privilege_type,acl.is_grantable
+  FROM helper h CROSS JOIN LATERAL pg_catalog.aclexplode(
+    COALESCE(h.proacl,pg_catalog.acldefault('f',h.proowner))) acl
+), expected_plan_tables(schema_name,table_name,privilege_type,is_grantable) AS (VALUES
+  ('public','DirectoryDatabaseBindings','SELECT',false),
+  ('public','Environments','SELECT',false),('public','Environments','UPDATE',false),
+  ('public','DirectorySync','SELECT',false),('public','DirectorySync','UPDATE',false),
+  ('public','DirectoryObjects','SELECT',false),('public','DirectoryObjects','UPDATE',false),
+  ('public','Principals','SELECT',false),('public','Principals','UPDATE',false),
+  ('public','Memberships','SELECT',false),('public','Memberships','UPDATE',false)
+), actual_plan_tables AS (
+  SELECT n.nspname::text schema_name,c.relname::text table_name,acl.privilege_type,acl.is_grantable
+  FROM identities i CROSS JOIN pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+  CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(c.relacl,pg_catalog.acldefault('r',c.relowner))) acl
+  WHERE c.relkind IN('r','p','v','m','f') AND acl.grantee=i.plan_oid
+), expected_plan_functions(function_oid,privilege_type,is_grantable) AS (VALUES
+  (pg_catalog.to_regprocedure('public.has_environment_membership(uuid,uuid)')::oid,'EXECUTE',false),
+  (pg_catalog.to_regprocedure('public.directory_database_access(uuid,uuid)')::oid,'EXECUTE',false)
+), actual_plan_functions AS (
+  SELECT p.oid function_oid,acl.privilege_type,acl.is_grantable FROM identities i CROSS JOIN pg_catalog.pg_proc p
+  CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+  WHERE acl.grantee=i.plan_oid
+), actual_plan_schemas AS (
+  SELECT n.nspname::text schema_name,acl.privilege_type,acl.is_grantable FROM identities i CROSS JOIN pg_catalog.pg_namespace n
+  CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(n.nspacl,pg_catalog.acldefault('n',n.nspowner))) acl
+  WHERE acl.grantee=i.plan_oid
+), expected_plan_schemas(schema_name,privilege_type,is_grantable) AS (VALUES ('public','USAGE',false))
+SELECT COALESCE((SELECT
+  pg_catalog.current_setting('search_path') IN('pg_catalog,pg_temp','pg_catalog, pg_temp')
+  AND (SELECT count(DISTINCT id)=5 FROM unnest(ARRAY[i.owner_oid,i.plan_oid,i.execution_oid,i.delivery_oid,i.api_oid]) id)
+  AND (SELECT r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolcreatedb
+    AND NOT r.rolcreaterole AND NOT r.rolinherit AND NOT r.rolreplication FROM api_role r)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_roles r WHERE r.oid IN(i.plan_oid,i.execution_oid,i.delivery_oid)
+    AND (r.rolcanlogin OR r.rolsuper OR r.rolbypassrls OR r.rolcreatedb OR r.rolcreaterole OR r.rolinherit OR r.rolreplication))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m
+    WHERE m.member IN(i.plan_oid,i.execution_oid,i.delivery_oid,i.api_oid) OR m.roleid IN(i.plan_oid,i.execution_oid,i.delivery_oid,i.api_oid))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_database d WHERE d.datdba IN(i.plan_oid,i.api_oid))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspowner IN(i.plan_oid,i.api_oid))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c WHERE c.relowner IN(i.plan_oid,i.api_oid))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p WHERE p.proowner=i.api_oid)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c WHERE c.oid IN(
+      pg_catalog.to_regclass('public."DirectorySync"'),pg_catalog.to_regclass('public."DirectoryObjects"'))
+    AND (pg_catalog.has_table_privilege(i.api_oid,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+      OR pg_catalog.has_any_column_privilege(i.api_oid,c.oid,'INSERT,UPDATE,REFERENCES')))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) acl
+    WHERE n.nspname<>'public' AND acl.grantee=i.api_oid)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+    CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) acl WHERE n.nspname<>'public' AND acl.grantee=i.api_oid)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
+    WHERE n.nspname<>'public' AND acl.grantee=i.api_oid)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+    CROSS JOIN LATERAL pg_catalog.aclexplode(p.proacl) acl WHERE n.nspname<>'public' AND acl.grantee=i.api_oid)
+  AND NOT pg_catalog.has_database_privilege(i.plan_oid,pg_catalog.current_database(),'CREATE')
+  AND NOT pg_catalog.has_database_privilege(i.api_oid,pg_catalog.current_database(),'CREATE')
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname NOT IN('pg_catalog','information_schema')
+    AND n.nspname !~ '^pg_(toast|temp_)' AND (pg_catalog.has_schema_privilege(i.plan_oid,n.oid,'CREATE')
+      OR pg_catalog.has_schema_privilege(i.api_oid,n.oid,'CREATE')))
+  AND (SELECT count(*)=1 AND bool_and(p.proowner=i.plan_oid AND p.lanname='plpgsql' AND p.prosecdef
+    AND p.provolatile='v' AND p.proparallel='u' AND p.prokind='f' AND NOT p.proretset
+    AND NOT p.proisstrict AND NOT p.proleakproof AND p.prorettype='void'::regtype
+    AND p.pronargs=3 AND p.proargtypes='2950 2950 2951'::oidvector
+    AND p.proargnames=ARRAY['p_environment_id','p_directory_object_id','p_principal_ids']
+    AND p.proallargtypes IS NULL AND p.proargmodes IS NULL AND p.pronargdefaults=0
+    AND p.provariadic=0 AND p.prosupport=0 AND p.probin IS NULL AND p.prosqlbody IS NULL AND p.proargdefaults IS NULL
+    AND p.proconfig=ARRAY['search_path=pg_catalog, pg_temp']
+    AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.btrim(
+      pg_catalog.replace(p.prosrc,E'\r\n',E'\n'),E' \t\r\n'),'UTF8')),'hex')
+      ='b9a6befb836015684839e3c4483ec2944c74320e3ab4bc5bc2d3c971fa3dd2bd') FROM plan_helper p)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p WHERE p.proowner=i.plan_oid
+    AND p.oid<>pg_catalog.to_regprocedure('public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[])'))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
+    WHERE acl.grantee=i.plan_oid)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c
+    WHERE CASE WHEN c.relkind='S' THEN pg_catalog.has_sequence_privilege(i.plan_oid,c.oid,'USAGE,SELECT,UPDATE') ELSE false END)
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_default_acl defaults CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) acl
+    WHERE defaults.defaclobjtype IN('r','S') AND acl.grantee IN(0,i.plan_oid))
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname NOT IN('pg_catalog','information_schema') AND n.nspname !~ '^pg_(toast|temp_)'
+      AND c.relkind IN('r','p','v','m','f') AND (
+        pg_catalog.has_table_privilege(i.plan_oid,c.oid,'INSERT,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+        OR pg_catalog.has_any_column_privilege(i.plan_oid,c.oid,'INSERT,REFERENCES')
+        OR ((pg_catalog.has_table_privilege(i.plan_oid,c.oid,'SELECT') OR pg_catalog.has_any_column_privilege(i.plan_oid,c.oid,'SELECT'))
+          AND (n.nspname<>'public' OR c.relname NOT IN('DirectoryDatabaseBindings','Environments','DirectorySync','DirectoryObjects','Principals','Memberships')))
+        OR ((pg_catalog.has_table_privilege(i.plan_oid,c.oid,'UPDATE') OR pg_catalog.has_any_column_privilege(i.plan_oid,c.oid,'UPDATE'))
+          AND (n.nspname<>'public' OR c.relname NOT IN('Environments','DirectorySync','DirectoryObjects','Principals','Memberships')))))
+  AND (SELECT count(*)=2 AND bool_and(c.relowner=i.owner_oid AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity
+    AND NOT c.relispartition AND c.relpersistence='p')
+    FROM pg_catalog.pg_class c WHERE c.oid IN(pg_catalog.to_regclass('public."Principals"'),pg_catalog.to_regclass('public."Sessions"')))
+  AND (SELECT count(*)=1 AND bool_and(h.proowner=i.owner_oid AND h.lanname='sql' AND h.prosecdef
+    AND h.provolatile='s' AND h.proparallel='u' AND h.prokind='f' AND NOT h.proretset
+    AND NOT h.proisstrict AND NOT h.proleakproof AND h.prorettype='boolean'::regtype
+    AND h.pronargs=0 AND h.pronargdefaults=0 AND h.proargnames IS NULL AND h.proallargtypes IS NULL
+    AND h.proargmodes IS NULL AND h.provariadic=0
+    AND h.prosupport=0 AND h.probin IS NULL AND h.prosqlbody IS NULL AND h.proargdefaults IS NULL
+    AND h.proconfig=ARRAY['search_path=pg_catalog, pg_temp','row_security=on']
+    AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.btrim(
+      pg_catalog.regexp_replace(h.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')
+      ='e8f215ff4e1093baf33b3cf72040f99a96f2b5821f4b4593cf760d5a46658d84') FROM helper h)
+  AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected EXCEPT SELECT * FROM actual)
+    UNION ALL (SELECT * FROM actual EXCEPT SELECT * FROM expected)) difference)
+  AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_acl EXCEPT SELECT * FROM actual_acl)
+    UNION ALL (SELECT * FROM actual_acl EXCEPT SELECT * FROM expected_acl)) difference)
+  AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_plan_tables EXCEPT SELECT * FROM actual_plan_tables)
+    UNION ALL (SELECT * FROM actual_plan_tables EXCEPT SELECT * FROM expected_plan_tables)) difference)
+  AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_plan_functions EXCEPT SELECT * FROM actual_plan_functions)
+    UNION ALL (SELECT * FROM actual_plan_functions EXCEPT SELECT * FROM expected_plan_functions)) difference)
+  AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_plan_schemas EXCEPT SELECT * FROM actual_plan_schemas)
+    UNION ALL (SELECT * FROM actual_plan_schemas EXCEPT SELECT * FROM expected_plan_schemas)) difference)
+  FROM identities i),false) AS is_valid
+    );
+    -- Source: audit-owner-mapping-guard.sql
+    ok := ok AND (
+WITH owner_role AS (
+ SELECT oid FROM pg_catalog.pg_roles WHERE rolname=pg_catalog.pg_get_userbyid(table_owner)
+), target AS (
+ SELECT function.*,language.lanname FROM pg_catalog.pg_proc function
+ JOIN pg_catalog.pg_language language ON language.oid=function.prolang
+ WHERE function.oid=pg_catalog.to_regprocedure('public.guard_owner_mapping()')
+)
+SELECT COALESCE((SELECT
+ (SELECT count(*)=1 FROM owner_role)
+ AND target.proowner=(SELECT oid FROM owner_role) AND target.lanname='plpgsql'
+ AND target.prokind='f' AND NOT target.prosecdef AND NOT target.proisstrict AND NOT target.proleakproof
+ AND target.prosupport=0 AND target.provolatile='v' AND target.proparallel='u'
+ AND NOT target.proretset AND target.prorettype='pg_catalog.trigger'::regtype AND target.pronargs=0
+ AND target.proargtypes::text='' AND target.proallargtypes IS NULL AND target.proargnames IS NULL AND target.proargmodes IS NULL
+ AND target.pronargdefaults=0 AND target.proargdefaults IS NULL AND target.provariadic=0 AND target.probin IS NULL AND target.prosqlbody IS NULL
+ AND target.proconfig IS NOT DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp']::text[]
+ AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.btrim(
+   pg_catalog.regexp_replace(target.prosrc,'[[:space:]]+',' ','g')),'UTF8')),'hex')='b806f3a21438f9426cf600093bbf337c488db381aede0c038afb61351837d6af'
+ AND (SELECT count(*)=1 AND bool_and(acl.grantee=target.proowner AND acl.grantor=target.proowner
+   AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable)
+   FROM pg_catalog.aclexplode(COALESCE(target.proacl,pg_catalog.acldefault('f',target.proowner))) acl)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc extra WHERE extra.pronamespace=target.pronamespace
+   AND extra.proname=target.proname AND extra.oid<>target.oid)
+ AND (SELECT count(*)=1 AND bool_and(relation.relowner=(SELECT oid FROM owner_role))
+   FROM pg_catalog.pg_class relation WHERE relation.oid=pg_catalog.to_regclass('public."GroupMappings"'))
+ AND (SELECT count(*)=1 AND bool_and(trigger.tgrelid=pg_catalog.to_regclass('public."GroupMappings"')
+   AND trigger.tgfoid=target.oid AND trigger.tgname='no_owner_mapping' AND trigger.tgtype=23
+   AND trigger.tgenabled='O' AND NOT trigger.tgisinternal AND trigger.tgconstraint=0
+   AND NOT trigger.tgdeferrable AND NOT trigger.tginitdeferred AND trigger.tgnargs=0
+   AND trigger.tgattr::text='' AND trigger.tgargs=''::bytea AND trigger.tgqual IS NULL
+   AND trigger.tgoldtable IS NULL AND trigger.tgnewtable IS NULL AND trigger.tgparentid=0
+   AND trigger.tgconstrrelid=0 AND trigger.tgconstrindid=0)
+   FROM pg_catalog.pg_trigger trigger WHERE trigger.tgfoid=target.oid
+     OR (trigger.tgrelid=pg_catalog.to_regclass('public."GroupMappings"') AND NOT trigger.tgisinternal))
+ FROM target),false) AS is_valid
+    );
+    -- END generated delivery catalog slices
+
+    -- BEGIN delivery API binding identity
+    -- Catalog-only checks derive the sole API grantee. This owner-only data check
+    -- binds it to exactly one API identity and excludes a bound plan-lock owner.
+    ok := ok AND (SELECT count(*)=1 AND bool_and(binding."ContractVersion"=1
+      AND binding."EnvironmentId" IS NULL AND binding."PrincipalId" IS NULL AND role.oid IS NOT NULL
+      AND EXISTS(SELECT 1 FROM pg_catalog.pg_proc helper CROSS JOIN LATERAL pg_catalog.aclexplode(
+        COALESCE(helper.proacl,pg_catalog.acldefault('f',helper.proowner))) acl
+        WHERE helper.oid=pg_catalog.to_regprocedure('public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[])')
+          AND acl.grantee=role.oid AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable))
+      FROM public."DirectoryDatabaseBindings" binding LEFT JOIN pg_catalog.pg_roles role ON role.rolname=binding."LoginRole"
+      WHERE binding."Purpose"='Api')
+      AND NOT EXISTS(SELECT 1 FROM public."DirectoryDatabaseBindings" binding JOIN pg_catalog.pg_roles role ON role.rolname=binding."LoginRole"
+        JOIN pg_catalog.pg_proc helper ON helper.proowner=role.oid
+        WHERE helper.oid=pg_catalog.to_regprocedure('public.lock_enrollment_grant_plan_context(uuid,uuid,uuid[])'));
+    -- END delivery API binding identity
+
+    -- BEGIN generated delivery definer catalog
+    -- Source: audit-enrollment-delivery-definer.sql
+    ok := ok AND (
+WITH identity AS (
+ SELECT definer.oid definer_oid,owner.oid owner_oid,definer.*
+ FROM (SELECT pg_catalog.pg_get_userbyid(delivery_definer)::text definer_name,pg_catalog.pg_get_userbyid(table_owner)::text owner_name) supplied
+ LEFT JOIN pg_catalog.pg_roles definer ON definer.rolname=supplied.definer_name
+ LEFT JOIN pg_catalog.pg_roles owner ON owner.rolname=supplied.owner_name
+), function_names(signature,owned) AS (VALUES
+ ('enrollment_execution.read_grant_status_receipt(uuid,uuid)',true),
+ ('enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',true),
+ ('enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)',true),
+ ('enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)',true),
+ ('enrollment_execution.audit_delivery_privileges(uuid)',false),
+ ('enrollment_execution.delivery_worker_scope(uuid,text)',false),
+ ('enrollment_execution.read_status_refresh_receipt(uuid,uuid)',false),
+ ('enrollment_execution.record_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)',false),
+ ('enrollment_execution.lock_delivery_context(uuid,uuid,uuid,text)',false),
+ ('enrollment_execution.get_sealed_delivery(uuid,uuid,uuid,text)',false),
+ ('enrollment_execution.ack_sealed_delivery(uuid,uuid,uuid,text,bytea,bytea)',false),
+ ('enrollment_execution.has_computer_permission(uuid,uuid,uuid,uuid,text)',false),
+ ('enrollment_execution.scope_uuid(text)',false),
+ ('public.has_environment_membership(uuid,uuid)',false),
+ ('public.directory_database_access(uuid,uuid)',false)
+), functions AS (
+ SELECT pg_catalog.to_regprocedure(signature)::oid object_oid,owned,
+   CASE WHEN owned THEN identity.definer_oid ELSE identity.owner_oid END grantor
+ FROM function_names CROSS JOIN identity
+), table_names(schema_name,table_name,privilege) AS (VALUES
+ ('public','Roles','SELECT'),('public','RolePermissions','SELECT'),('public','Assignments','SELECT'),
+ ('public','Scopes','SELECT'),('public','DeviceTagAssignments','SELECT'),
+ ('enrollment_execution','issue_results','SELECT'),('enrollment_execution','mint_permits','SELECT'),
+ ('enrollment_execution','execution_stops','SELECT'),
+ ('enrollment_execution','sealed_envelopes','SELECT'),('enrollment_execution','sealed_envelopes','DELETE'),
+ ('enrollment_execution','delivery_acks','SELECT'),('enrollment_execution','delivery_acks','INSERT'),
+ ('enrollment_execution','status_observations','SELECT'),('enrollment_execution','status_observations','INSERT')
+), tables AS (
+ SELECT pg_catalog.to_regclass(pg_catalog.format('%I.%I',schema_name,table_name))::oid object_oid,privilege FROM table_names
+), column_names(table_name,privilege,names) AS (VALUES
+ ('Environments','SELECT',ARRAY['Id','Version']),('Environments','UPDATE',ARRAY['Name']),
+ ('DirectorySync','SELECT',ARRAY['EnvironmentId','Status','Generation','CompletedAt']),('DirectorySync','UPDATE',ARRAY['ErrorCode']),
+ ('DirectoryObjects','SELECT',ARRAY['EnvironmentId','Id','Generation','Kind','Department','ParentOuId','OuAncestry']),('DirectoryObjects','UPDATE',ARRAY['Name']),
+ ('Principals','SELECT',ARRAY['Id','OperatorId','Enabled']),('Principals','UPDATE',ARRAY['DisplayName']),
+ ('Memberships','SELECT',ARRAY['EnvironmentId','PrincipalId','Active']),('Memberships','UPDATE',ARRAY['Active']),
+ ('Sessions','SELECT',ARRAY['IdHash','PrincipalId','CreatedAt','LastSeenAt','ExpiresAt','StepUpAt','RevokedAt']),
+ ('EnrollmentGrantOperations','SELECT',ARRAY['EnvironmentId','Id','RequesterId','DirectoryObjectId','PlanHash','QueuedAt','AuthorizationNotAfter','RecipientKeyFingerprint','ServerDeviceId','MappingCreatedAt']),
+ ('EnrollmentGrantOperations','UPDATE',ARRAY['PlanHash'])
+), columns AS (
+ SELECT pg_catalog.to_regclass(pg_catalog.format('public.%I',source.table_name))::oid object_oid,
+   attribute.attnum::integer sub_id,source.privilege
+ FROM column_names source CROSS JOIN LATERAL pg_catalog.unnest(source.names) column_name
+ LEFT JOIN pg_catalog.pg_attribute attribute
+   ON attribute.attrelid=pg_catalog.to_regclass(pg_catalog.format('public.%I',source.table_name))
+   AND attribute.attname=column_name AND attribute.attnum>0 AND NOT attribute.attisdropped
+), expected_acl(class_id,object_oid,sub_id,grantor,privilege,grantable) AS (
+ SELECT 'pg_catalog.pg_proc'::regclass::oid,object_oid,0,grantor,'EXECUTE',false FROM functions
+ UNION ALL SELECT 'pg_catalog.pg_class'::regclass::oid,object_oid,0,identity.owner_oid,privilege,false FROM tables CROSS JOIN identity
+ UNION ALL SELECT 'pg_catalog.pg_class'::regclass::oid,object_oid,sub_id,identity.owner_oid,privilege,false FROM columns CROSS JOIN identity
+ UNION ALL SELECT 'pg_catalog.pg_namespace'::regclass::oid,namespace.oid,0,identity.owner_oid,'USAGE',false
+   FROM identity LEFT JOIN pg_catalog.pg_namespace namespace ON namespace.nspname='enrollment_execution'
+), actual_acl AS (
+ SELECT 'pg_catalog.pg_proc'::regclass::oid class_id,object.oid object_oid,0 sub_id,acl.grantor,acl.privilege_type privilege,acl.is_grantable grantable
+ FROM pg_catalog.pg_proc object CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(object.proacl,pg_catalog.acldefault('f',object.proowner))) acl
+ CROSS JOIN identity WHERE acl.grantee=identity.definer_oid
+ UNION ALL SELECT 'pg_catalog.pg_class'::regclass::oid,object.oid,0,acl.grantor,acl.privilege_type,acl.is_grantable
+ FROM pg_catalog.pg_class object CROSS JOIN LATERAL pg_catalog.aclexplode(object.relacl) acl CROSS JOIN identity WHERE acl.grantee=identity.definer_oid
+ UNION ALL SELECT 'pg_catalog.pg_class'::regclass::oid,attribute.attrelid,attribute.attnum::integer,acl.grantor,acl.privilege_type,acl.is_grantable
+ FROM pg_catalog.pg_attribute attribute CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) acl CROSS JOIN identity WHERE acl.grantee=identity.definer_oid
+ UNION ALL SELECT 'pg_catalog.pg_namespace'::regclass::oid,namespace.oid,0,acl.grantor,acl.privilege_type,acl.is_grantable
+ FROM pg_catalog.pg_namespace namespace CROSS JOIN LATERAL pg_catalog.aclexplode(namespace.nspacl) acl CROSS JOIN identity WHERE acl.grantee=identity.definer_oid
+), expected_dependencies AS (
+ SELECT DISTINCT (SELECT oid FROM pg_catalog.pg_database WHERE datname=pg_catalog.current_database()) dbid,
+   acl.class_id classid,acl.object_oid objid,acl.sub_id objsubid,'a'::"char" deptype FROM expected_acl acl
+ WHERE NOT(acl.class_id='pg_catalog.pg_proc'::regclass AND acl.object_oid IN(SELECT object_oid FROM functions WHERE owned))
+ UNION ALL SELECT (SELECT oid FROM pg_catalog.pg_database WHERE datname=pg_catalog.current_database()),
+   'pg_catalog.pg_proc'::regclass::oid,object_oid,0,'o'::"char" FROM functions WHERE owned
+), actual_dependencies AS (
+ SELECT dependency.dbid,dependency.classid,dependency.objid,dependency.objsubid,dependency.deptype
+ FROM pg_catalog.pg_shdepend dependency CROSS JOIN identity
+ WHERE dependency.refclassid='pg_catalog.pg_authid'::regclass AND dependency.refobjid=identity.definer_oid AND dependency.deptype IN('a','o')
+), relations AS (
+ SELECT relation.* FROM pg_catalog.pg_class relation JOIN pg_catalog.pg_namespace namespace ON namespace.oid=relation.relnamespace
+ WHERE namespace.nspname NOT IN('pg_catalog','information_schema') AND namespace.nspname NOT LIKE 'pg_toast%'
+   AND namespace.nspname NOT LIKE 'pg_temp_%'
+)
+SELECT COALESCE((SELECT
+ identity.definer_oid IS NOT NULL AND identity.owner_oid IS NOT NULL AND identity.definer_oid<>identity.owner_oid
+ AND NOT(identity.rolcanlogin OR identity.rolsuper OR identity.rolbypassrls OR identity.rolcreatedb OR identity.rolcreaterole OR identity.rolinherit OR identity.rolreplication)
+ AND (SELECT count(*)=1 AND bool_and(namespace.nspowner=identity.owner_oid) FROM pg_catalog.pg_namespace namespace WHERE namespace.nspname='enrollment_execution')
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace namespace CROSS JOIN LATERAL pg_catalog.aclexplode(namespace.nspacl) acl
+   WHERE namespace.nspname='enrollment_execution' AND acl.grantee=0)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members membership WHERE membership.member=identity.definer_oid OR membership.roleid=identity.definer_oid)
+ AND (SELECT count(*)=15 AND bool_and(function.oid IS NOT NULL AND function.proowner=expected.grantor)
+   FROM functions expected LEFT JOIN pg_catalog.pg_proc function ON function.oid=expected.object_oid)
+ AND (SELECT count(*)=14 AND bool_and(object_oid IS NOT NULL) FROM tables)
+ AND (SELECT count(*)=42 AND bool_and(object_oid IS NOT NULL AND sub_id IS NOT NULL) FROM columns)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_acl EXCEPT SELECT * FROM actual_acl)
+   UNION ALL (SELECT * FROM actual_acl EXCEPT SELECT * FROM expected_acl)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_dependencies EXCEPT SELECT * FROM actual_dependencies)
+   UNION ALL (SELECT * FROM actual_dependencies EXCEPT SELECT * FROM expected_dependencies)) differences)
+ AND NOT pg_catalog.has_database_privilege(identity.definer_oid,pg_catalog.current_database(),'CREATE')
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace namespace
+   WHERE namespace.nspname NOT IN('pg_catalog','information_schema') AND namespace.nspname !~ '^pg_(toast|temp_)'
+     AND pg_catalog.has_schema_privilege(identity.definer_oid,namespace.oid,'CREATE'))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace namespace
+   WHERE namespace.nspname NOT IN('pg_catalog','information_schema','public','enrollment_execution') AND namespace.nspname !~ '^pg_(toast|temp_)'
+     AND pg_catalog.has_schema_privilege(identity.definer_oid,namespace.oid,'USAGE'))
+ AND NOT EXISTS(SELECT 1 FROM relations relation CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) acl WHERE acl.grantee=0)
+ AND NOT EXISTS(SELECT 1 FROM relations relation JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid=relation.oid
+   CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) acl WHERE acl.grantee=0)
+ AND NOT EXISTS(SELECT 1 FROM relations relation CROSS JOIN (VALUES('SELECT'),('INSERT'),('UPDATE'),('DELETE'),('TRUNCATE'),('REFERENCES'),('TRIGGER'),('MAINTAIN')) privilege(name)
+   WHERE relation.relkind IN('r','p','v','m','f') AND pg_catalog.has_table_privilege(identity.definer_oid,relation.oid,privilege.name)
+     AND NOT EXISTS(SELECT 1 FROM tables expected WHERE expected.object_oid=relation.oid AND expected.privilege=privilege.name))
+ AND NOT EXISTS(SELECT 1 FROM relations relation JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid=relation.oid AND attribute.attnum>0 AND NOT attribute.attisdropped
+   CROSS JOIN (VALUES('SELECT'),('INSERT'),('UPDATE'),('REFERENCES')) privilege(name)
+   WHERE relation.relkind IN('r','p','v','m','f') AND pg_catalog.has_column_privilege(identity.definer_oid,relation.oid,attribute.attnum,privilege.name)
+     AND NOT EXISTS(SELECT 1 FROM tables expected WHERE expected.object_oid=relation.oid AND expected.privilege=privilege.name)
+     AND NOT EXISTS(SELECT 1 FROM columns expected WHERE expected.object_oid=relation.oid AND expected.sub_id=attribute.attnum AND expected.privilege=privilege.name))
+ AND NOT EXISTS(SELECT 1 FROM relations relation WHERE CASE WHEN relation.relkind='S' THEN pg_catalog.has_sequence_privilege(identity.definer_oid,relation.oid,'SELECT,UPDATE,USAGE') ELSE false END)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_namespace namespace ON namespace.oid=function.pronamespace
+   WHERE namespace.nspname NOT IN('pg_catalog','information_schema') AND namespace.nspname NOT LIKE 'pg_toast%' AND namespace.nspname NOT LIKE 'pg_temp_%'
+     AND pg_catalog.has_function_privilege(identity.definer_oid,function.oid,'EXECUTE')
+     AND function.oid IS DISTINCT FROM pg_catalog.to_regprocedure('public.api_database_session()')
+     AND NOT EXISTS(SELECT 1 FROM functions expected WHERE expected.object_oid=function.oid))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function JOIN pg_catalog.pg_namespace namespace ON namespace.oid=function.pronamespace
+   CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(function.proacl,pg_catalog.acldefault('f',function.proowner))) acl
+   WHERE namespace.nspname NOT IN('pg_catalog','information_schema') AND namespace.nspname !~ '^pg_(toast|temp_)'
+     AND acl.grantee=0 AND function.oid IS DISTINCT FROM pg_catalog.to_regprocedure('public.api_database_session()'))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_default_acl defaults CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) acl
+   WHERE acl.grantee IN(0,identity.definer_oid))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_largeobject_metadata object WHERE pg_catalog.has_largeobject_privilege(identity.definer_oid,object.oid,'SELECT,UPDATE'))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_parameter_acl parameter CROSS JOIN LATERAL pg_catalog.aclexplode(parameter.paracl) acl
+   WHERE acl.grantee IN(0,identity.definer_oid))
+ FROM identity),false) AS is_valid
+    );
+    -- END generated delivery definer catalog
+
+    -- BEGIN generated delivery status structure catalog
+    -- Source: audit-enrollment-delivery-status.sql
+    ok := ok AND (
+WITH target AS (
+ SELECT * FROM pg_catalog.pg_class WHERE oid=pg_catalog.to_regclass('enrollment_execution.status_observations')
+), owner_role AS (
+ SELECT oid FROM pg_catalog.pg_roles WHERE rolname=pg_catalog.pg_get_userbyid(table_owner)
+), expected_columns(position,name,type_oid,required,collation_oid) AS (VALUES
+ (1,'observation_id',2950::oid,true,0::oid),(2,'environment_id',2950,true,0),(3,'operation_id',2950,true,0),
+ (4,'sequence',20,true,0),(5,'state',25,true,'pg_catalog."default"'::regcollation::oid),
+ (6,'diagnostic',25,true,'pg_catalog."default"'::regcollation::oid),
+ (7,'private_observed_at',1184,false,0),(8,'private_state_changed_at',1184,false,0),
+ (9,'recorded_at',1184,true,0),(10,'available_until',1184,false,0)
+), actual_columns AS (
+ SELECT a.attnum::integer,a.attname::text,a.atttypid,a.attnotnull,a.attcollation
+ FROM pg_catalog.pg_attribute a JOIN target t ON t.oid=a.attrelid WHERE a.attnum>0 AND NOT a.attisdropped
+), expected_constraints(name,type,keys,definition) AS (VALUES
+ ('status_observations_observation_id_not_null','n',ARRAY[1]::smallint[],'NOT NULL observation_id'),
+ ('status_observations_environment_id_not_null','n',ARRAY[2]::smallint[],'NOT NULL environment_id'),
+ ('status_observations_operation_id_not_null','n',ARRAY[3]::smallint[],'NOT NULL operation_id'),
+ ('status_observations_sequence_not_null','n',ARRAY[4]::smallint[],'NOT NULL sequence'),
+ ('status_observations_state_not_null','n',ARRAY[5]::smallint[],'NOT NULL state'),
+ ('status_observations_diagnostic_not_null','n',ARRAY[6]::smallint[],'NOT NULL diagnostic'),
+ ('status_observations_recorded_at_not_null','n',ARRAY[9]::smallint[],'NOT NULL recorded_at'),
+ ('status_observations_pkey','p',ARRAY[1]::smallint[],'PRIMARY KEY (observation_id)'),
+ ('status_observations_operation_id_sequence_key','u',ARRAY[3,4]::smallint[],'UNIQUE (operation_id, sequence)'),
+ ('status_observations_operation_id_fkey','f',ARRAY[3]::smallint[],'FOREIGN KEY (operation_id) REFERENCES enrollment_execution.issue_results(operation_id) ON DELETE RESTRICT'),
+ ('status_observations_observation_id_check','c',ARRAY[1]::smallint[],$d$CHECK (observation_id <> '00000000-0000-0000-0000-000000000000'::uuid)$d$),
+ ('status_observations_environment_id_check','c',ARRAY[2]::smallint[],$d$CHECK (environment_id <> '00000000-0000-0000-0000-000000000000'::uuid)$d$),
+ ('status_observations_sequence_check','c',ARRAY[4]::smallint[],'CHECK (sequence > 0)'),
+ ('status_observations_recorded_at_check','c',ARRAY[9]::smallint[],'CHECK (isfinite(recorded_at))'),
+ ('status_observations_state_check','c',ARRAY[5]::smallint[],$d$CHECK (state = ANY (ARRAY['Available'::text, 'Unknown'::text, 'Consumed'::text, 'Revoked'::text, 'Expired'::text]))$d$),
+ ('status_observation_diagnostic','c',ARRAY[5,6]::smallint[],$d$CHECK (state = 'Unknown'::text AND (diagnostic = ANY (ARRAY['ResponseUnavailable'::text, 'ConnectionUnavailable'::text, 'ReceiptUnavailable'::text, 'OperationConflict'::text, 'PrivilegeAuditFailed'::text])) OR state <> 'Unknown'::text AND diagnostic = 'None'::text)$d$),
+ ('status_observation_shape','c',ARRAY[5,7,8,10,9]::smallint[],$d$CHECK (state = 'Unknown'::text AND private_observed_at IS NULL AND private_state_changed_at IS NULL AND available_until IS NULL OR state <> 'Unknown'::text AND private_observed_at IS NOT NULL AND isfinite(private_observed_at) AND private_observed_at <= recorded_at AND (state = 'Available'::text AND private_state_changed_at IS NULL AND available_until IS NOT NULL AND isfinite(available_until) AND available_until > recorded_at AND (available_until - private_observed_at) <= '00:00:15'::interval OR state = 'Expired'::text AND private_state_changed_at IS NULL AND available_until IS NULL OR (state = ANY (ARRAY['Consumed'::text, 'Revoked'::text])) AND private_state_changed_at IS NOT NULL AND isfinite(private_state_changed_at) AND private_state_changed_at <= private_observed_at AND available_until IS NULL))$d$)
+), actual_constraints AS (
+ SELECT c.conname::text,c.contype::text,c.conkey,pg_catalog.pg_get_constraintdef(c.oid,true)
+ FROM pg_catalog.pg_constraint c JOIN target t ON t.oid=c.conrelid
+), expected_indexes(name,keys,primary_index) AS (VALUES
+ ('status_observations_pkey','1',true),('status_observations_operation_id_sequence_key','3 4',false)
+), actual_indexes AS (
+ SELECT c.relname::text,i.indkey::text,i.indisprimary FROM pg_catalog.pg_index i JOIN target t ON t.oid=i.indrelid
+ JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid
+), foreign_key AS (
+ SELECT c.* FROM pg_catalog.pg_constraint c JOIN target t ON t.oid=c.conrelid WHERE c.conname='status_observations_operation_id_fkey'
+), expected_user_triggers(name,function_oid,type) AS (VALUES
+ ('status_observations_guard',pg_catalog.to_regprocedure('enrollment_execution.guard_status_observation()')::oid,7),
+ ('status_observations_immutable',pg_catalog.to_regprocedure('enrollment_execution.reject_history_mutation()')::oid,27)
+), expected_fk_triggers(relation_oid,function_oid,type) AS (
+ SELECT t.oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_ins"()')::oid,5 FROM target t
+ UNION ALL SELECT t.oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_upd"()')::oid,17 FROM target t
+ UNION ALL SELECT pg_catalog.to_regclass('enrollment_execution.issue_results')::oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_restrict_del"()')::oid,9
+ UNION ALL SELECT pg_catalog.to_regclass('enrollment_execution.issue_results')::oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_noaction_upd"()')::oid,17
+)
+SELECT COALESCE((SELECT
+ pg_catalog.current_setting('search_path') IN('pg_catalog,pg_temp','pg_catalog, pg_temp')
+ AND t.relowner=o.oid AND t.relkind='r' AND t.relpersistence='p' AND NOT t.relispartition
+ AND t.relam=(SELECT oid FROM pg_catalog.pg_am WHERE amname='heap')
+ AND t.relrowsecurity AND t.relforcerowsecurity AND t.relreplident='d'
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhrelid=t.oid OR i.inhparent=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_rewrite r WHERE r.ev_class=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.confrelid=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=t.oid AND a.attnum>0
+   AND (a.attisdropped OR a.atttypmod<>-1 OR a.attndims<>0 OR a.atthasdef OR a.attidentity<>'' OR a.attgenerated<>'' OR NOT a.attislocal OR a.attinhcount<>0))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attrdef d WHERE d.adrelid=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_columns EXCEPT SELECT * FROM actual_columns)
+   UNION ALL (SELECT * FROM actual_columns EXCEPT SELECT * FROM expected_columns)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_constraints EXCEPT SELECT * FROM actual_constraints)
+   UNION ALL (SELECT * FROM actual_constraints EXCEPT SELECT * FROM expected_constraints)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_indexes EXCEPT SELECT * FROM actual_indexes)
+   UNION ALL (SELECT * FROM actual_indexes EXCEPT SELECT * FROM expected_indexes)) differences)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.conrelid=t.oid
+   AND (NOT c.convalidated OR NOT c.conenforced OR c.condeferrable OR c.condeferred OR NOT c.conislocal OR c.coninhcount<>0 OR c.conparentid<>0
+     OR c.conperiod OR c.connoinherit IS DISTINCT FROM (c.contype IN('p','u','f')) OR c.confdelsetcols IS NOT NULL
+     OR (c.contype IN('c','n') AND c.conindid<>0)
+     OR (c.contype IN('p','u') AND c.conindid IS DISTINCT FROM pg_catalog.to_regclass(pg_catalog.format('enrollment_execution.%I',c.conname)))
+     OR (c.contype<>'f' AND (c.confrelid<>0 OR c.confkey IS NOT NULL OR c.confmatchtype<>' ' OR c.confupdtype<>' ' OR c.confdeltype<>' '
+       OR c.conpfeqop IS NOT NULL OR c.conppeqop IS NOT NULL OR c.conffeqop IS NOT NULL))
+     OR (c.contype='f' AND (c.confrelid IS DISTINCT FROM pg_catalog.to_regclass('enrollment_execution.issue_results')
+       OR c.confkey IS DISTINCT FROM ARRAY[1]::smallint[] OR c.conindid IS DISTINCT FROM pg_catalog.to_regclass('enrollment_execution.issue_results_pkey')
+       OR c.confmatchtype<>'s' OR c.confupdtype<>'a' OR c.confdeltype<>'r'
+       OR c.conpfeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conppeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conffeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]))))
+ AND EXISTS(SELECT 1 FROM foreign_key fk JOIN pg_catalog.pg_index referenced ON referenced.indexrelid=fk.conindid
+   WHERE referenced.indrelid=fk.confrelid AND referenced.indisprimary AND referenced.indisunique
+     AND referenced.indisvalid AND referenced.indisready AND referenced.indislive AND NOT referenced.indcheckxmin
+     AND referenced.indnkeyatts=1 AND referenced.indnatts=1 AND referenced.indkey::text='1'
+     AND referenced.indexprs IS NULL AND referenced.indpred IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid WHERE i.indrelid=t.oid
+   AND (NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive OR i.indcheckxmin OR NOT i.indisunique OR NOT i.indimmediate OR i.indisexclusion
+     OR i.indnullsnotdistinct OR i.indisreplident OR i.indisclustered OR i.indnkeyatts<>i.indnatts OR i.indexprs IS NOT NULL OR i.indpred IS NOT NULL
+     OR c.relowner<>o.oid OR c.relnamespace<>t.relnamespace OR c.relkind<>'i' OR c.relpersistence<>'p' OR c.relispartition
+     OR c.relam<>(SELECT oid FROM pg_catalog.pg_am WHERE amname='btree')
+     OR i.indnatts<>CASE WHEN i.indisprimary THEN 1 ELSE 2 END
+     OR EXISTS(SELECT 1 FROM pg_catalog.generate_series(0,i.indnatts-1) position
+       WHERE i.indoption[position] IS DISTINCT FROM 0::smallint OR i.indcollation[position] IS DISTINCT FROM 0::oid
+         OR i.indclass[position] IS DISTINCT FROM (SELECT op.oid FROM pg_catalog.pg_opclass op JOIN pg_catalog.pg_namespace n ON n.oid=op.opcnamespace
+           WHERE n.nspname='pg_catalog' AND op.opcmethod=c.relam AND op.opcname=CASE WHEN position=0 THEN 'uuid_ops' ELSE 'int8_ops' END))))
+ AND (SELECT count(*)=2 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgrelid=t.oid AND NOT trigger.tgisinternal)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgrelid=t.oid AND NOT trigger.tgisinternal
+   AND (NOT EXISTS(SELECT 1 FROM expected_user_triggers e WHERE e.name=trigger.tgname AND e.function_oid=trigger.tgfoid AND e.type=trigger.tgtype)
+     OR trigger.tgconstraint<>0 OR trigger.tgconstrrelid<>0 OR trigger.tgconstrindid<>0))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgfoid=pg_catalog.to_regprocedure('enrollment_execution.guard_status_observation()') AND trigger.tgrelid<>t.oid)
+ AND (SELECT count(*)=4 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT * FROM expected_fk_triggers EXCEPT
+   SELECT trigger.tgrelid,trigger.tgfoid,trigger.tgtype::integer FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key)
+   AND (NOT trigger.tgisinternal OR NOT EXISTS(SELECT 1 FROM expected_fk_triggers e WHERE e.relation_oid=trigger.tgrelid AND e.function_oid=trigger.tgfoid AND e.type=trigger.tgtype)
+     OR trigger.tgconstrindid IS DISTINCT FROM (SELECT conindid FROM foreign_key)
+     OR trigger.tgconstrrelid IS DISTINCT FROM CASE WHEN trigger.tgrelid=t.oid THEN (SELECT confrelid FROM foreign_key) ELSE t.oid END))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgrelid=t.oid AND trigger.tgisinternal
+   AND trigger.tgconstraint IS DISTINCT FROM (SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE (trigger.tgrelid=t.oid OR trigger.tgconstraint=(SELECT oid FROM foreign_key))
+   AND (trigger.tgenabled<>'O' OR trigger.tgdeferrable OR trigger.tginitdeferred OR trigger.tgnargs<>0 OR trigger.tgattr::text<>''
+     OR trigger.tgargs<>''::bytea OR trigger.tgqual IS NOT NULL OR trigger.tgoldtable IS NOT NULL OR trigger.tgnewtable IS NOT NULL OR trigger.tgparentid<>0))
+ FROM target t CROSS JOIN owner_role o),false) AS is_valid
+    );
+    -- END generated delivery status structure catalog
+
+    -- BEGIN generated delivery stop structure catalog
+    -- Source: audit-enrollment-delivery-stops.sql
+    ok := ok AND (
+WITH target AS (
+ SELECT * FROM pg_catalog.pg_class WHERE oid=pg_catalog.to_regclass('enrollment_execution.execution_stops')
+), owner_role AS (
+ SELECT oid FROM pg_catalog.pg_roles WHERE rolname=pg_catalog.pg_get_userbyid(table_owner)
+), expected_columns(position,name,type_oid,required,collation_oid) AS (VALUES
+ (1,'operation_id',2950::oid,true,0::oid),(2,'reason',25,true,'pg_catalog."default"'::regcollation::oid),
+ (3,'recorded_at',1184,true,0)), actual_columns AS (
+ SELECT a.attnum::integer,a.attname::text,a.atttypid,a.attnotnull,a.attcollation
+ FROM pg_catalog.pg_attribute a JOIN target t ON t.oid=a.attrelid WHERE a.attnum>0 AND NOT a.attisdropped
+), expected_constraints(name,type,keys,definition) AS (VALUES
+ ('execution_stops_operation_id_not_null','n',ARRAY[1]::smallint[],'NOT NULL operation_id'),
+ ('execution_stops_reason_not_null','n',ARRAY[2]::smallint[],'NOT NULL reason'),
+ ('execution_stops_recorded_at_not_null','n',ARRAY[3]::smallint[],'NOT NULL recorded_at'),
+ ('execution_stops_pkey','p',ARRAY[1]::smallint[],'PRIMARY KEY (operation_id)'),
+ ('execution_stops_operation_id_fkey','f',ARRAY[1]::smallint[],'FOREIGN KEY (operation_id) REFERENCES public."EnrollmentGrantOperations"("Id") ON DELETE RESTRICT'),
+ ('execution_stops_reason_check','c',ARRAY[2]::smallint[],$d$CHECK (reason = ANY (ARRAY['AuthorizationChanged'::text, 'AuthorizationExpired'::text, 'StoredDataInvalid'::text, 'OperationConflict'::text, 'ReceiptMismatch'::text]))$d$),
+ ('execution_stops_recorded_at_check','c',ARRAY[3]::smallint[],'CHECK (isfinite(recorded_at))'),
+ ('execution_stops_consistent','t',NULL::smallint[],'TRIGGER DEFERRABLE INITIALLY DEFERRED')), actual_constraints AS (
+ SELECT c.conname::text,c.contype::text,c.conkey,pg_catalog.pg_get_constraintdef(c.oid,true)
+ FROM pg_catalog.pg_constraint c JOIN target t ON t.oid=c.conrelid
+), expected_indexes(name,keys,primary_index) AS (VALUES
+ ('execution_stops_pkey','1',true)
+), actual_indexes AS (
+ SELECT c.relname::text,i.indkey::text,i.indisprimary FROM pg_catalog.pg_index i JOIN target t ON t.oid=i.indrelid
+ JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid
+), foreign_key AS (
+ SELECT c.* FROM pg_catalog.pg_constraint c JOIN target t ON t.oid=c.conrelid WHERE c.conname='execution_stops_operation_id_fkey'
+), user_trigger_names(table_name,name,signature,type,deferred) AS (VALUES
+ ('execution_stops','execution_stops_boundary','enrollment_execution.lock_execution_stop_boundary()',7,false),
+ ('mint_permits','mint_permits_stop_boundary','enrollment_execution.lock_execution_stop_boundary()',7,false),
+ ('execution_stops','execution_stops_immutable','enrollment_execution.reject_history_mutation()',27,false),
+ ('execution_stops','execution_stops_consistent','enrollment_execution.validate_execution_stop()',5,true),
+ ('mint_permits','mint_permits_stop_consistent','enrollment_execution.validate_execution_stop()',5,true),
+ ('issue_results','issue_results_stop_consistent','enrollment_execution.validate_execution_stop()',5,true),
+ ('delivery_acks','delivery_acks_stop_consistent','enrollment_execution.validate_execution_stop()',5,true)
+), expected_user_triggers AS (
+ SELECT pg_catalog.to_regclass(pg_catalog.format('enrollment_execution.%I',table_name))::oid relation_oid,
+   name,pg_catalog.to_regprocedure(signature)::oid function_oid,type,deferred FROM user_trigger_names
+), actual_user_triggers AS (
+ SELECT trigger.* FROM pg_catalog.pg_trigger trigger
+ WHERE NOT trigger.tgisinternal AND (trigger.tgrelid=pg_catalog.to_regclass('enrollment_execution.execution_stops')
+   OR trigger.tgname IN(SELECT name FROM user_trigger_names)
+   OR trigger.tgfoid IN(pg_catalog.to_regprocedure('enrollment_execution.lock_execution_stop_boundary()'),pg_catalog.to_regprocedure('enrollment_execution.validate_execution_stop()')))), expected_fk_triggers(relation_oid,function_oid,type) AS (
+ SELECT t.oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_ins"()')::oid,5 FROM target t
+ UNION ALL SELECT t.oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_upd"()')::oid,17 FROM target t
+ UNION ALL SELECT pg_catalog.to_regclass('public."EnrollmentGrantOperations"')::oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_restrict_del"()')::oid,9
+ UNION ALL SELECT pg_catalog.to_regclass('public."EnrollmentGrantOperations"')::oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_noaction_upd"()')::oid,17
+)
+SELECT COALESCE((SELECT
+ pg_catalog.current_setting('search_path') IN('pg_catalog,pg_temp','pg_catalog, pg_temp')
+ AND t.relowner=o.oid AND t.relkind='r' AND t.relpersistence='p' AND NOT t.relispartition
+ AND t.relam=(SELECT oid FROM pg_catalog.pg_am WHERE amname='heap')
+ AND t.relrowsecurity AND t.relforcerowsecurity AND t.relreplident='d'
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhrelid=t.oid OR i.inhparent=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_rewrite r WHERE r.ev_class=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.confrelid=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=t.oid AND a.attnum>0
+   AND (a.attisdropped OR a.atttypmod<>-1 OR a.attndims<>0 OR a.atthasdef OR a.attidentity<>'' OR a.attgenerated<>'' OR NOT a.attislocal OR a.attinhcount<>0))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attrdef d WHERE d.adrelid=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_columns EXCEPT SELECT * FROM actual_columns)
+   UNION ALL (SELECT * FROM actual_columns EXCEPT SELECT * FROM expected_columns)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_constraints EXCEPT SELECT * FROM actual_constraints)
+   UNION ALL (SELECT * FROM actual_constraints EXCEPT SELECT * FROM expected_constraints)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_indexes EXCEPT SELECT * FROM actual_indexes)
+   UNION ALL (SELECT * FROM actual_indexes EXCEPT SELECT * FROM expected_indexes)) differences)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.conrelid=t.oid
+   AND (NOT c.convalidated OR NOT c.conenforced OR c.condeferrable IS DISTINCT FROM (c.contype='t') OR c.condeferred IS DISTINCT FROM (c.contype='t') OR NOT c.conislocal OR c.coninhcount<>0 OR c.conparentid<>0
+     OR c.conperiod OR c.connoinherit IS DISTINCT FROM (c.contype IN('p','f','t')) OR c.confdelsetcols IS NOT NULL
+     OR (c.contype IN('c','n','t') AND c.conindid<>0)
+     OR (c.contype='p' AND c.conindid IS DISTINCT FROM pg_catalog.to_regclass(pg_catalog.format('enrollment_execution.%I',c.conname)))
+     OR (c.contype<>'f' AND (c.confrelid<>0 OR c.confkey IS NOT NULL OR c.confmatchtype<>' ' OR c.confupdtype<>' ' OR c.confdeltype<>' '
+       OR c.conpfeqop IS NOT NULL OR c.conppeqop IS NOT NULL OR c.conffeqop IS NOT NULL))
+     OR (c.contype='f' AND (c.confrelid IS DISTINCT FROM pg_catalog.to_regclass('public."EnrollmentGrantOperations"')
+       OR c.confkey IS DISTINCT FROM ARRAY[1]::smallint[] OR c.conindid IS DISTINCT FROM pg_catalog.to_regclass('public."PK_EnrollmentGrantOperations"')
+       OR c.confmatchtype<>'s' OR c.confupdtype<>'a' OR c.confdeltype<>'r'
+       OR c.conpfeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conppeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conffeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]))))
+ AND EXISTS(SELECT 1 FROM foreign_key fk JOIN pg_catalog.pg_index referenced ON referenced.indexrelid=fk.conindid
+   WHERE referenced.indrelid=fk.confrelid AND referenced.indisprimary AND referenced.indisunique
+     AND referenced.indisvalid AND referenced.indisready AND referenced.indislive AND NOT referenced.indcheckxmin
+     AND referenced.indnkeyatts=1 AND referenced.indnatts=1 AND referenced.indkey::text='1'
+     AND referenced.indexprs IS NULL AND referenced.indpred IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid WHERE i.indrelid=t.oid
+   AND (NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive OR i.indcheckxmin OR NOT i.indisunique OR NOT i.indimmediate OR i.indisexclusion
+     OR i.indnullsnotdistinct OR i.indisreplident OR i.indisclustered OR i.indnkeyatts<>i.indnatts OR i.indexprs IS NOT NULL OR i.indpred IS NOT NULL
+     OR c.relowner<>o.oid OR c.relnamespace<>t.relnamespace OR c.relkind<>'i' OR c.relpersistence<>'p' OR c.relispartition
+     OR c.relam<>(SELECT oid FROM pg_catalog.pg_am WHERE amname='btree')
+     OR i.indnatts<>1
+     OR EXISTS(SELECT 1 FROM pg_catalog.generate_series(0,i.indnatts-1) position
+       WHERE i.indoption[position] IS DISTINCT FROM 0::smallint OR i.indcollation[position] IS DISTINCT FROM 0::oid
+         OR i.indclass[position] IS DISTINCT FROM (SELECT op.oid FROM pg_catalog.pg_opclass op JOIN pg_catalog.pg_namespace n ON n.oid=op.opcnamespace
+           WHERE n.nspname='pg_catalog' AND op.opcmethod=c.relam AND op.opcname=CASE WHEN position=0 THEN 'uuid_ops' ELSE 'int8_ops' END))))
+ AND (SELECT count(*)=7 FROM actual_user_triggers)
+ AND NOT EXISTS(SELECT * FROM expected_user_triggers EXCEPT
+   SELECT tgrelid,tgname::text,tgfoid,tgtype::integer,tgdeferrable FROM actual_user_triggers)
+ AND NOT EXISTS(SELECT tgrelid,tgname::text,tgfoid,tgtype::integer,tgdeferrable FROM actual_user_triggers EXCEPT
+   SELECT * FROM expected_user_triggers)
+ AND NOT EXISTS(SELECT 1 FROM actual_user_triggers trigger
+   WHERE trigger.tgconstrrelid<>0 OR trigger.tgconstrindid<>0 OR trigger.tgdeferrable<>trigger.tginitdeferred
+     OR (NOT trigger.tgdeferrable AND trigger.tgconstraint<>0)
+     OR (trigger.tgdeferrable AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+       JOIN pg_catalog.pg_class relation ON relation.oid=c.conrelid WHERE c.oid=trigger.tgconstraint
+       AND c.conrelid=trigger.tgrelid AND c.conname=trigger.tgname AND c.connamespace=relation.relnamespace
+       AND c.contype='t' AND c.condeferrable AND c.condeferred AND c.convalidated AND c.conenforced AND c.conislocal
+       AND c.coninhcount=0 AND c.connoinherit AND NOT c.conperiod AND c.contypid=0 AND c.conparentid=0
+       AND c.conkey IS NULL AND c.confkey IS NULL AND c.conindid=0 AND c.confrelid=0 AND c.confdelsetcols IS NULL
+       AND c.conpfeqop IS NULL AND c.conppeqop IS NULL AND c.conffeqop IS NULL AND c.conexclop IS NULL AND c.conbin IS NULL
+       AND c.confmatchtype=' ' AND c.confupdtype=' ' AND c.confdeltype=' '
+       AND pg_catalog.pg_get_constraintdef(c.oid,true)='TRIGGER DEFERRABLE INITIALLY DEFERRED'
+       AND (SELECT count(*)=1 FROM pg_catalog.pg_trigger attached WHERE attached.tgconstraint=c.oid))))
+ AND NOT EXISTS(SELECT 1 FROM expected_user_triggers expected WHERE expected.deferred
+   AND (SELECT count(*) FROM pg_catalog.pg_constraint c WHERE c.conrelid=expected.relation_oid AND c.conname=expected.name)<>1) AND (SELECT count(*)=4 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT * FROM expected_fk_triggers EXCEPT
+   SELECT trigger.tgrelid,trigger.tgfoid,trigger.tgtype::integer FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key)
+   AND (NOT trigger.tgisinternal OR NOT EXISTS(SELECT 1 FROM expected_fk_triggers e WHERE e.relation_oid=trigger.tgrelid AND e.function_oid=trigger.tgfoid AND e.type=trigger.tgtype)
+     OR trigger.tgconstrindid IS DISTINCT FROM (SELECT conindid FROM foreign_key)
+     OR trigger.tgconstrrelid IS DISTINCT FROM CASE WHEN trigger.tgrelid=t.oid THEN (SELECT confrelid FROM foreign_key) ELSE t.oid END))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgrelid=t.oid AND trigger.tgisinternal
+   AND trigger.tgconstraint IS DISTINCT FROM (SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE (trigger.oid IN(SELECT oid FROM actual_user_triggers) OR trigger.tgrelid=t.oid OR trigger.tgconstraint=(SELECT oid FROM foreign_key))
+   AND (trigger.tgenabled<>'O' OR (trigger.tgisinternal AND (trigger.tgdeferrable OR trigger.tginitdeferred)) OR trigger.tgnargs<>0 OR trigger.tgattr::text<>''
+     OR trigger.tgargs<>''::bytea OR trigger.tgqual IS NOT NULL OR trigger.tgoldtable IS NOT NULL OR trigger.tgnewtable IS NOT NULL OR trigger.tgparentid<>0))
+ FROM target t CROSS JOIN owner_role o),false) AS is_valid
+    );
+    -- END generated delivery stop structure catalog
+
+    -- BEGIN generated delivery envelope structure catalog
+    -- Source: audit-enrollment-delivery-envelopes.sql
+    ok := ok AND (
+WITH target AS (
+ SELECT * FROM pg_catalog.pg_class WHERE oid=pg_catalog.to_regclass('enrollment_execution.sealed_envelopes')
+), owner_role AS (
+ SELECT oid FROM pg_catalog.pg_roles WHERE rolname=pg_catalog.pg_get_userbyid(table_owner)
+), expected_columns(position,name,type_oid,required,collation_oid) AS (VALUES
+ (1,'operation_id',2950::oid,true,0::oid),(2,'ciphertext',17,true,0)), actual_columns AS (
+ SELECT a.attnum::integer,a.attname::text,a.atttypid,a.attnotnull,a.attcollation
+ FROM pg_catalog.pg_attribute a JOIN target t ON t.oid=a.attrelid WHERE a.attnum>0 AND NOT a.attisdropped
+), expected_constraints(name,type,keys,definition) AS (VALUES
+ ('sealed_envelopes_operation_id_not_null','n',ARRAY[1]::smallint[],'NOT NULL operation_id'),
+ ('sealed_envelopes_ciphertext_not_null','n',ARRAY[2]::smallint[],'NOT NULL ciphertext'),
+ ('sealed_envelopes_pkey','p',ARRAY[1]::smallint[],'PRIMARY KEY (operation_id)'),
+ ('sealed_envelopes_operation_id_fkey','f',ARRAY[1]::smallint[],'FOREIGN KEY (operation_id) REFERENCES enrollment_execution.mint_permits(operation_id) ON DELETE RESTRICT'),
+ ('sealed_envelopes_ciphertext_check','c',ARRAY[2]::smallint[],'CHECK (octet_length(ciphertext) = 384)'),
+ ('sealed_envelopes_consistent','t',NULL::smallint[],'TRIGGER DEFERRABLE INITIALLY DEFERRED')), actual_constraints AS (
+ SELECT c.conname::text,c.contype::text,c.conkey,pg_catalog.pg_get_constraintdef(c.oid,true)
+ FROM pg_catalog.pg_constraint c JOIN target t ON t.oid=c.conrelid
+), expected_indexes(name,keys,primary_index) AS (VALUES
+ ('sealed_envelopes_pkey','1',true)
+), actual_indexes AS (
+ SELECT c.relname::text,i.indkey::text,i.indisprimary FROM pg_catalog.pg_index i JOIN target t ON t.oid=i.indrelid
+ JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid
+), foreign_key AS (
+ SELECT c.* FROM pg_catalog.pg_constraint c JOIN target t ON t.oid=c.conrelid WHERE c.conname='sealed_envelopes_operation_id_fkey'
+), user_trigger_names(table_name,name,signature,type,deferred) AS (VALUES
+ ('sealed_envelopes','sealed_envelopes_immutable','enrollment_execution.reject_history_mutation()',19,false),
+ ('sealed_envelopes','sealed_envelopes_consistent','enrollment_execution.validate_journal()',13,true),
+ ('mint_permits','mint_permits_consistent','enrollment_execution.validate_journal()',5,true),
+ ('issue_results','issue_results_consistent','enrollment_execution.validate_journal()',5,true),
+ ('delivery_acks','delivery_acks_consistent','enrollment_execution.validate_journal()',5,true)), expected_user_triggers AS (
+ SELECT pg_catalog.to_regclass(pg_catalog.format('enrollment_execution.%I',table_name))::oid relation_oid,
+   name,pg_catalog.to_regprocedure(signature)::oid function_oid,type,deferred FROM user_trigger_names
+), actual_user_triggers AS (
+ SELECT trigger.* FROM pg_catalog.pg_trigger trigger
+ WHERE NOT trigger.tgisinternal AND (trigger.tgrelid=pg_catalog.to_regclass('enrollment_execution.sealed_envelopes')
+   OR trigger.tgname IN(SELECT name FROM user_trigger_names)
+   OR trigger.tgfoid=pg_catalog.to_regprocedure('enrollment_execution.validate_journal()'))), expected_fk_triggers(relation_oid,function_oid,type) AS (
+ SELECT t.oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_ins"()')::oid,5 FROM target t
+ UNION ALL SELECT t.oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_upd"()')::oid,17 FROM target t
+ UNION ALL SELECT pg_catalog.to_regclass('enrollment_execution.mint_permits')::oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_restrict_del"()')::oid,9
+ UNION ALL SELECT pg_catalog.to_regclass('enrollment_execution.mint_permits')::oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_noaction_upd"()')::oid,17
+)
+SELECT COALESCE((SELECT
+ pg_catalog.current_setting('search_path') IN('pg_catalog,pg_temp','pg_catalog, pg_temp')
+ AND t.relowner=o.oid AND t.relkind='r' AND t.relpersistence='p' AND NOT t.relispartition
+ AND t.relam=(SELECT oid FROM pg_catalog.pg_am WHERE amname='heap')
+ AND t.relrowsecurity AND t.relforcerowsecurity AND t.relreplident='d'
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhrelid=t.oid OR i.inhparent=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_rewrite r WHERE r.ev_class=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.confrelid=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=t.oid AND a.attnum>0
+   AND (a.attisdropped OR a.atttypmod<>-1 OR a.attndims<>0 OR a.atthasdef OR a.attidentity<>'' OR a.attgenerated<>'' OR NOT a.attislocal OR a.attinhcount<>0))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attrdef d WHERE d.adrelid=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_columns EXCEPT SELECT * FROM actual_columns)
+   UNION ALL (SELECT * FROM actual_columns EXCEPT SELECT * FROM expected_columns)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_constraints EXCEPT SELECT * FROM actual_constraints)
+   UNION ALL (SELECT * FROM actual_constraints EXCEPT SELECT * FROM expected_constraints)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_indexes EXCEPT SELECT * FROM actual_indexes)
+   UNION ALL (SELECT * FROM actual_indexes EXCEPT SELECT * FROM expected_indexes)) differences)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.conrelid=t.oid
+   AND (NOT c.convalidated OR NOT c.conenforced OR c.condeferrable IS DISTINCT FROM (c.contype='t') OR c.condeferred IS DISTINCT FROM (c.contype='t') OR NOT c.conislocal OR c.coninhcount<>0 OR c.conparentid<>0
+     OR c.conperiod OR c.connoinherit IS DISTINCT FROM (c.contype IN('p','f','t')) OR c.confdelsetcols IS NOT NULL
+     OR (c.contype IN('c','n','t') AND c.conindid<>0)
+     OR (c.contype='p' AND c.conindid IS DISTINCT FROM pg_catalog.to_regclass(pg_catalog.format('enrollment_execution.%I',c.conname)))
+     OR (c.contype<>'f' AND (c.confrelid<>0 OR c.confkey IS NOT NULL OR c.confmatchtype<>' ' OR c.confupdtype<>' ' OR c.confdeltype<>' '
+       OR c.conpfeqop IS NOT NULL OR c.conppeqop IS NOT NULL OR c.conffeqop IS NOT NULL))
+     OR (c.contype='f' AND (c.confrelid IS DISTINCT FROM pg_catalog.to_regclass('enrollment_execution.mint_permits')
+       OR c.confkey IS DISTINCT FROM ARRAY[1]::smallint[] OR c.conindid IS DISTINCT FROM pg_catalog.to_regclass('enrollment_execution.mint_permits_pkey')
+       OR c.confmatchtype<>'s' OR c.confupdtype<>'a' OR c.confdeltype<>'r'
+       OR c.conpfeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conppeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conffeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]))))
+ AND EXISTS(SELECT 1 FROM foreign_key fk JOIN pg_catalog.pg_index referenced ON referenced.indexrelid=fk.conindid
+   WHERE referenced.indrelid=fk.confrelid AND referenced.indisprimary AND referenced.indisunique
+     AND referenced.indisvalid AND referenced.indisready AND referenced.indislive AND NOT referenced.indcheckxmin
+     AND referenced.indnkeyatts=1 AND referenced.indnatts=1 AND referenced.indkey::text='1'
+     AND referenced.indexprs IS NULL AND referenced.indpred IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid WHERE i.indrelid=t.oid
+   AND (NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive OR i.indcheckxmin OR NOT i.indisunique OR NOT i.indimmediate OR i.indisexclusion
+     OR i.indnullsnotdistinct OR i.indisreplident OR i.indisclustered OR i.indnkeyatts<>i.indnatts OR i.indexprs IS NOT NULL OR i.indpred IS NOT NULL
+     OR c.relowner<>o.oid OR c.relnamespace<>t.relnamespace OR c.relkind<>'i' OR c.relpersistence<>'p' OR c.relispartition
+     OR c.relam<>(SELECT oid FROM pg_catalog.pg_am WHERE amname='btree')
+     OR i.indnatts<>1
+     OR EXISTS(SELECT 1 FROM pg_catalog.generate_series(0,i.indnatts-1) position
+       WHERE i.indoption[position] IS DISTINCT FROM 0::smallint OR i.indcollation[position] IS DISTINCT FROM 0::oid
+         OR i.indclass[position] IS DISTINCT FROM (SELECT op.oid FROM pg_catalog.pg_opclass op JOIN pg_catalog.pg_namespace n ON n.oid=op.opcnamespace
+           WHERE n.nspname='pg_catalog' AND op.opcmethod=c.relam AND op.opcname=CASE WHEN position=0 THEN 'uuid_ops' ELSE 'int8_ops' END))))
+ AND (SELECT count(*)=5 FROM actual_user_triggers)
+ AND NOT EXISTS(SELECT * FROM expected_user_triggers EXCEPT
+   SELECT tgrelid,tgname::text,tgfoid,tgtype::integer,tgdeferrable FROM actual_user_triggers)
+ AND NOT EXISTS(SELECT tgrelid,tgname::text,tgfoid,tgtype::integer,tgdeferrable FROM actual_user_triggers EXCEPT
+   SELECT * FROM expected_user_triggers)
+ AND NOT EXISTS(SELECT 1 FROM actual_user_triggers trigger
+   WHERE trigger.tgconstrrelid<>0 OR trigger.tgconstrindid<>0 OR trigger.tgdeferrable<>trigger.tginitdeferred
+     OR (NOT trigger.tgdeferrable AND trigger.tgconstraint<>0)
+     OR (trigger.tgdeferrable AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+       JOIN pg_catalog.pg_class relation ON relation.oid=c.conrelid WHERE c.oid=trigger.tgconstraint
+       AND c.conrelid=trigger.tgrelid AND c.conname=trigger.tgname AND c.connamespace=relation.relnamespace
+       AND c.contype='t' AND c.condeferrable AND c.condeferred AND c.convalidated AND c.conenforced AND c.conislocal
+       AND c.coninhcount=0 AND c.connoinherit AND NOT c.conperiod AND c.contypid=0 AND c.conparentid=0
+       AND c.conkey IS NULL AND c.confkey IS NULL AND c.conindid=0 AND c.confrelid=0 AND c.confdelsetcols IS NULL
+       AND c.conpfeqop IS NULL AND c.conppeqop IS NULL AND c.conffeqop IS NULL AND c.conexclop IS NULL AND c.conbin IS NULL
+       AND c.confmatchtype=' ' AND c.confupdtype=' ' AND c.confdeltype=' '
+       AND pg_catalog.pg_get_constraintdef(c.oid,true)='TRIGGER DEFERRABLE INITIALLY DEFERRED'
+       AND (SELECT count(*)=1 FROM pg_catalog.pg_trigger attached WHERE attached.tgconstraint=c.oid))))
+ AND NOT EXISTS(SELECT 1 FROM expected_user_triggers expected WHERE expected.deferred
+   AND (SELECT count(*) FROM pg_catalog.pg_constraint c WHERE c.conrelid=expected.relation_oid AND c.conname=expected.name)<>1) AND (SELECT count(*)=4 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT * FROM expected_fk_triggers EXCEPT
+   SELECT trigger.tgrelid,trigger.tgfoid,trigger.tgtype::integer FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key)
+   AND (NOT trigger.tgisinternal OR NOT EXISTS(SELECT 1 FROM expected_fk_triggers e WHERE e.relation_oid=trigger.tgrelid AND e.function_oid=trigger.tgfoid AND e.type=trigger.tgtype)
+     OR trigger.tgconstrindid IS DISTINCT FROM (SELECT conindid FROM foreign_key)
+     OR trigger.tgconstrrelid IS DISTINCT FROM CASE WHEN trigger.tgrelid=t.oid THEN (SELECT confrelid FROM foreign_key) ELSE t.oid END))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgrelid=t.oid AND trigger.tgisinternal
+   AND trigger.tgconstraint IS DISTINCT FROM (SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE (trigger.oid IN(SELECT oid FROM actual_user_triggers) OR trigger.tgrelid=t.oid OR trigger.tgconstraint=(SELECT oid FROM foreign_key))
+   AND (trigger.tgenabled<>'O' OR (trigger.tgisinternal AND (trigger.tgdeferrable OR trigger.tginitdeferred)) OR trigger.tgnargs<>0 OR trigger.tgattr::text<>''
+     OR trigger.tgargs<>''::bytea OR trigger.tgqual IS NOT NULL OR trigger.tgoldtable IS NOT NULL OR trigger.tgnewtable IS NOT NULL OR trigger.tgparentid<>0))
+ FROM target t CROSS JOIN owner_role o),false) AS is_valid
+    );
+    -- END generated delivery envelope structure catalog
+
+    -- BEGIN generated delivery ack structure catalog
+    -- Source: audit-enrollment-delivery-acks.sql
+    ok := ok AND (
+WITH target AS (
+ SELECT * FROM pg_catalog.pg_class WHERE oid=pg_catalog.to_regclass('enrollment_execution.delivery_acks')
+), owner_role AS (
+ SELECT oid FROM pg_catalog.pg_roles WHERE rolname=pg_catalog.pg_get_userbyid(table_owner)
+), expected_columns(position,name,type_oid,required,collation_oid) AS (VALUES
+ (1,'operation_id',2950::oid,true,0::oid),(2,'requester_id',2950,true,0),
+ (3,'ciphertext_sha256',17,true,0),(4,'token_sha256',17,true,0),(5,'acknowledged_at',1184,true,0)), actual_columns AS (
+ SELECT a.attnum::integer,a.attname::text,a.atttypid,a.attnotnull,a.attcollation
+ FROM pg_catalog.pg_attribute a JOIN target t ON t.oid=a.attrelid WHERE a.attnum>0 AND NOT a.attisdropped
+), expected_constraints(name,type,keys,definition) AS (VALUES
+ ('delivery_acks_operation_id_not_null','n',ARRAY[1]::smallint[],'NOT NULL operation_id'),
+ ('delivery_acks_requester_id_not_null','n',ARRAY[2]::smallint[],'NOT NULL requester_id'),
+ ('delivery_acks_ciphertext_sha256_not_null','n',ARRAY[3]::smallint[],'NOT NULL ciphertext_sha256'),
+ ('delivery_acks_token_sha256_not_null','n',ARRAY[4]::smallint[],'NOT NULL token_sha256'),
+ ('delivery_acks_acknowledged_at_not_null','n',ARRAY[5]::smallint[],'NOT NULL acknowledged_at'),
+ ('delivery_acks_pkey','p',ARRAY[1]::smallint[],'PRIMARY KEY (operation_id)'),
+ ('delivery_acks_operation_id_fkey','f',ARRAY[1]::smallint[],'FOREIGN KEY (operation_id) REFERENCES enrollment_execution.issue_results(operation_id) ON DELETE RESTRICT'),
+ ('delivery_acks_requester_id_check','c',ARRAY[2]::smallint[],$d$CHECK (requester_id <> '00000000-0000-0000-0000-000000000000'::uuid)$d$),
+ ('delivery_acks_ciphertext_sha256_check','c',ARRAY[3]::smallint[],'CHECK (octet_length(ciphertext_sha256) = 32)'),
+ ('delivery_acks_token_sha256_check','c',ARRAY[4]::smallint[],'CHECK (octet_length(token_sha256) = 32)'),
+ ('delivery_acks_acknowledged_at_check','c',ARRAY[5]::smallint[],'CHECK (isfinite(acknowledged_at))'),
+ ('delivery_acks_consistent','t',NULL::smallint[],'TRIGGER DEFERRABLE INITIALLY DEFERRED'),
+ ('delivery_acks_stop_consistent','t',NULL::smallint[],'TRIGGER DEFERRABLE INITIALLY DEFERRED')), actual_constraints AS (
+ SELECT c.conname::text,c.contype::text,c.conkey,pg_catalog.pg_get_constraintdef(c.oid,true)
+ FROM pg_catalog.pg_constraint c JOIN target t ON t.oid=c.conrelid
+), expected_indexes(name,keys,primary_index) AS (VALUES
+ ('delivery_acks_pkey','1',true)
+), actual_indexes AS (
+ SELECT c.relname::text,i.indkey::text,i.indisprimary FROM pg_catalog.pg_index i JOIN target t ON t.oid=i.indrelid
+ JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid
+), foreign_key AS (
+ SELECT c.* FROM pg_catalog.pg_constraint c JOIN target t ON t.oid=c.conrelid WHERE c.conname='delivery_acks_operation_id_fkey'
+), user_trigger_names(table_name,name,signature,type,deferred) AS (VALUES
+ ('delivery_acks','delivery_acks_immutable','enrollment_execution.reject_history_mutation()',27,false),
+ ('delivery_acks','delivery_acks_consistent','enrollment_execution.validate_journal()',5,true),
+ ('delivery_acks','delivery_acks_stop_consistent','enrollment_execution.validate_execution_stop()',5,true)), expected_user_triggers AS (
+ SELECT pg_catalog.to_regclass(pg_catalog.format('enrollment_execution.%I',table_name))::oid relation_oid,
+   name,pg_catalog.to_regprocedure(signature)::oid function_oid,type,deferred FROM user_trigger_names
+), actual_user_triggers AS (
+ SELECT trigger.* FROM pg_catalog.pg_trigger trigger
+ WHERE NOT trigger.tgisinternal AND (trigger.tgrelid=pg_catalog.to_regclass('enrollment_execution.delivery_acks')
+   OR trigger.tgname IN(SELECT name FROM user_trigger_names))), expected_fk_triggers(relation_oid,function_oid,type) AS (
+ SELECT t.oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_ins"()')::oid,5 FROM target t
+ UNION ALL SELECT t.oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_upd"()')::oid,17 FROM target t
+ UNION ALL SELECT pg_catalog.to_regclass('enrollment_execution.issue_results')::oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_restrict_del"()')::oid,9
+ UNION ALL SELECT pg_catalog.to_regclass('enrollment_execution.issue_results')::oid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_noaction_upd"()')::oid,17
+)
+SELECT COALESCE((SELECT
+ pg_catalog.current_setting('search_path') IN('pg_catalog,pg_temp','pg_catalog, pg_temp')
+ AND t.relowner=o.oid AND t.relkind='r' AND t.relpersistence='p' AND NOT t.relispartition
+ AND t.relam=(SELECT oid FROM pg_catalog.pg_am WHERE amname='heap')
+ AND t.relrowsecurity AND t.relforcerowsecurity AND t.relreplident='d'
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhrelid=t.oid OR i.inhparent=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_rewrite r WHERE r.ev_class=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.confrelid=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=t.oid AND a.attnum>0
+   AND (a.attisdropped OR a.atttypmod<>-1 OR a.attndims<>0 OR a.atthasdef OR a.attidentity<>'' OR a.attgenerated<>'' OR NOT a.attislocal OR a.attinhcount<>0))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attrdef d WHERE d.adrelid=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_columns EXCEPT SELECT * FROM actual_columns)
+   UNION ALL (SELECT * FROM actual_columns EXCEPT SELECT * FROM expected_columns)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_constraints EXCEPT SELECT * FROM actual_constraints)
+   UNION ALL (SELECT * FROM actual_constraints EXCEPT SELECT * FROM expected_constraints)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_indexes EXCEPT SELECT * FROM actual_indexes)
+   UNION ALL (SELECT * FROM actual_indexes EXCEPT SELECT * FROM expected_indexes)) differences)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.conrelid=t.oid
+   AND (NOT c.convalidated OR NOT c.conenforced OR c.condeferrable IS DISTINCT FROM (c.contype='t') OR c.condeferred IS DISTINCT FROM (c.contype='t') OR NOT c.conislocal OR c.coninhcount<>0 OR c.conparentid<>0
+     OR c.conperiod OR c.connoinherit IS DISTINCT FROM (c.contype IN('p','f','t')) OR c.confdelsetcols IS NOT NULL
+     OR (c.contype IN('c','n','t') AND c.conindid<>0)
+     OR (c.contype='p' AND c.conindid IS DISTINCT FROM pg_catalog.to_regclass(pg_catalog.format('enrollment_execution.%I',c.conname)))
+     OR (c.contype<>'f' AND (c.confrelid<>0 OR c.confkey IS NOT NULL OR c.confmatchtype<>' ' OR c.confupdtype<>' ' OR c.confdeltype<>' '
+       OR c.conpfeqop IS NOT NULL OR c.conppeqop IS NOT NULL OR c.conffeqop IS NOT NULL))
+     OR (c.contype='f' AND (c.confrelid IS DISTINCT FROM pg_catalog.to_regclass('enrollment_execution.issue_results')
+       OR c.confkey IS DISTINCT FROM ARRAY[1]::smallint[] OR c.conindid IS DISTINCT FROM pg_catalog.to_regclass('enrollment_execution.issue_results_pkey')
+       OR c.confmatchtype<>'s' OR c.confupdtype<>'a' OR c.confdeltype<>'r'
+       OR c.conpfeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conppeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conffeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]))))
+ AND EXISTS(SELECT 1 FROM foreign_key fk JOIN pg_catalog.pg_index referenced ON referenced.indexrelid=fk.conindid
+   WHERE referenced.indrelid=fk.confrelid AND referenced.indisprimary AND referenced.indisunique
+     AND referenced.indisvalid AND referenced.indisready AND referenced.indislive AND NOT referenced.indcheckxmin
+     AND referenced.indnkeyatts=1 AND referenced.indnatts=1 AND referenced.indkey::text='1'
+     AND referenced.indexprs IS NULL AND referenced.indpred IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid WHERE i.indrelid=t.oid
+   AND (NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive OR i.indcheckxmin OR NOT i.indisunique OR NOT i.indimmediate OR i.indisexclusion
+     OR i.indnullsnotdistinct OR i.indisreplident OR i.indisclustered OR i.indnkeyatts<>i.indnatts OR i.indexprs IS NOT NULL OR i.indpred IS NOT NULL
+     OR c.relowner<>o.oid OR c.relnamespace<>t.relnamespace OR c.relkind<>'i' OR c.relpersistence<>'p' OR c.relispartition
+     OR c.relam<>(SELECT oid FROM pg_catalog.pg_am WHERE amname='btree')
+     OR i.indnatts<>1
+     OR EXISTS(SELECT 1 FROM pg_catalog.generate_series(0,i.indnatts-1) position
+       WHERE i.indoption[position] IS DISTINCT FROM 0::smallint OR i.indcollation[position] IS DISTINCT FROM 0::oid
+         OR i.indclass[position] IS DISTINCT FROM (SELECT op.oid FROM pg_catalog.pg_opclass op JOIN pg_catalog.pg_namespace n ON n.oid=op.opcnamespace
+           WHERE n.nspname='pg_catalog' AND op.opcmethod=c.relam AND op.opcname=CASE WHEN position=0 THEN 'uuid_ops' ELSE 'int8_ops' END))))
+ AND (SELECT count(*)=3 FROM actual_user_triggers)
+ AND NOT EXISTS(SELECT * FROM expected_user_triggers EXCEPT
+   SELECT tgrelid,tgname::text,tgfoid,tgtype::integer,tgdeferrable FROM actual_user_triggers)
+ AND NOT EXISTS(SELECT tgrelid,tgname::text,tgfoid,tgtype::integer,tgdeferrable FROM actual_user_triggers EXCEPT
+   SELECT * FROM expected_user_triggers)
+ AND NOT EXISTS(SELECT 1 FROM actual_user_triggers trigger
+   WHERE trigger.tgconstrrelid<>0 OR trigger.tgconstrindid<>0 OR trigger.tgdeferrable<>trigger.tginitdeferred
+     OR (NOT trigger.tgdeferrable AND trigger.tgconstraint<>0)
+     OR (trigger.tgdeferrable AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+       JOIN pg_catalog.pg_class relation ON relation.oid=c.conrelid WHERE c.oid=trigger.tgconstraint
+       AND c.conrelid=trigger.tgrelid AND c.conname=trigger.tgname AND c.connamespace=relation.relnamespace
+       AND c.contype='t' AND c.condeferrable AND c.condeferred AND c.convalidated AND c.conenforced AND c.conislocal
+       AND c.coninhcount=0 AND c.connoinherit AND NOT c.conperiod AND c.contypid=0 AND c.conparentid=0
+       AND c.conkey IS NULL AND c.confkey IS NULL AND c.conindid=0 AND c.confrelid=0 AND c.confdelsetcols IS NULL
+       AND c.conpfeqop IS NULL AND c.conppeqop IS NULL AND c.conffeqop IS NULL AND c.conexclop IS NULL AND c.conbin IS NULL
+       AND c.confmatchtype=' ' AND c.confupdtype=' ' AND c.confdeltype=' '
+       AND pg_catalog.pg_get_constraintdef(c.oid,true)='TRIGGER DEFERRABLE INITIALLY DEFERRED'
+       AND (SELECT count(*)=1 FROM pg_catalog.pg_trigger attached WHERE attached.tgconstraint=c.oid))))
+ AND NOT EXISTS(SELECT 1 FROM expected_user_triggers expected WHERE expected.deferred
+   AND (SELECT count(*) FROM pg_catalog.pg_constraint c WHERE c.conrelid=expected.relation_oid AND c.conname=expected.name)<>1) AND (SELECT count(*)=4 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT * FROM expected_fk_triggers EXCEPT
+   SELECT trigger.tgrelid,trigger.tgfoid,trigger.tgtype::integer FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint=(SELECT oid FROM foreign_key)
+   AND (NOT trigger.tgisinternal OR NOT EXISTS(SELECT 1 FROM expected_fk_triggers e WHERE e.relation_oid=trigger.tgrelid AND e.function_oid=trigger.tgfoid AND e.type=trigger.tgtype)
+     OR trigger.tgconstrindid IS DISTINCT FROM (SELECT conindid FROM foreign_key)
+     OR trigger.tgconstrrelid IS DISTINCT FROM CASE WHEN trigger.tgrelid=t.oid THEN (SELECT confrelid FROM foreign_key) ELSE t.oid END))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgrelid=t.oid AND trigger.tgisinternal
+   AND trigger.tgconstraint IS DISTINCT FROM (SELECT oid FROM foreign_key))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE (trigger.oid IN(SELECT oid FROM actual_user_triggers) OR trigger.tgrelid=t.oid OR trigger.tgconstraint=(SELECT oid FROM foreign_key))
+   AND (trigger.tgenabled<>'O' OR (trigger.tgisinternal AND (trigger.tgdeferrable OR trigger.tginitdeferred)) OR trigger.tgnargs<>0 OR trigger.tgattr::text<>''
+     OR trigger.tgargs<>''::bytea OR trigger.tgqual IS NOT NULL OR trigger.tgoldtable IS NOT NULL OR trigger.tgnewtable IS NOT NULL OR trigger.tgparentid<>0))
+ FROM target t CROSS JOIN owner_role o),false) AS is_valid
+    );
+    -- END generated delivery ack structure catalog
+
+    -- BEGIN generated delivery result structure catalog
+    -- Source: audit-enrollment-delivery-results.sql
+    ok := ok AND (
+WITH target AS (
+ SELECT * FROM pg_catalog.pg_class WHERE oid=pg_catalog.to_regclass('enrollment_execution.issue_results')
+), owner_role AS (
+ SELECT oid FROM pg_catalog.pg_roles WHERE rolname=pg_catalog.pg_get_userbyid(table_owner)
+), expected_columns(position,name,type_oid,required,collation_oid) AS (VALUES
+ (1,'operation_id',2950::oid,true,0::oid),(2,'outcome',25,true,'pg_catalog."default"'::regcollation::oid),
+ (3,'diagnostic',25,true,'pg_catalog."default"'::regcollation::oid),(4,'recorded_at',1184,true,0),
+ (5,'grant_id',2950,false,0),(6,'environment_id',2950,false,0),(7,'directory_object_id',2950,false,0),(8,'device_id',2950,false,0),
+ (9,'mapping_created_at',1184,false,0),(10,'grant_created_at',1184,false,0),(11,'grant_expires_at',1184,false,0),
+ (12,'issue_contract_version',21,false,0),(13,'mint_permit_not_after',1184,false,0),(14,'token_sha256',17,false,0),(15,'authorization_digest',17,false,0)), actual_columns AS (
+ SELECT a.attnum::integer,a.attname::text,a.atttypid,a.attnotnull,a.attcollation
+ FROM pg_catalog.pg_attribute a JOIN target t ON t.oid=a.attrelid WHERE a.attnum>0 AND NOT a.attisdropped
+), expected_constraints(name,type,keys,definition) AS (VALUES
+ ('issue_results_operation_id_not_null','n',ARRAY[1]::smallint[],'NOT NULL operation_id'),
+ ('issue_results_outcome_not_null','n',ARRAY[2]::smallint[],'NOT NULL outcome'),
+ ('issue_results_diagnostic_not_null','n',ARRAY[3]::smallint[],'NOT NULL diagnostic'),
+ ('issue_results_recorded_at_not_null','n',ARRAY[4]::smallint[],'NOT NULL recorded_at'),
+ ('issue_results_pkey','p',ARRAY[1]::smallint[],'PRIMARY KEY (operation_id)'),
+ ('issue_results_operation_id_fkey','f',ARRAY[1]::smallint[],'FOREIGN KEY (operation_id) REFERENCES enrollment_execution.mint_permits(operation_id) ON DELETE RESTRICT'),
+ ('issue_results_outcome_check','c',ARRAY[2]::smallint[],$d$CHECK (outcome = ANY (ARRAY['Issued'::text, 'Rejected'::text]))$d$),
+ ('issue_results_recorded_at_check','c',ARRAY[4]::smallint[],'CHECK (isfinite(recorded_at))'),
+ ('issue_result_closed_shape','c',ARRAY[2,3,5,6,7,8,9,10,11,4,12,13,14,15]::smallint[],$d$CHECK (outcome = 'Issued'::text AND diagnostic = 'None'::text AND grant_id IS NOT NULL AND grant_id <> '00000000-0000-0000-0000-000000000000'::uuid AND environment_id IS NOT NULL AND environment_id <> '00000000-0000-0000-0000-000000000000'::uuid AND directory_object_id IS NOT NULL AND directory_object_id <> '00000000-0000-0000-0000-000000000000'::uuid AND device_id IS NOT NULL AND device_id <> '00000000-0000-0000-0000-000000000000'::uuid AND mapping_created_at IS NOT NULL AND isfinite(mapping_created_at) AND grant_created_at IS NOT NULL AND isfinite(grant_created_at) AND grant_expires_at IS NOT NULL AND isfinite(grant_expires_at) AND mapping_created_at <= grant_created_at AND grant_expires_at = (grant_created_at + '00:10:00'::interval) AND recorded_at >= grant_created_at AND issue_contract_version IS NOT NULL AND issue_contract_version = 2 AND mint_permit_not_after IS NOT NULL AND isfinite(mint_permit_not_after) AND grant_created_at < mint_permit_not_after AND token_sha256 IS NOT NULL AND octet_length(token_sha256) = 32 AND authorization_digest IS NOT NULL AND octet_length(authorization_digest) = 32 OR outcome = 'Rejected'::text AND (diagnostic = ANY (ARRAY['MappingUnavailable'::text, 'DeviceUnavailable'::text, 'EnrollmentAlreadyExists'::text, 'EnrollmentInProgress'::text, 'GrantAlreadyAvailable'::text, 'MintPermitExpired'::text])) AND grant_id IS NULL AND environment_id IS NULL AND directory_object_id IS NULL AND device_id IS NULL AND mapping_created_at IS NULL AND grant_created_at IS NULL AND grant_expires_at IS NULL AND issue_contract_version IS NULL AND mint_permit_not_after IS NULL AND token_sha256 IS NULL AND authorization_digest IS NULL)$d$),
+ ('issue_results_consistent','t',NULL::smallint[],'TRIGGER DEFERRABLE INITIALLY DEFERRED'),
+ ('issue_results_stop_consistent','t',NULL::smallint[],'TRIGGER DEFERRABLE INITIALLY DEFERRED')), actual_constraints AS (
+ SELECT c.conname::text,c.contype::text,c.conkey,pg_catalog.pg_get_constraintdef(c.oid,true)
+ FROM pg_catalog.pg_constraint c JOIN target t ON t.oid=c.conrelid
+), expected_indexes(name,keys,primary_index,predicate) AS (VALUES
+ ('issue_results_pkey','1',true,NULL::text),('issue_results_private_grant','6 5',false,$d$outcome = 'Issued'::text$d$)
+), actual_indexes AS (
+ SELECT c.relname::text,i.indkey::text,i.indisprimary,pg_catalog.pg_get_expr(i.indpred,i.indrelid,true)
+ FROM pg_catalog.pg_index i JOIN target t ON t.oid=i.indrelid JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid), expected_foreign_keys(name,child_oid,parent_oid,index_oid,parent_column,child_position) AS (VALUES
+ ('issue_results_operation_id_fkey',pg_catalog.to_regclass('enrollment_execution.issue_results')::oid,pg_catalog.to_regclass('enrollment_execution.mint_permits')::oid,pg_catalog.to_regclass('enrollment_execution.mint_permits_pkey')::oid,'operation_id',1),
+ ('delivery_acks_operation_id_fkey',pg_catalog.to_regclass('enrollment_execution.delivery_acks')::oid,pg_catalog.to_regclass('enrollment_execution.issue_results')::oid,pg_catalog.to_regclass('enrollment_execution.issue_results_pkey')::oid,'operation_id',1),
+ ('status_observations_operation_id_fkey',pg_catalog.to_regclass('enrollment_execution.status_observations')::oid,pg_catalog.to_regclass('enrollment_execution.issue_results')::oid,pg_catalog.to_regclass('enrollment_execution.issue_results_pkey')::oid,'operation_id',3)), foreign_keys AS (
+ SELECT c.* FROM pg_catalog.pg_constraint c WHERE c.contype='f'
+ AND (c.conrelid=pg_catalog.to_regclass('enrollment_execution.issue_results') OR c.confrelid=pg_catalog.to_regclass('enrollment_execution.issue_results'))), user_trigger_names(table_name,name,signature,type,deferred) AS (VALUES
+ ('issue_results','issue_results_immutable','enrollment_execution.reject_history_mutation()',27,false),
+ ('issue_results','issue_results_consistent','enrollment_execution.validate_journal()',5,true),
+ ('issue_results','issue_results_stop_consistent','enrollment_execution.validate_execution_stop()',5,true)), expected_user_triggers AS (
+ SELECT pg_catalog.to_regclass(pg_catalog.format('enrollment_execution.%I',table_name))::oid relation_oid,
+   name,pg_catalog.to_regprocedure(signature)::oid function_oid,type,deferred FROM user_trigger_names
+), actual_user_triggers AS (
+ SELECT trigger.* FROM pg_catalog.pg_trigger trigger
+ WHERE NOT trigger.tgisinternal AND (trigger.tgrelid=pg_catalog.to_regclass('enrollment_execution.issue_results')
+   OR trigger.tgname IN(SELECT name FROM user_trigger_names))), expected_fk_triggers(constraint_oid,relation_oid,function_oid,type) AS (
+ SELECT fk.oid,fk.conrelid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_ins"()')::oid,5 FROM foreign_keys fk
+ UNION ALL SELECT fk.oid,fk.conrelid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_upd"()')::oid,17 FROM foreign_keys fk
+ UNION ALL SELECT fk.oid,fk.confrelid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_restrict_del"()')::oid,9 FROM foreign_keys fk
+ UNION ALL SELECT fk.oid,fk.confrelid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_noaction_upd"()')::oid,17 FROM foreign_keys fk
+)
+SELECT COALESCE((SELECT
+ pg_catalog.current_setting('search_path') IN('pg_catalog,pg_temp','pg_catalog, pg_temp')
+ AND t.relowner=o.oid AND t.relkind='r' AND t.relpersistence='p' AND NOT t.relispartition
+ AND t.relam=(SELECT oid FROM pg_catalog.pg_am WHERE amname='heap')
+ AND t.relrowsecurity AND t.relforcerowsecurity AND t.relreplident='d'
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhrelid=t.oid OR i.inhparent=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_rewrite r WHERE r.ev_class=t.oid)
+ AND (SELECT count(*)=3 FROM foreign_keys)
+ AND NOT EXISTS(SELECT name,child_oid,parent_oid,index_oid FROM expected_foreign_keys EXCEPT
+   SELECT conname::text,conrelid,confrelid,conindid FROM foreign_keys)
+ AND NOT EXISTS(SELECT conname::text,conrelid,confrelid,conindid FROM foreign_keys EXCEPT
+   SELECT name,child_oid,parent_oid,index_oid FROM expected_foreign_keys)
+ AND NOT EXISTS(SELECT 1 FROM foreign_keys c JOIN pg_catalog.pg_class child ON child.oid=c.conrelid JOIN expected_foreign_keys e ON e.name=c.conname AND e.child_oid=c.conrelid
+   WHERE c.connamespace<>child.relnamespace OR NOT c.convalidated OR NOT c.conenforced OR c.condeferrable OR c.condeferred
+     OR NOT c.conislocal OR NOT c.connoinherit OR c.coninhcount<>0 OR c.conparentid<>0 OR c.contypid<>0 OR c.conperiod
+     OR c.conkey IS DISTINCT FROM ARRAY[e.child_position]::smallint[] OR c.confkey IS DISTINCT FROM ARRAY[1]::smallint[]
+     OR c.confmatchtype<>'s' OR c.confupdtype<>'a' OR c.confdeltype<>'r' OR c.confdelsetcols IS NOT NULL
+     OR c.conpfeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+     OR c.conppeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+     OR c.conffeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+     OR c.conexclop IS NOT NULL OR c.conbin IS NOT NULL)
+ AND NOT EXISTS(SELECT 1 FROM expected_foreign_keys e WHERE NOT EXISTS(
+   SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=e.child_oid AND a.attnum=e.child_position AND a.attname='operation_id'
+     AND a.atttypid=2950 AND a.attnotnull AND NOT a.attisdropped))
+ AND NOT EXISTS(SELECT 1 FROM expected_foreign_keys e WHERE NOT EXISTS(
+   SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=e.parent_oid AND a.attnum=1 AND a.attname=e.parent_column
+     AND a.atttypid=2950 AND a.attnotnull AND NOT a.attisdropped))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=t.oid AND a.attnum>0
+   AND (a.attisdropped OR a.atttypmod<>-1 OR a.attndims<>0 OR a.atthasdef OR a.attidentity<>'' OR a.attgenerated<>'' OR NOT a.attislocal OR a.attinhcount<>0))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attrdef d WHERE d.adrelid=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_columns EXCEPT SELECT * FROM actual_columns)
+   UNION ALL (SELECT * FROM actual_columns EXCEPT SELECT * FROM expected_columns)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_constraints EXCEPT SELECT * FROM actual_constraints)
+   UNION ALL (SELECT * FROM actual_constraints EXCEPT SELECT * FROM expected_constraints)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_indexes EXCEPT SELECT * FROM actual_indexes)
+   UNION ALL (SELECT * FROM actual_indexes EXCEPT SELECT * FROM expected_indexes)) differences)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.conrelid=t.oid
+   AND (NOT c.convalidated OR NOT c.conenforced OR c.condeferrable IS DISTINCT FROM (c.contype='t') OR c.condeferred IS DISTINCT FROM (c.contype='t') OR NOT c.conislocal OR c.coninhcount<>0 OR c.conparentid<>0
+     OR c.conperiod OR c.connoinherit IS DISTINCT FROM (c.contype IN('p','f','t')) OR c.confdelsetcols IS NOT NULL
+     OR (c.contype IN('c','n','t') AND c.conindid<>0)
+     OR (c.contype='p' AND c.conindid IS DISTINCT FROM pg_catalog.to_regclass(pg_catalog.format('enrollment_execution.%I',c.conname)))
+     OR (c.contype<>'f' AND (c.confrelid<>0 OR c.confkey IS NOT NULL OR c.confmatchtype<>' ' OR c.confupdtype<>' ' OR c.confdeltype<>' '
+       OR c.conpfeqop IS NOT NULL OR c.conppeqop IS NOT NULL OR c.conffeqop IS NOT NULL))
+     OR (c.contype='f' AND (c.confrelid IS DISTINCT FROM pg_catalog.to_regclass('enrollment_execution.mint_permits')
+       OR c.confkey IS DISTINCT FROM ARRAY[1]::smallint[] OR c.conindid IS DISTINCT FROM pg_catalog.to_regclass('enrollment_execution.mint_permits_pkey')
+       OR c.confmatchtype<>'s' OR c.confupdtype<>'a' OR c.confdeltype<>'r'
+       OR c.conpfeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conppeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conffeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]))))
+ AND NOT EXISTS(SELECT 1 FROM foreign_keys fk WHERE NOT EXISTS(
+   SELECT 1 FROM pg_catalog.pg_index referenced WHERE referenced.indexrelid=fk.conindid
+     AND referenced.indrelid=fk.confrelid AND referenced.indisprimary AND referenced.indisunique
+     AND referenced.indisvalid AND referenced.indisready AND referenced.indislive AND NOT referenced.indcheckxmin
+     AND referenced.indnkeyatts=1 AND referenced.indnatts=1 AND referenced.indkey::text='1'
+     AND referenced.indexprs IS NULL AND referenced.indpred IS NULL))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid WHERE i.indrelid=t.oid
+   AND (NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive OR i.indcheckxmin OR NOT i.indisunique OR NOT i.indimmediate OR i.indisexclusion
+     OR i.indnullsnotdistinct OR i.indisreplident OR i.indisclustered OR i.indnkeyatts<>i.indnatts OR i.indexprs IS NOT NULL
+     OR c.relowner<>o.oid OR c.relnamespace<>t.relnamespace OR c.relkind<>'i' OR c.relpersistence<>'p' OR c.relispartition
+     OR c.relam<>(SELECT oid FROM pg_catalog.pg_am WHERE amname='btree')
+     OR i.indnatts<>CASE WHEN c.relname='issue_results_pkey' THEN 1 ELSE 2 END
+     OR EXISTS(SELECT 1 FROM pg_catalog.generate_series(0,i.indnatts-1) position
+       WHERE i.indoption[position] IS DISTINCT FROM 0::smallint OR i.indcollation[position] IS DISTINCT FROM 0::oid
+         OR i.indclass[position] IS DISTINCT FROM (SELECT op.oid FROM pg_catalog.pg_opclass op JOIN pg_catalog.pg_namespace n ON n.oid=op.opcnamespace
+           WHERE n.nspname='pg_catalog' AND op.opcmethod=c.relam AND op.opcname='uuid_ops'))))
+ AND (SELECT count(*)=3 FROM actual_user_triggers)
+ AND NOT EXISTS(SELECT * FROM expected_user_triggers EXCEPT
+   SELECT tgrelid,tgname::text,tgfoid,tgtype::integer,tgdeferrable FROM actual_user_triggers)
+ AND NOT EXISTS(SELECT tgrelid,tgname::text,tgfoid,tgtype::integer,tgdeferrable FROM actual_user_triggers EXCEPT
+   SELECT * FROM expected_user_triggers)
+ AND NOT EXISTS(SELECT 1 FROM actual_user_triggers trigger
+   WHERE trigger.tgconstrrelid<>0 OR trigger.tgconstrindid<>0 OR trigger.tgdeferrable<>trigger.tginitdeferred
+     OR (NOT trigger.tgdeferrable AND trigger.tgconstraint<>0)
+     OR (trigger.tgdeferrable AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+       JOIN pg_catalog.pg_class relation ON relation.oid=c.conrelid WHERE c.oid=trigger.tgconstraint
+       AND c.conrelid=trigger.tgrelid AND c.conname=trigger.tgname AND c.connamespace=relation.relnamespace
+       AND c.contype='t' AND c.condeferrable AND c.condeferred AND c.convalidated AND c.conenforced AND c.conislocal
+       AND c.coninhcount=0 AND c.connoinherit AND NOT c.conperiod AND c.contypid=0 AND c.conparentid=0
+       AND c.conkey IS NULL AND c.confkey IS NULL AND c.conindid=0 AND c.confrelid=0 AND c.confdelsetcols IS NULL
+       AND c.conpfeqop IS NULL AND c.conppeqop IS NULL AND c.conffeqop IS NULL AND c.conexclop IS NULL AND c.conbin IS NULL
+       AND c.confmatchtype=' ' AND c.confupdtype=' ' AND c.confdeltype=' '
+       AND pg_catalog.pg_get_constraintdef(c.oid,true)='TRIGGER DEFERRABLE INITIALLY DEFERRED'
+       AND (SELECT count(*)=1 FROM pg_catalog.pg_trigger attached WHERE attached.tgconstraint=c.oid))))
+ AND NOT EXISTS(SELECT 1 FROM expected_user_triggers expected WHERE expected.deferred
+   AND (SELECT count(*) FROM pg_catalog.pg_constraint c WHERE c.conrelid=expected.relation_oid AND c.conname=expected.name)<>1) AND (SELECT count(*)=12 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint IN(SELECT oid FROM foreign_keys))
+ AND NOT EXISTS(SELECT * FROM expected_fk_triggers EXCEPT
+   SELECT trigger.tgconstraint,trigger.tgrelid,trigger.tgfoid,trigger.tgtype::integer FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint IN(SELECT oid FROM foreign_keys))
+ AND NOT EXISTS(SELECT trigger.tgconstraint,trigger.tgrelid,trigger.tgfoid,trigger.tgtype::integer FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint IN(SELECT oid FROM foreign_keys) EXCEPT SELECT * FROM expected_fk_triggers)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger JOIN foreign_keys fk ON fk.oid=trigger.tgconstraint
+   WHERE NOT trigger.tgisinternal OR trigger.tgconstrindid IS DISTINCT FROM fk.conindid
+     OR trigger.tgconstrrelid IS DISTINCT FROM CASE WHEN trigger.tgrelid=fk.conrelid THEN fk.confrelid ELSE fk.conrelid END)
+ AND (SELECT count(*)=6 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgrelid=t.oid AND trigger.tgisinternal)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgrelid=t.oid AND trigger.tgisinternal
+   AND trigger.tgconstraint NOT IN(SELECT oid FROM foreign_keys))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE (trigger.oid IN(SELECT oid FROM actual_user_triggers) OR trigger.tgrelid=t.oid OR trigger.tgconstraint IN(SELECT oid FROM foreign_keys))
+   AND (trigger.tgenabled<>'O' OR (trigger.tgisinternal AND (trigger.tgdeferrable OR trigger.tginitdeferred)) OR trigger.tgnargs<>0 OR trigger.tgattr::text<>''
+     OR trigger.tgargs<>''::bytea OR trigger.tgqual IS NOT NULL OR trigger.tgoldtable IS NOT NULL OR trigger.tgnewtable IS NOT NULL OR trigger.tgparentid<>0))
+ FROM target t CROSS JOIN owner_role o),false) AS is_valid
+    );
+    -- END generated delivery result structure catalog
+
+    -- BEGIN generated delivery permit structure catalog
+    -- Source: audit-enrollment-delivery-permits.sql
+    ok := ok AND (
+WITH target AS (
+ SELECT * FROM pg_catalog.pg_class WHERE oid=pg_catalog.to_regclass('enrollment_execution.mint_permits')
+), owner_role AS (
+ SELECT oid FROM pg_catalog.pg_roles WHERE rolname=pg_catalog.pg_get_userbyid(table_owner)
+), expected_columns(position,name,type_oid,required,collation_oid) AS (VALUES
+ (1,'operation_id',2950::oid,true,0::oid),(2,'format_version',21,true,0),
+ (3,'issued_at',1184,true,0),(4,'not_after',1184,true,0),(5,'token_sha256',17,true,0),
+ (6,'recipient_fingerprint',17,true,0),(7,'ciphertext_sha256',17,true,0),(8,'authorization_digest',17,true,0)), actual_columns AS (
+ SELECT a.attnum::integer,a.attname::text,a.atttypid,a.attnotnull,a.attcollation
+ FROM pg_catalog.pg_attribute a JOIN target t ON t.oid=a.attrelid WHERE a.attnum>0 AND NOT a.attisdropped
+), expected_constraints(name,type,keys,definition) AS (VALUES
+ ('mint_permits_operation_id_not_null','n',ARRAY[1]::smallint[],'NOT NULL operation_id'),
+ ('mint_permits_format_version_not_null','n',ARRAY[2]::smallint[],'NOT NULL format_version'),
+ ('mint_permits_issued_at_not_null','n',ARRAY[3]::smallint[],'NOT NULL issued_at'),
+ ('mint_permits_not_after_not_null','n',ARRAY[4]::smallint[],'NOT NULL not_after'),
+ ('mint_permits_token_sha256_not_null','n',ARRAY[5]::smallint[],'NOT NULL token_sha256'),
+ ('mint_permits_recipient_fingerprint_not_null','n',ARRAY[6]::smallint[],'NOT NULL recipient_fingerprint'),
+ ('mint_permits_ciphertext_sha256_not_null','n',ARRAY[7]::smallint[],'NOT NULL ciphertext_sha256'),
+ ('mint_permits_authorization_digest_not_null','n',ARRAY[8]::smallint[],'NOT NULL authorization_digest'),
+ ('mint_permits_pkey','p',ARRAY[1]::smallint[],'PRIMARY KEY (operation_id)'),
+ ('mint_permits_token_sha256_key','u',ARRAY[5]::smallint[],'UNIQUE (token_sha256)'),
+ ('mint_permits_operation_id_fkey','f',ARRAY[1]::smallint[],'FOREIGN KEY (operation_id) REFERENCES public."EnrollmentGrantOperations"("Id") ON DELETE RESTRICT'),
+ ('mint_permits_format_version_check','c',ARRAY[2]::smallint[],'CHECK (format_version = 1)'),
+ ('mint_permit_time','c',ARRAY[3,4]::smallint[],$d$CHECK (isfinite(issued_at) AND isfinite(not_after) AND issued_at < not_after AND not_after <= (issued_at + '00:01:00'::interval))$d$),
+ ('mint_permits_token_sha256_check','c',ARRAY[5]::smallint[],'CHECK (octet_length(token_sha256) = 32)'),
+ ('mint_permits_recipient_fingerprint_check','c',ARRAY[6]::smallint[],'CHECK (octet_length(recipient_fingerprint) = 32)'),
+ ('mint_permits_ciphertext_sha256_check','c',ARRAY[7]::smallint[],'CHECK (octet_length(ciphertext_sha256) = 32)'),
+ ('mint_permits_authorization_digest_check','c',ARRAY[8]::smallint[],'CHECK (octet_length(authorization_digest) = 32)'),
+ ('mint_permits_consistent','t',NULL::smallint[],'TRIGGER DEFERRABLE INITIALLY DEFERRED'),
+ ('mint_permits_stop_consistent','t',NULL::smallint[],'TRIGGER DEFERRABLE INITIALLY DEFERRED')), actual_constraints AS (
+ SELECT c.conname::text,c.contype::text,c.conkey,pg_catalog.pg_get_constraintdef(c.oid,true)
+ FROM pg_catalog.pg_constraint c JOIN target t ON t.oid=c.conrelid
+), expected_indexes(name,keys,primary_index) AS (VALUES
+ ('mint_permits_pkey','1',true),('mint_permits_token_sha256_key','5',false)
+), actual_indexes AS (
+ SELECT c.relname::text,i.indkey::text,i.indisprimary FROM pg_catalog.pg_index i JOIN target t ON t.oid=i.indrelid
+ JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid
+), expected_foreign_keys(name,child_oid,parent_oid,index_oid,parent_column) AS (VALUES
+ ('mint_permits_operation_id_fkey',pg_catalog.to_regclass('enrollment_execution.mint_permits')::oid,pg_catalog.to_regclass('public."EnrollmentGrantOperations"')::oid,pg_catalog.to_regclass('public."PK_EnrollmentGrantOperations"')::oid,'Id'),
+ ('sealed_envelopes_operation_id_fkey',pg_catalog.to_regclass('enrollment_execution.sealed_envelopes')::oid,pg_catalog.to_regclass('enrollment_execution.mint_permits')::oid,pg_catalog.to_regclass('enrollment_execution.mint_permits_pkey')::oid,'operation_id'),
+ ('issue_results_operation_id_fkey',pg_catalog.to_regclass('enrollment_execution.issue_results')::oid,pg_catalog.to_regclass('enrollment_execution.mint_permits')::oid,pg_catalog.to_regclass('enrollment_execution.mint_permits_pkey')::oid,'operation_id')
+), foreign_keys AS (
+ SELECT c.* FROM pg_catalog.pg_constraint c WHERE c.contype='f'
+ AND (c.conrelid=pg_catalog.to_regclass('enrollment_execution.mint_permits') OR c.confrelid=pg_catalog.to_regclass('enrollment_execution.mint_permits'))), user_trigger_names(table_name,name,signature,type,deferred) AS (VALUES
+ ('mint_permits','mint_permits_immutable','enrollment_execution.reject_history_mutation()',27,false),
+ ('mint_permits','mint_permits_consistent','enrollment_execution.validate_journal()',5,true),
+ ('mint_permits','mint_permits_stop_consistent','enrollment_execution.validate_execution_stop()',5,true),
+ ('mint_permits','mint_permits_stop_boundary','enrollment_execution.lock_execution_stop_boundary()',7,false)), expected_user_triggers AS (
+ SELECT pg_catalog.to_regclass(pg_catalog.format('enrollment_execution.%I',table_name))::oid relation_oid,
+   name,pg_catalog.to_regprocedure(signature)::oid function_oid,type,deferred FROM user_trigger_names
+), actual_user_triggers AS (
+ SELECT trigger.* FROM pg_catalog.pg_trigger trigger
+ WHERE NOT trigger.tgisinternal AND (trigger.tgrelid=pg_catalog.to_regclass('enrollment_execution.mint_permits')
+   OR trigger.tgname IN(SELECT name FROM user_trigger_names))), expected_fk_triggers(constraint_oid,relation_oid,function_oid,type) AS (
+ SELECT fk.oid,fk.conrelid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_ins"()')::oid,5 FROM foreign_keys fk
+ UNION ALL SELECT fk.oid,fk.conrelid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_check_upd"()')::oid,17 FROM foreign_keys fk
+ UNION ALL SELECT fk.oid,fk.confrelid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_restrict_del"()')::oid,9 FROM foreign_keys fk
+ UNION ALL SELECT fk.oid,fk.confrelid,pg_catalog.to_regprocedure('pg_catalog."RI_FKey_noaction_upd"()')::oid,17 FROM foreign_keys fk
+)
+SELECT COALESCE((SELECT
+ pg_catalog.current_setting('search_path') IN('pg_catalog,pg_temp','pg_catalog, pg_temp')
+ AND t.relowner=o.oid AND t.relkind='r' AND t.relpersistence='p' AND NOT t.relispartition
+ AND t.relam=(SELECT oid FROM pg_catalog.pg_am WHERE amname='heap')
+ AND t.relrowsecurity AND t.relforcerowsecurity AND t.relreplident='d'
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhrelid=t.oid OR i.inhparent=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_rewrite r WHERE r.ev_class=t.oid)
+ AND (SELECT count(*)=3 FROM foreign_keys)
+ AND NOT EXISTS(SELECT name,child_oid,parent_oid,index_oid FROM expected_foreign_keys EXCEPT
+   SELECT conname::text,conrelid,confrelid,conindid FROM foreign_keys)
+ AND NOT EXISTS(SELECT conname::text,conrelid,confrelid,conindid FROM foreign_keys EXCEPT
+   SELECT name,child_oid,parent_oid,index_oid FROM expected_foreign_keys)
+ AND NOT EXISTS(SELECT 1 FROM foreign_keys c JOIN pg_catalog.pg_class child ON child.oid=c.conrelid
+   WHERE c.connamespace<>child.relnamespace OR NOT c.convalidated OR NOT c.conenforced OR c.condeferrable OR c.condeferred
+     OR NOT c.conislocal OR NOT c.connoinherit OR c.coninhcount<>0 OR c.conparentid<>0 OR c.contypid<>0 OR c.conperiod
+     OR c.conkey IS DISTINCT FROM ARRAY[1]::smallint[] OR c.confkey IS DISTINCT FROM ARRAY[1]::smallint[]
+     OR c.confmatchtype<>'s' OR c.confupdtype<>'a' OR c.confdeltype<>'r' OR c.confdelsetcols IS NOT NULL
+     OR c.conpfeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+     OR c.conppeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+     OR c.conffeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+     OR c.conexclop IS NOT NULL OR c.conbin IS NOT NULL)
+ AND NOT EXISTS(SELECT 1 FROM expected_foreign_keys e WHERE NOT EXISTS(
+   SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=e.child_oid AND a.attnum=1 AND a.attname='operation_id'
+     AND a.atttypid=2950 AND a.attnotnull AND NOT a.attisdropped))
+ AND NOT EXISTS(SELECT 1 FROM expected_foreign_keys e WHERE NOT EXISTS(
+   SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=e.parent_oid AND a.attnum=1 AND a.attname=e.parent_column
+     AND a.atttypid=2950 AND a.attnotnull AND NOT a.attisdropped))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=t.oid AND a.attnum>0
+   AND (a.attisdropped OR a.atttypmod<>-1 OR a.attndims<>0 OR a.atthasdef OR a.attidentity<>'' OR a.attgenerated<>'' OR NOT a.attislocal OR a.attinhcount<>0))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attrdef d WHERE d.adrelid=t.oid)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_columns EXCEPT SELECT * FROM actual_columns)
+   UNION ALL (SELECT * FROM actual_columns EXCEPT SELECT * FROM expected_columns)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_constraints EXCEPT SELECT * FROM actual_constraints)
+   UNION ALL (SELECT * FROM actual_constraints EXCEPT SELECT * FROM expected_constraints)) differences)
+ AND NOT EXISTS(SELECT 1 FROM ((SELECT * FROM expected_indexes EXCEPT SELECT * FROM actual_indexes)
+   UNION ALL (SELECT * FROM actual_indexes EXCEPT SELECT * FROM expected_indexes)) differences)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.conrelid=t.oid
+   AND (NOT c.convalidated OR NOT c.conenforced OR c.condeferrable IS DISTINCT FROM (c.contype='t') OR c.condeferred IS DISTINCT FROM (c.contype='t') OR NOT c.conislocal OR c.coninhcount<>0 OR c.conparentid<>0
+     OR c.conperiod OR c.connoinherit IS DISTINCT FROM (c.contype IN('p','u','f','t')) OR c.confdelsetcols IS NOT NULL
+     OR (c.contype IN('c','n','t') AND c.conindid<>0)
+     OR (c.contype IN('p','u') AND c.conindid IS DISTINCT FROM pg_catalog.to_regclass(pg_catalog.format('enrollment_execution.%I',c.conname)))
+     OR (c.contype<>'f' AND (c.confrelid<>0 OR c.confkey IS NOT NULL OR c.confmatchtype<>' ' OR c.confupdtype<>' ' OR c.confdeltype<>' '
+       OR c.conpfeqop IS NOT NULL OR c.conppeqop IS NOT NULL OR c.conffeqop IS NOT NULL))
+     OR (c.contype='f' AND (c.confrelid IS DISTINCT FROM pg_catalog.to_regclass('public."EnrollmentGrantOperations"')
+       OR c.confkey IS DISTINCT FROM ARRAY[1]::smallint[] OR c.conindid IS DISTINCT FROM pg_catalog.to_regclass('public."PK_EnrollmentGrantOperations"')
+       OR c.confmatchtype<>'s' OR c.confupdtype<>'a' OR c.confdeltype<>'r'
+       OR c.conpfeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conppeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]
+       OR c.conffeqop IS DISTINCT FROM ARRAY['pg_catalog.=(uuid,uuid)'::regoperator::oid]))))
+ AND NOT EXISTS(SELECT 1 FROM foreign_keys fk WHERE NOT EXISTS(
+   SELECT 1 FROM pg_catalog.pg_index referenced WHERE referenced.indexrelid=fk.conindid
+     AND referenced.indrelid=fk.confrelid AND referenced.indisprimary AND referenced.indisunique
+     AND referenced.indisvalid AND referenced.indisready AND referenced.indislive AND NOT referenced.indcheckxmin
+     AND referenced.indnkeyatts=1 AND referenced.indnatts=1 AND referenced.indkey::text='1'
+     AND referenced.indexprs IS NULL AND referenced.indpred IS NULL))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid WHERE i.indrelid=t.oid
+   AND (NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive OR i.indcheckxmin OR NOT i.indisunique OR NOT i.indimmediate OR i.indisexclusion
+     OR i.indnullsnotdistinct OR i.indisreplident OR i.indisclustered OR i.indnkeyatts<>i.indnatts OR i.indexprs IS NOT NULL OR i.indpred IS NOT NULL
+     OR c.relowner<>o.oid OR c.relnamespace<>t.relnamespace OR c.relkind<>'i' OR c.relpersistence<>'p' OR c.relispartition
+     OR c.relam<>(SELECT oid FROM pg_catalog.pg_am WHERE amname='btree')
+     OR i.indnatts<>1
+     OR EXISTS(SELECT 1 FROM pg_catalog.generate_series(0,i.indnatts-1) position
+       WHERE i.indoption[position] IS DISTINCT FROM 0::smallint OR i.indcollation[position] IS DISTINCT FROM 0::oid
+         OR i.indclass[position] IS DISTINCT FROM (SELECT op.oid FROM pg_catalog.pg_opclass op JOIN pg_catalog.pg_namespace n ON n.oid=op.opcnamespace
+           WHERE n.nspname='pg_catalog' AND op.opcmethod=c.relam AND op.opcname=CASE WHEN c.relname='mint_permits_pkey' THEN 'uuid_ops' ELSE 'bytea_ops' END))))
+ AND (SELECT count(*)=4 FROM actual_user_triggers)
+ AND NOT EXISTS(SELECT * FROM expected_user_triggers EXCEPT
+   SELECT tgrelid,tgname::text,tgfoid,tgtype::integer,tgdeferrable FROM actual_user_triggers)
+ AND NOT EXISTS(SELECT tgrelid,tgname::text,tgfoid,tgtype::integer,tgdeferrable FROM actual_user_triggers EXCEPT
+   SELECT * FROM expected_user_triggers)
+ AND NOT EXISTS(SELECT 1 FROM actual_user_triggers trigger
+   WHERE trigger.tgconstrrelid<>0 OR trigger.tgconstrindid<>0 OR trigger.tgdeferrable<>trigger.tginitdeferred
+     OR (NOT trigger.tgdeferrable AND trigger.tgconstraint<>0)
+     OR (trigger.tgdeferrable AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+       JOIN pg_catalog.pg_class relation ON relation.oid=c.conrelid WHERE c.oid=trigger.tgconstraint
+       AND c.conrelid=trigger.tgrelid AND c.conname=trigger.tgname AND c.connamespace=relation.relnamespace
+       AND c.contype='t' AND c.condeferrable AND c.condeferred AND c.convalidated AND c.conenforced AND c.conislocal
+       AND c.coninhcount=0 AND c.connoinherit AND NOT c.conperiod AND c.contypid=0 AND c.conparentid=0
+       AND c.conkey IS NULL AND c.confkey IS NULL AND c.conindid=0 AND c.confrelid=0 AND c.confdelsetcols IS NULL
+       AND c.conpfeqop IS NULL AND c.conppeqop IS NULL AND c.conffeqop IS NULL AND c.conexclop IS NULL AND c.conbin IS NULL
+       AND c.confmatchtype=' ' AND c.confupdtype=' ' AND c.confdeltype=' '
+       AND pg_catalog.pg_get_constraintdef(c.oid,true)='TRIGGER DEFERRABLE INITIALLY DEFERRED'
+       AND (SELECT count(*)=1 FROM pg_catalog.pg_trigger attached WHERE attached.tgconstraint=c.oid))))
+ AND NOT EXISTS(SELECT 1 FROM expected_user_triggers expected WHERE expected.deferred
+   AND (SELECT count(*) FROM pg_catalog.pg_constraint c WHERE c.conrelid=expected.relation_oid AND c.conname=expected.name)<>1) AND (SELECT count(*)=12 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint IN(SELECT oid FROM foreign_keys))
+ AND NOT EXISTS(SELECT * FROM expected_fk_triggers EXCEPT
+   SELECT trigger.tgconstraint,trigger.tgrelid,trigger.tgfoid,trigger.tgtype::integer FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint IN(SELECT oid FROM foreign_keys))
+ AND NOT EXISTS(SELECT trigger.tgconstraint,trigger.tgrelid,trigger.tgfoid,trigger.tgtype::integer FROM pg_catalog.pg_trigger trigger WHERE trigger.tgconstraint IN(SELECT oid FROM foreign_keys) EXCEPT SELECT * FROM expected_fk_triggers)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger JOIN foreign_keys fk ON fk.oid=trigger.tgconstraint
+   WHERE NOT trigger.tgisinternal OR trigger.tgconstrindid IS DISTINCT FROM fk.conindid
+     OR trigger.tgconstrrelid IS DISTINCT FROM CASE WHEN trigger.tgrelid=fk.conrelid THEN fk.confrelid ELSE fk.conrelid END)
+ AND (SELECT count(*)=6 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgrelid=t.oid AND trigger.tgisinternal)
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE trigger.tgrelid=t.oid AND trigger.tgisinternal
+   AND trigger.tgconstraint NOT IN(SELECT oid FROM foreign_keys))
+ AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger trigger WHERE (trigger.oid IN(SELECT oid FROM actual_user_triggers) OR trigger.tgrelid=t.oid OR trigger.tgconstraint IN(SELECT oid FROM foreign_keys))
+   AND (trigger.tgenabled<>'O' OR (trigger.tgisinternal AND (trigger.tgdeferrable OR trigger.tginitdeferred)) OR trigger.tgnargs<>0 OR trigger.tgattr::text<>''
+     OR trigger.tgargs<>''::bytea OR trigger.tgqual IS NOT NULL OR trigger.tgoldtable IS NOT NULL OR trigger.tgnewtable IS NOT NULL OR trigger.tgparentid<>0))
+ FROM target t CROSS JOIN owner_role o),false) AS is_valid
+    );
+    -- END generated delivery permit structure catalog
+
+    -- BEGIN delivery runtime relation privileges
+    -- System catalogs have ordinary PUBLIC read privileges. Reject effective access
+    -- to application relations in every schema for every reserved delivery runtime.
+    ok := ok AND NOT EXISTS(
+      SELECT 1 FROM enrollment_execution.role_reservations reservation
+      LEFT JOIN pg_catalog.pg_roles runtime_role ON runtime_role.oid=reservation.role_oid
+        AND runtime_role.rolname=reservation.role_name
+      WHERE reservation.capability='EnrollmentGrantDelivery'
+        AND reservation.role_kind IN('StatusRuntime','DeliveryRuntime')
+        AND CASE WHEN runtime_role.oid IS NULL THEN true ELSE
+          pg_catalog.has_database_privilege(runtime_role.oid,pg_catalog.current_database(),'CREATE')
+          OR EXISTS(SELECT 1 FROM pg_catalog.pg_default_acl defaults
+            CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) acl
+            WHERE defaults.defaclobjtype IN('r','S') AND acl.grantee IN(0,runtime_role.oid))
+          OR EXISTS(SELECT 1 FROM pg_catalog.pg_namespace namespace
+            WHERE namespace.nspname NOT IN('pg_catalog','information_schema')
+              AND namespace.nspname !~ '^pg_(toast|temp_)'
+              AND pg_catalog.has_schema_privilege(runtime_role.oid,namespace.oid,'CREATE'))
+          OR EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
+            JOIN pg_catalog.pg_namespace namespace ON namespace.oid=relation.relnamespace
+            WHERE namespace.nspname NOT IN('pg_catalog','information_schema')
+              AND namespace.nspname !~ '^pg_(toast|temp_)'
+              AND CASE WHEN relation.relkind IN('r','p','v','m','f') THEN
+                pg_catalog.has_table_privilege(runtime_role.oid,relation.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+                OR pg_catalog.has_any_column_privilege(runtime_role.oid,relation.oid,'SELECT,INSERT,UPDATE,REFERENCES')
+              WHEN relation.relkind='S' THEN
+                pg_catalog.has_sequence_privilege(runtime_role.oid,relation.oid,'USAGE,SELECT,UPDATE')
+              ELSE false END)
+          END);
+    -- END delivery runtime relation privileges
+
+    ok := ok
+      AND (status_runtime IS NULL OR (
+        NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row WHERE function_row.proowner IN(status_runtime,delivery_runtime))
+        AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row
+          CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(function_row.proacl,
+            pg_catalog.acldefault('f',function_row.proowner))) acl
+          WHERE acl.grantee=status_runtime AND (acl.privilege_type<>'EXECUTE' OR acl.is_grantable OR function_row.oid NOT IN(
+              'enrollment_execution.read_grant_status_receipt(uuid,uuid)'::regprocedure,
+              'enrollment_execution.append_grant_status_observation(uuid,uuid,uuid,text,text,timestamptz,timestamptz,uuid,uuid,uuid,timestamptz,timestamptz,timestamptz,smallint,timestamptz,bytea,bytea)'::regprocedure,
+              'enrollment_execution.audit_delivery_privileges(uuid)'::regprocedure)))
+        AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc function_row
+          CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(function_row.proacl,
+            pg_catalog.acldefault('f',function_row.proowner))) acl
+          WHERE acl.grantee=delivery_runtime AND (acl.privilege_type<>'EXECUTE' OR acl.is_grantable OR function_row.oid NOT IN(
+              'enrollment_execution.read_grant_delivery(uuid,uuid,uuid,text)'::regprocedure,
+              'enrollment_execution.acknowledge_grant_delivery(uuid,uuid,uuid,text,bytea,bytea)'::regprocedure,
+              'enrollment_execution.audit_delivery_privileges(uuid)'::regprocedure)))
+        AND (SELECT count(*)=3 FROM pg_catalog.pg_proc function_row CROSS JOIN LATERAL
+          pg_catalog.aclexplode(function_row.proacl) acl WHERE acl.grantee=status_runtime
+            AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable)
+        AND (SELECT count(*)=3 FROM pg_catalog.pg_proc function_row CROSS JOIN LATERAL
+          pg_catalog.aclexplode(function_row.proacl) acl WHERE acl.grantee=delivery_runtime
+            AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable)))
+      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class relation
+        CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(relation.relacl,pg_catalog.acldefault('r',relation.relowner))) acl
+        WHERE acl.grantee=delivery_definer AND acl.is_grantable)
+      AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute attribute
+        CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) acl
+        WHERE acl.grantee=delivery_definer AND acl.is_grantable);
+
     ok := ok AND (SELECT count(*)=1 AND bool_and(p.proowner=table_owner AND l.lanname='plpgsql'
         AND NOT p.prosecdef AND p.provolatile='v' AND p.proparallel='u' AND NOT p.proisstrict AND NOT p.proleakproof
         AND p.prokind='f' AND NOT p.proretset AND p.prorettype='trigger'::regtype AND p.pronargs=0
@@ -761,7 +2338,7 @@ BEGIN
       FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
       WHERE p.oid=pg_catalog.to_regprocedure('public.validate_enrollment_grant_queue_anchor()'));
 
-    RETURN QUERY SELECT COALESCE(ok,false),CASE WHEN COALESCE(ok,false) THEN 'None' ELSE 'ProfileDrift' END,3::smallint;
+    RETURN QUERY SELECT COALESCE(ok,false),CASE WHEN COALESCE(ok,false) THEN 'None' ELSE 'ProfileDrift' END,4::smallint;
 END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.audit_execution_privileges(uuid) FROM PUBLIC;

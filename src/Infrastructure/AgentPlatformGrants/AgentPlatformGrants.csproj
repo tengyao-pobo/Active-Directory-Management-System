@@ -8,5 +8,6 @@
     <InternalsVisibleTo Include="AgentPlatformGrants.Tests" />
     <InternalsVisibleTo Include="EnrollmentGrantExecution" />
     <InternalsVisibleTo Include="EnrollmentGrantExecution.Tests" />
+    <InternalsVisibleTo Include="EnrollmentGrantDelivery" />
   </ItemGroup>
 </Project>

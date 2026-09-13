@@ -8,7 +8,7 @@ using Npgsql;
 namespace ItManagement.IntegrationTests;
 
 [Collection(nameof(PostgresApiCollection))]
-public sealed class EnrollmentGrantExecutionQueueUpgradeTests
+public sealed partial class EnrollmentGrantExecutionQueueUpgradeTests
 {
     [Theory]
     [InlineData(false)]

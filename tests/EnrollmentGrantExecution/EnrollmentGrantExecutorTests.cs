@@ -145,7 +145,8 @@ public sealed class EnrollmentGrantExecutorTests
     public async Task ParallelCandidatesConvergeOnPersistedWinner()
     {
         var operation = Operation();
-        var store = new Store(operation) { InitialReadBarrier = new Barrier(2) };
+        using var barrier = new Barrier(2);
+        var store = new Store(operation) { InitialReadBarrier = barrier };
         var issuer = new Issuer((_, persisted) =>
         {
             var permit = Assert.IsType<PersistedEnrollmentGrantPermit>(store.Record.Permit);
@@ -470,11 +471,12 @@ public sealed class EnrollmentGrantExecutorTests
 
     private sealed class Issuer(Func<ValidatedGrantAuthorization, ValidatedPersistedPlatformGrant, PlatformGrantResult> handler) : IPlatformGrantIssuer
     {
-        public int Calls { get; private set; }
+        private int _calls;
+        public int Calls => Volatile.Read(ref _calls);
         public Task<PlatformGrantResult> IssueAsync(Guid operationId, ValidatedGrantAuthorization authorization,
             ValidatedPersistedPlatformGrant persistedGrant, CancellationToken cancellationToken)
         {
-            cancellationToken.ThrowIfCancellationRequested(); Calls++; return Task.FromResult(handler(authorization, persistedGrant));
+            cancellationToken.ThrowIfCancellationRequested(); Interlocked.Increment(ref _calls); return Task.FromResult(handler(authorization, persistedGrant));
         }
     }
 
@@ -497,8 +499,11 @@ public sealed class EnrollmentGrantExecutorTests
         public Task<EnrollmentGrantStoreReadResult> ReadAsync(Guid environmentId, Guid operationId, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested(); Interlocked.Increment(ref ReadCalls);
-            if (InitialReadBarrier is not null && Record.Permit is null) InitialReadBarrier.SignalAndWait(cancellationToken);
-            return Task.FromResult(new EnrollmentGrantStoreReadResult(EnrollmentGrantStoreReadOutcome.Found, Record));
+            EnrollmentGrantExecutionRecord snapshot;
+            lock (_gate) snapshot = Record;
+            if (InitialReadBarrier is not null && snapshot.Permit is null)
+                Assert.True(InitialReadBarrier.SignalAndWait(TimeSpan.FromSeconds(30), cancellationToken));
+            return Task.FromResult(new EnrollmentGrantStoreReadResult(EnrollmentGrantStoreReadOutcome.Found, snapshot));
         }
 
         public Task<EnrollmentGrantPermitStoreResult> AuthorizeAndStoreCandidateAsync(EnrollmentGrantExecutionOperation operation,

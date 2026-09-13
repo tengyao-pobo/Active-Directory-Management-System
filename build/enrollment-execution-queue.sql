@@ -63,7 +63,7 @@ $function$;
 
 -- Installed only by the reviewed v2-to-v3 execution profile upgrade.
 
-CREATE FUNCTION enrollment_execution.queue_worker_scope(p_environment uuid)
+CREATE OR REPLACE FUNCTION enrollment_execution.queue_worker_scope(p_environment uuid)
 RETURNS boolean LANGUAGE plpgsql STABLE SECURITY INVOKER
 SET search_path=pg_catalog,pg_temp AS $function$
 BEGIN
@@ -92,7 +92,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.queue_worker_scope(uuid) FROM PUBLIC;
 
-CREATE FUNCTION enrollment_execution.claim_next(p_environment uuid,p_token uuid)
+CREATE OR REPLACE FUNCTION enrollment_execution.claim_next(p_environment uuid,p_token uuid)
 RETURNS TABLE(contract_version smallint,outcome text,queried_at timestamptz,environment_id uuid,
     operation_id uuid,claim_token uuid,attempt integer,claimed_at timestamptz,lease_until timestamptz)
 LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE SECURITY DEFINER
@@ -100,7 +100,7 @@ SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
 DECLARE audit_rows bigint; valid_rows bigint;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=3)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=4)
       INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) AS audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.queue_worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution queue capability is unavailable.';
@@ -113,14 +113,14 @@ END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.claim_next(uuid,uuid) FROM PUBLIC;
 
-CREATE FUNCTION enrollment_execution.defer_claim(p_environment uuid,p_operation uuid,p_token uuid,p_reason text)
+CREATE OR REPLACE FUNCTION enrollment_execution.defer_claim(p_environment uuid,p_operation uuid,p_token uuid,p_reason text)
 RETURNS TABLE(contract_version smallint,outcome text,queried_at timestamptz,next_attempt_at timestamptz)
 LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE SECURITY DEFINER
 SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
 DECLARE audit_rows bigint; valid_rows bigint;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=3)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=4)
       INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) AS audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.queue_worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution queue capability is unavailable.';
@@ -133,14 +133,14 @@ END
 $function$;
 REVOKE ALL ON FUNCTION enrollment_execution.defer_claim(uuid,uuid,uuid,text) FROM PUBLIC;
 
-CREATE FUNCTION enrollment_execution.complete_claim(p_environment uuid,p_operation uuid,p_token uuid)
+CREATE OR REPLACE FUNCTION enrollment_execution.complete_claim(p_environment uuid,p_operation uuid,p_token uuid)
 RETURNS TABLE(contract_version smallint,outcome text,queried_at timestamptz,next_attempt_at timestamptz)
 LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE SECURITY DEFINER
 SET search_path=pg_catalog,pg_temp SET row_security=on AS $function$
 DECLARE audit_rows bigint; valid_rows bigint;
 BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock_shared(1162235478,1);
-    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=3)
+    SELECT count(*),count(*) FILTER (WHERE audit.is_valid AND audit.diagnostic_code='None' AND audit.profile_version=4)
       INTO audit_rows,valid_rows FROM enrollment_execution.audit_execution_privileges(p_environment) AS audit;
     IF audit_rows<>1 OR valid_rows<>1 OR enrollment_execution.queue_worker_scope(p_environment) IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Execution queue capability is unavailable.';

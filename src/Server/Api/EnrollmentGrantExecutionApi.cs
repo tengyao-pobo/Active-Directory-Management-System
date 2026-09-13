@@ -24,6 +24,7 @@ public static partial class EnrollmentGrantPlanApi
         if (!AuthEndpoints.FreshStepUp(http, time, config)) return Results.Problem(statusCode: 403, title: "StepUpRequired");
         if (!await LockHelperIsValidAsync(db, ct) || !await EnrollmentGrantOperationAudit.IsValidAsync(db, ct)) return ExecutionUnavailable();
         var actor = AuthEndpoints.Actor(http);
+        const int maximumAttempts = 3;
         for (var attempt = 0; ; attempt++)
         {
             db.ChangeTracker.Clear();
@@ -72,6 +73,9 @@ public static partial class EnrollmentGrantPlanApi
                 var resolved = await reader.ReadAsync(environmentId, payload.DirectoryObjectId, ct);
                 if (!MatchesResolved(resolved, payload, Canonical(time.GetUtcNow()))) return EnrollmentTargetUnavailable();
                 await using var final = await db.BeginEnvironment(environmentId, actor, ct);
+                // Acquire the profile lock before public-context/plan locks and retain it
+                // through publication. Database-side Pending enforcement is also required.
+                await db.Database.ExecuteSqlRawAsync("SELECT pg_catalog.pg_advisory_xact_lock_shared(1162235478,1)", ct);
                 await LockPublicContext(db, environmentId, payload.DirectoryObjectId, [actor, expectedApproval.ApproverId], ct);
                 await LockPlan(db, environmentId, planId, ct);
                 var finalNow = Canonical(time.GetUtcNow());
@@ -143,8 +147,13 @@ public static partial class EnrollmentGrantPlanApi
                 await final.CommitAsync(ct);
                 return Results.Accepted(value: OperationDto(operation, finalNow));
             }
-            catch (Exception error) when (attempt == 0 && IsSerialization(error)) { }
+            catch (Exception error) when (attempt + 1 < maximumAttempts && IsSerialization(error))
+            {
+                // Start again with fresh authorization and a new transaction after competing commits settle.
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1) + Random.Shared.Next(25)), ct);
+            }
             catch (Exception error) when (IsSerialization(error)) { return Results.Problem(statusCode: 409, title: "ConcurrentChange"); }
+            catch (Exception error) when (!ct.IsCancellationRequested && IsPublicationUnavailable(error)) { return ExecutionUnavailable(); }
             catch (PostgresException error) when (error.SqlState == "42501") { return Results.NotFound(); }
         }
     }
@@ -231,4 +240,10 @@ public static partial class EnrollmentGrantPlanApi
         new(value.Id, value.EnvironmentId, value.PlanId, value.DirectoryObjectId, "Queued", value.QueuedAt, value.AuthorizationNotAfter, now);
     private static IResult ExecutionChanged() => Results.Problem(statusCode: 409, title: "EnrollmentGrantExecutionChanged");
     private static IResult ExecutionUnavailable() => Results.Problem(statusCode: 503, title: "EnrollmentGrantExecutionUnavailable");
+    private static bool IsPublicationUnavailable(Exception error)
+    {
+        for (Exception? current = error; current is not null; current = current.InnerException)
+            if (current is PostgresException { SqlState: "55000", MessageText: "Enrollment grant publication is unavailable." }) return true;
+        return false;
+    }
 }

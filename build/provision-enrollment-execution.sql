@@ -149,8 +149,8 @@ INSERT INTO enrollment_execution.role_reservations SELECT :'execution_queue_defi
 INSERT INTO enrollment_execution.role_reservations SELECT :'execution_runtime_role'::name,oid,'EnrollmentGrantExecution','Runtime',1 FROM pg_roles WHERE rolname=:'execution_runtime_role';
 INSERT INTO public."DirectoryDatabaseBindings"("LoginRole","Purpose","ContractVersion","EnvironmentId","PrincipalId")
  VALUES(:'execution_runtime_role','EnrollmentGrantExecution',2,:'expected_environment_id'::uuid,NULL);
-\ir enrollment-execution-queue.sql
-\ir enrollment-execution-functions.sql
+\ir enrollment-execution/v3/enrollment-execution-queue.sql
+\ir enrollment-execution/v3/enrollment-execution-functions.sql
 ALTER FUNCTION enrollment_execution.worker_scope(uuid) OWNER TO :"execution_definer_role";
 ALTER FUNCTION enrollment_execution.read_execution_record(uuid,uuid) OWNER TO :"execution_definer_role";
 ALTER FUNCTION enrollment_execution.read_and_lock_plan_context(uuid,uuid) OWNER TO :"execution_definer_role";
@@ -166,7 +166,7 @@ ALTER FUNCTION enrollment_execution.validate_work_queue() OWNER TO :"expected_ta
 ALTER FUNCTION enrollment_execution.claim_next_work(uuid,uuid) OWNER TO :"expected_table_owner_role";
 ALTER FUNCTION enrollment_execution.defer_work_claim(uuid,uuid,uuid,text) OWNER TO :"expected_table_owner_role";
 ALTER FUNCTION enrollment_execution.complete_work_claim(uuid,uuid,uuid) OWNER TO :"expected_table_owner_role";
-\ir enrollment-execution-profile.sql
+\ir enrollment-execution/v3/enrollment-execution-profile.sql
 GRANT USAGE ON SCHEMA enrollment_execution TO :"execution_definer_role";
 GRANT EXECUTE ON FUNCTION enrollment_execution.read_record(uuid,uuid),enrollment_execution.authorization_digest(public."EnrollmentGrantOperations",smallint,timestamptz,timestamptz,bytea,bytea,bytea),
  enrollment_execution.lock_plan_context(uuid,uuid),enrollment_execution.scope_uuid(text),enrollment_execution.has_computer_permission(uuid,uuid,uuid,uuid,text),

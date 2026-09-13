@@ -21,6 +21,13 @@ public sealed partial class EnrollmentGrantPlanTests
         public bool IsReady(Guid environmentId) => true;
     }
 
+    private sealed class MutableExecutionReadiness : IEnrollmentGrantExecutionReadiness
+    {
+        private int _ready = 1;
+        public void Close() => Volatile.Write(ref _ready, 0);
+        public bool IsReady(Guid environmentId) => Volatile.Read(ref _ready) == 1;
+    }
+
     private WebApplicationFactory<Program> ExecutionFactory(Seeded seeded, Clock clock) =>
         Factory(ResolvedReader(seeded), clock).WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
@@ -38,6 +45,56 @@ public sealed partial class EnrollmentGrantPlanTests
         using var reviewer = Client(factory, seeded.Data.ReviewerToken);
         Assert.Equal(HttpStatusCode.OK, (await Post(reviewer, ApprovalPath(seeded, id), new { planHash = hash })).Status);
         return (id, hash);
+    }
+
+    [Fact]
+    public async Task ExecutionRechecksProcessorAfterWaitingForProfileLock()
+    {
+        var seeded = await Seed();
+        var readiness = new MutableExecutionReadiness();
+        using var factory = ExecutionFactory(seeded, new Clock(seeded.Now)).WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IEnrollmentGrantExecutionReadiness>();
+            services.AddSingleton<IEnrollmentGrantExecutionReadiness>(readiness);
+        }));
+        var plan = await ApprovedExecutionPlan(seeded, factory);
+        using var client = Client(factory, seeded.Data.RequesterToken);
+        using var request = await client.MutationAsync(HttpMethod.Post, ExecutionPath(seeded, plan.Id), new { planHash = plan.Hash });
+        await using var blocker = Db();
+        await using var transaction = await blocker.Database.BeginTransactionAsync();
+        await blocker.Database.ExecuteSqlRawAsync("SELECT pg_catalog.pg_advisory_xact_lock(1162235478,1)");
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var pending = client.SendAsync(request, cancellation.Token);
+        try
+        {
+            var blocked = false;
+            for (var i = 0; i < 500 && !blocked; i++)
+            {
+                blocked = await blocker.Database.SqlQueryRaw<bool>("""
+                    SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_locks l
+                      WHERE l.locktype='advisory' AND l.classid=1162235478 AND l.objid=1 AND l.objsubid=2
+                        AND l.mode='ShareLock' AND NOT l.granted
+                        AND pg_catalog.pg_backend_pid()=ANY(pg_catalog.pg_blocking_pids(l.pid))) AS "Value"
+                    """).SingleAsync(cancellation.Token);
+                if (!blocked) await Task.Delay(20, cancellation.Token);
+            }
+            Assert.True(blocked);
+            Assert.False(pending.IsCompleted);
+            readiness.Close();
+            await transaction.CommitAsync(cancellation.Token);
+            using var response = await pending;
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            await using var verify = Db();
+            Assert.False(await verify.EnrollmentGrantOperations.AnyAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));
+            Assert.False(await verify.Outbox.AnyAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));
+            Assert.Equal(ChangePlanState.Approved, await verify.Plans.Where(x => x.Id == plan.Id).Select(x => x.State).SingleAsync());
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            try { if (blocker.Database.CurrentTransaction is not null) await transaction.RollbackAsync(CancellationToken.None); }
+            finally { await ObserveExecutionRequests(pending); }
+        }
     }
 
     [Fact]
@@ -172,6 +229,7 @@ public sealed partial class EnrollmentGrantPlanTests
     [InlineData("Environments")]
     [InlineData("Plans")]
     [InlineData("Sessions")]
+    [InlineData("Profile")]
     public async Task ExecutionRechecksStepUpAfterWaitingForFinalLocks(string lockedTable)
     {
         var seeded = await Seed(); var clock = new Clock(seeded.Now);
@@ -198,7 +256,9 @@ public sealed partial class EnrollmentGrantPlanTests
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            if (lockedTable == "Sessions")
+            if (lockedTable == "Profile")
+                await blocker.Database.ExecuteSqlRawAsync("SELECT pg_catalog.pg_advisory_xact_lock(1162235478,1)");
+            else if (lockedTable == "Sessions")
                 await blocker.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM public.\"Sessions\" WHERE \"IdHash\"={SessionTokens.Hash(seeded.Data.RequesterToken)} FOR UPDATE");
             else if (lockedTable == "Plans")
                 await blocker.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM public.\"Plans\" WHERE \"Id\"={plan.Id} FOR UPDATE");
@@ -258,6 +318,13 @@ public sealed partial class EnrollmentGrantPlanTests
             Assert.Equal(calls + 2, reader.Calls); Assert.False(pendingFirst.IsCompleted); Assert.False(pendingSecond.IsCompleted);
             await transaction.CommitAsync();
             using var responseFirst = await pendingFirst; using var responseSecond = await pendingSecond;
+            foreach (var response in new[] { responseFirst, responseSecond })
+            {
+                if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Accepted) continue;
+                var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+                var title = problem.TryGetProperty("title", out var value) ? value.GetString() : "Missing problem title";
+                Assert.Fail($"Concurrent execution returned {(int)response.StatusCode}: {title}");
+            }
             Assert.Equal(new[] { HttpStatusCode.OK, HttpStatusCode.Accepted }, new[] { responseFirst.StatusCode, responseSecond.StatusCode }.Order().ToArray());
             var bodyFirst = await responseFirst.Content.ReadFromJsonAsync<JsonElement>();
             var bodySecond = await responseSecond.Content.ReadFromJsonAsync<JsonElement>();
@@ -276,6 +343,51 @@ public sealed partial class EnrollmentGrantPlanTests
                 finally { await ObserveExecutionRequests(pendingFirst, pendingSecond); }
             }
         }
+    }
+
+    [Theory]
+    [InlineData(2, false, HttpStatusCode.Accepted)]
+    [InlineData(3, false, HttpStatusCode.Conflict)]
+    [InlineData(1, true, HttpStatusCode.Forbidden)]
+    public async Task ExecutionSerializationRetriesAreBoundedAndRevalidateSession(int failures, bool revokeSession, HttpStatusCode expected)
+    {
+        var seeded = await Seed();
+        var armed = false;
+        var attempts = 0;
+        var reader = new AsyncReader(async (environment, directory) =>
+        {
+            if (armed && ++attempts <= failures)
+            {
+                if (revokeSession)
+                {
+                    await using var owner = Db();
+                    await owner.Sessions.Where(x => x.IdHash == SessionTokens.Hash(seeded.Data.RequesterToken))
+                        .ExecuteUpdateAsync(x => x.SetProperty(s => s.RevokedAt, seeded.Now));
+                }
+                throw new Npgsql.PostgresException("Synthetic target-read serialization failure", "ERROR", "ERROR", "40001");
+            }
+            return EnrollmentTargetResult.Resolved(environment, directory, seeded.DeviceId, seeded.Now.AddMinutes(-1));
+        });
+        using var factory = ExecutionFactory(seeded, new Clock(seeded.Now)).WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IEnrollmentTargetReader>();
+            services.AddSingleton<IEnrollmentTargetReader>(reader);
+        }));
+        var plan = await ApprovedExecutionPlan(seeded, factory);
+        using var client = Client(factory, seeded.Data.RequesterToken);
+        armed = true;
+        var response = await Post(client, ExecutionPath(seeded, plan.Id), new { planHash = plan.Hash });
+        Assert.Equal(expected, response.Status);
+        Assert.Equal(Math.Min(failures + 1, 3), attempts);
+        if (expected == HttpStatusCode.Conflict) Assert.Equal("ConcurrentChange", response.Json.GetProperty("title").GetString());
+        if (expected == HttpStatusCode.Forbidden) Assert.Equal("StepUpRequired", response.Json.GetProperty("title").GetString());
+        await using var verify = Db();
+        var expectedWrites = expected == HttpStatusCode.Accepted ? 1 : 0;
+        Assert.Equal(expectedWrites, await verify.EnrollmentGrantOperations.CountAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));
+        Assert.Equal(expectedWrites, await verify.Outbox.CountAsync(x => x.EnvironmentId == seeded.Data.Environment.Id));
+        Assert.Equal(expectedWrites, await verify.Audit.CountAsync(x => x.EnvironmentId == seeded.Data.Environment.Id && x.Action == "EnrollmentGrantExecution.Queued"));
+        Assert.Equal(expectedWrites == 1 ? ChangePlanState.Queued : ChangePlanState.Approved,
+            await verify.Plans.Where(x => x.Id == plan.Id).Select(x => x.State).SingleAsync());
     }
 
     private static async Task ObserveExecutionRequests(params Task<HttpResponseMessage>[] pending)
