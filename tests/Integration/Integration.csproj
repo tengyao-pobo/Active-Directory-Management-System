@@ -17,6 +17,7 @@
     </PackageReference>
     <None Include="..\..\build\audit-enrollment-profile4-api-policies.sql" Link="audit-enrollment-profile4-api-policies.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-profile4-api-capabilities.sql" Link="audit-enrollment-profile4-api-capabilities.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\build\audit-enrollment-profile4-api-plan-privileges.sql" Link="audit-enrollment-profile4-api-plan-privileges.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-profile4-api-triggers.sql" Link="audit-enrollment-profile4-api-triggers.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\build\audit-enrollment-profile4-api-relations.sql" Link="audit-enrollment-profile4-api-relations.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
